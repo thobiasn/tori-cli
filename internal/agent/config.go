@@ -23,11 +23,39 @@ func (d *Duration) UnmarshalText(text []byte) error {
 }
 
 type Config struct {
-	Storage StorageConfig `toml:"storage"`
-	Socket  SocketConfig  `toml:"socket"`
-	Host    HostConfig    `toml:"host"`
-	Docker  DockerConfig  `toml:"docker"`
-	Collect CollectConfig `toml:"collect"`
+	Storage StorageConfig          `toml:"storage"`
+	Socket  SocketConfig           `toml:"socket"`
+	Host    HostConfig             `toml:"host"`
+	Docker  DockerConfig           `toml:"docker"`
+	Collect CollectConfig          `toml:"collect"`
+	Alerts  map[string]AlertConfig `toml:"alerts"`
+	Notify  NotifyConfig           `toml:"notify"`
+}
+
+type AlertConfig struct {
+	Condition   string   `toml:"condition"`
+	For         Duration `toml:"for"`
+	Severity    string   `toml:"severity"`
+	Actions     []string `toml:"actions"`
+	MaxRestarts int      `toml:"max_restarts"`
+}
+
+type NotifyConfig struct {
+	Email   EmailConfig   `toml:"email"`
+	Webhook WebhookConfig `toml:"webhook"`
+}
+
+type EmailConfig struct {
+	Enabled  bool     `toml:"enabled"`
+	SMTPHost string   `toml:"smtp_host"`
+	SMTPPort int      `toml:"smtp_port"`
+	From     string   `toml:"from"`
+	To       []string `toml:"to"`
+}
+
+type WebhookConfig struct {
+	Enabled bool   `toml:"enabled"`
+	URL     string `toml:"url"`
 }
 
 type StorageConfig struct {
@@ -104,6 +132,36 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Collect.Interval.Duration < 1*time.Second {
 		return fmt.Errorf("collect interval must be >= 1s, got %s", cfg.Collect.Interval.Duration)
+	}
+	for name, ac := range cfg.Alerts {
+		if err := validateAlert(name, &ac); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateAlert(name string, ac *AlertConfig) error {
+	if _, err := parseCondition(ac.Condition); err != nil {
+		return fmt.Errorf("alert %q: %w", name, err)
+	}
+	switch ac.Severity {
+	case "warning", "critical":
+	default:
+		return fmt.Errorf("alert %q: severity must be \"warning\" or \"critical\", got %q", name, ac.Severity)
+	}
+	if len(ac.Actions) == 0 {
+		return fmt.Errorf("alert %q: at least one action required", name)
+	}
+	for _, a := range ac.Actions {
+		switch a {
+		case "notify", "restart":
+		default:
+			return fmt.Errorf("alert %q: unknown action %q (must be \"notify\" or \"restart\")", name, a)
+		}
+		if a == "restart" && ac.MaxRestarts < 1 {
+			return fmt.Errorf("alert %q: restart action requires max_restarts > 0", name)
+		}
 	}
 	return nil
 }

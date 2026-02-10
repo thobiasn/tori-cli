@@ -54,6 +54,12 @@ func (d *DockerCollector) Client() *client.Client {
 	return d.client
 }
 
+// RestartContainer restarts a container by ID with a 10-second timeout.
+func (d *DockerCollector) RestartContainer(ctx context.Context, containerID string) error {
+	timeout := 10
+	return d.client.ContainerRestart(ctx, containerID, container.StopOptions{Timeout: &timeout})
+}
+
 // Container represents a discovered container with basic info.
 type Container struct {
 	ID    string

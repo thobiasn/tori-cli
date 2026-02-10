@@ -127,6 +127,113 @@ retention_days = -1
 	}
 }
 
+func TestLoadConfigWithAlerts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[alerts.high_cpu]
+condition = "host.cpu_percent > 90"
+for = "30s"
+severity = "critical"
+actions = ["notify"]
+
+[alerts.disk_full]
+condition = "host.disk_percent > 90"
+severity = "warning"
+actions = ["notify"]
+
+[notify.webhook]
+enabled = true
+url = "https://example.com/hook"
+`), 0644)
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(cfg.Alerts) != 2 {
+		t.Errorf("alerts count = %d, want 2", len(cfg.Alerts))
+	}
+	ac := cfg.Alerts["high_cpu"]
+	if ac.Condition != "host.cpu_percent > 90" {
+		t.Errorf("condition = %q", ac.Condition)
+	}
+	if ac.For.Duration != 30*time.Second {
+		t.Errorf("for = %s, want 30s", ac.For.Duration)
+	}
+	if ac.Severity != "critical" {
+		t.Errorf("severity = %q, want critical", ac.Severity)
+	}
+	if !cfg.Notify.Webhook.Enabled {
+		t.Error("webhook should be enabled")
+	}
+}
+
+func TestLoadConfigAlertInvalidSeverity(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[alerts.bad]
+condition = "host.cpu_percent > 90"
+severity = "info"
+actions = ["notify"]
+`), 0644)
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for invalid severity")
+	}
+}
+
+func TestLoadConfigAlertInvalidCondition(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[alerts.bad]
+condition = "not a valid condition"
+severity = "warning"
+actions = ["notify"]
+`), 0644)
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for invalid condition")
+	}
+}
+
+func TestLoadConfigAlertRestartRequiresMaxRestarts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[alerts.bad]
+condition = "container.state == 'exited'"
+severity = "critical"
+actions = ["restart"]
+`), 0644)
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for restart without max_restarts")
+	}
+}
+
+func TestLoadConfigAlertNoActions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[alerts.bad]
+condition = "host.cpu_percent > 90"
+severity = "warning"
+actions = []
+`), 0644)
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for empty actions")
+	}
+}
+
 func TestDurationUnmarshal(t *testing.T) {
 	tests := []struct {
 		input string

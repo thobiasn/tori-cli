@@ -9,11 +9,12 @@ import (
 
 // Agent orchestrates metric collection, log tailing, and storage.
 type Agent struct {
-	cfg    *Config
-	store  *Store
-	host   *HostCollector
-	docker *DockerCollector
-	logs   *LogTailer
+	cfg     *Config
+	store   *Store
+	host    *HostCollector
+	docker  *DockerCollector
+	logs    *LogTailer
+	alerter *Alerter
 
 	lastPrune time.Time
 }
@@ -31,13 +32,26 @@ func New(cfg *Config) (*Agent, error) {
 		return nil, fmt.Errorf("docker collector: %w", err)
 	}
 
-	return &Agent{
+	a := &Agent{
 		cfg:    cfg,
 		store:  store,
 		host:   NewHostCollector(&cfg.Host),
 		docker: docker,
 		logs:   NewLogTailer(docker.Client(), store),
-	}, nil
+	}
+
+	if len(cfg.Alerts) > 0 {
+		notifier := NewNotifier(&cfg.Notify)
+		alerter, err := NewAlerter(cfg.Alerts, store, notifier, docker)
+		if err != nil {
+			store.Close()
+			docker.Close()
+			return nil, fmt.Errorf("alerter: %w", err)
+		}
+		a.alerter = alerter
+	}
+
+	return a, nil
 }
 
 // Run starts the collection loop and blocks until the context is cancelled.
@@ -93,6 +107,15 @@ func (a *Agent) collect(ctx context.Context) {
 		}
 		// Sync log tailers with discovered containers.
 		a.logs.Sync(ctx, containers)
+	}
+
+	// Evaluate alert rules against collected data.
+	if a.alerter != nil {
+		a.alerter.Evaluate(ctx, &MetricSnapshot{
+			Host:       hostMetrics,
+			Disks:      diskMetrics,
+			Containers: containerMetrics,
+		})
 	}
 
 	// Prune if >1 hour since last prune.

@@ -218,11 +218,102 @@ func TestPrune(t *testing.T) {
 	}
 }
 
+func TestInsertAndResolveAlert(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	fired := time.Now()
+	a := &Alert{
+		RuleName:    "high_cpu",
+		Severity:    "critical",
+		Condition:   "host.cpu_percent > 90",
+		InstanceKey: "high_cpu",
+		FiredAt:     fired,
+		Message:     "CPU high",
+	}
+
+	id, err := s.InsertAlert(ctx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id == 0 {
+		t.Fatal("expected non-zero ID")
+	}
+
+	// Verify it's in the DB.
+	var ruleName, severity string
+	var resolvedAt sql.NullInt64
+	err = s.db.QueryRow("SELECT rule_name, severity, resolved_at FROM alerts WHERE id = ?", id).
+		Scan(&ruleName, &severity, &resolvedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ruleName != "high_cpu" {
+		t.Errorf("rule_name = %q, want high_cpu", ruleName)
+	}
+	if severity != "critical" {
+		t.Errorf("severity = %q, want critical", severity)
+	}
+	if resolvedAt.Valid {
+		t.Error("resolved_at should be NULL before resolution")
+	}
+
+	// Resolve.
+	resolved := fired.Add(30 * time.Second)
+	if err := s.ResolveAlert(ctx, id, resolved); err != nil {
+		t.Fatal(err)
+	}
+
+	err = s.db.QueryRow("SELECT resolved_at FROM alerts WHERE id = ?", id).Scan(&resolvedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resolvedAt.Valid {
+		t.Error("resolved_at should be set after resolution")
+	}
+	if resolvedAt.Int64 != resolved.Unix() {
+		t.Errorf("resolved_at = %d, want %d", resolvedAt.Int64, resolved.Unix())
+	}
+}
+
+func TestPruneAlerts(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	old := time.Now().Add(-10 * 24 * time.Hour)
+	recent := time.Now()
+
+	s.InsertAlert(ctx, &Alert{
+		RuleName: "old", Severity: "warning", Condition: "test",
+		InstanceKey: "old", FiredAt: old, Message: "old alert",
+	})
+	s.InsertAlert(ctx, &Alert{
+		RuleName: "new", Severity: "warning", Condition: "test",
+		InstanceKey: "new", FiredAt: recent, Message: "new alert",
+	})
+
+	if err := s.Prune(ctx, 7); err != nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	s.db.QueryRow("SELECT COUNT(*) FROM alerts").Scan(&count)
+	if count != 1 {
+		t.Errorf("alerts after prune = %d, want 1", count)
+	}
+
+	var ruleName string
+	s.db.QueryRow("SELECT rule_name FROM alerts").Scan(&ruleName)
+	if ruleName != "new" {
+		t.Errorf("remaining alert = %q, want new", ruleName)
+	}
+}
+
 func TestSchemaCreation(t *testing.T) {
 	s := testStore(t)
 
 	// Verify all tables exist
-	tables := []string{"host_metrics", "disk_metrics", "net_metrics", "container_metrics", "logs"}
+	tables := []string{"host_metrics", "disk_metrics", "net_metrics", "container_metrics", "logs", "alerts"}
 	for _, table := range tables {
 		var name string
 		err := s.db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)

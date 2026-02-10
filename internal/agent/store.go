@@ -75,6 +75,19 @@ CREATE TABLE IF NOT EXISTS logs (
 );
 CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_logs_container_ts ON logs(container_id, timestamp);
+
+CREATE TABLE IF NOT EXISTS alerts (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	rule_name    TEXT    NOT NULL,
+	severity     TEXT    NOT NULL,
+	condition    TEXT    NOT NULL,
+	instance_key TEXT    NOT NULL,
+	fired_at     INTEGER NOT NULL,
+	resolved_at  INTEGER,
+	message      TEXT    NOT NULL,
+	acknowledged INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_fired ON alerts(fired_at);
 `
 
 // Store manages SQLite persistence for metrics and logs.
@@ -159,6 +172,19 @@ type ContainerMetrics struct {
 	BlockRead  uint64
 	BlockWrite uint64
 	PIDs       uint64
+}
+
+// Alert represents a fired alert stored in the database.
+type Alert struct {
+	ID           int64
+	RuleName     string
+	Severity     string
+	Condition    string
+	InstanceKey  string
+	FiredAt      time.Time
+	ResolvedAt   *time.Time
+	Message      string
+	Acknowledged bool
 }
 
 // LogEntry represents a single log line from a container.
@@ -281,6 +307,26 @@ func (s *Store) InsertLogs(ctx context.Context, entries []LogEntry) error {
 	return tx.Commit()
 }
 
+func (s *Store) InsertAlert(ctx context.Context, a *Alert) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO alerts (rule_name, severity, condition, instance_key, fired_at, message)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		a.RuleName, a.Severity, a.Condition, a.InstanceKey, a.FiredAt.Unix(), a.Message,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) ResolveAlert(ctx context.Context, id int64, resolvedAt time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE alerts SET resolved_at = ? WHERE id = ?`,
+		resolvedAt.Unix(), id,
+	)
+	return err
+}
+
 // Prune deletes data older than the retention period.
 func (s *Store) Prune(ctx context.Context, retentionDays int) error {
 	cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour).Unix()
@@ -290,6 +336,9 @@ func (s *Store) Prune(ctx context.Context, retentionDays int) error {
 		if _, err := s.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE timestamp < ?", table), cutoff); err != nil {
 			return fmt.Errorf("prune %s: %w", table, err)
 		}
+	}
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM alerts WHERE fired_at < ?", cutoff); err != nil {
+		return fmt.Errorf("prune alerts: %w", err)
 	}
 	return nil
 }
