@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProgressBar(t *testing.T) {
@@ -118,6 +119,25 @@ func TestSparkline(t *testing.T) {
 		got := Sparkline([]float64{1, 2, 3}, 0, &theme)
 		if got != "" {
 			t.Errorf("expected empty string for zero width, got %q", got)
+		}
+	})
+
+	t.Run("low value visible", func(t *testing.T) {
+		// 0.5 with maxVal auto-scaled should still be visible.
+		data := []float64{0.5, 100}
+		got := Sparkline(data, 1, &theme)
+		runes := []rune(stripANSI(got))
+		if len(runes) != 1 {
+			t.Fatalf("expected 1 char, got %d", len(runes))
+		}
+		// Left col (0.5) should have h=1 (clamped), so at least one bit set.
+		if runes[0] == rune(0x2800+0xB8) {
+			// Only right-col bits — left col wasn't clamped. This shouldn't happen.
+		}
+		// Just verify it's not blank (left col has at least 1 dot).
+		leftBits := runes[0] & 0x47 // bits used by left column
+		if leftBits == 0 {
+			t.Errorf("low left value should be visible, got %U", runes[0])
 		}
 	})
 
@@ -373,6 +393,45 @@ func TestGraph(t *testing.T) {
 			t.Fatalf("expected 1 row, got %d", len(lines))
 		}
 	})
+
+	t.Run("low value visible", func(t *testing.T) {
+		// 0.5% CPU with maxVal=100 should still produce a visible braille char (not blank).
+		data := []float64{0.5, 0.5}
+		got := Graph(data, 1, 2, 100, &theme)
+		plain := stripANSI(got)
+		lines := strings.Split(plain, "\n")
+		// Bottom row should have at least one non-blank braille character.
+		lastLine := lines[len(lines)-1]
+		runes := []rune(lastLine)
+		hasVisible := false
+		for _, r := range runes {
+			if r != 0x2800 {
+				hasVisible = true
+			}
+		}
+		if !hasVisible {
+			t.Error("low value should produce visible braille, got all blank")
+		}
+	})
+
+	t.Run("exact codepoints 1row", func(t *testing.T) {
+		// 2 data points: [100, 50], width=1, rows=1, maxVal=100.
+		// totalDots=4. heights=[4, 2].
+		// bottomDot=0, row=0 (only row).
+		// Left: h=4, all 4 dots set: bits 0x01|0x02|0x04|0x40 = 0x47
+		// Right: h=2, dots 0,1: bits 0x08|0x10 = 0x18
+		// Pattern: 0x47|0x18 = 0x5F → U+285F
+		data := []float64{100, 50}
+		got := Graph(data, 1, 1, 100, &theme)
+		runes := []rune(stripANSI(got))
+		if len(runes) != 1 {
+			t.Fatalf("expected 1 char, got %d", len(runes))
+		}
+		expected := rune(0x2800 + 0x5F)
+		if runes[0] != expected {
+			t.Errorf("expected %U, got %U", expected, runes[0])
+		}
+	})
 }
 
 func TestHealthIndicator(t *testing.T) {
@@ -425,6 +484,35 @@ func TestFormatContainerUptime(t *testing.T) {
 			t.Errorf("formatContainerUptime(%q, %d, %d) = %q, want contains %q",
 				tt.state, tt.startedAt, tt.exitCode, got, tt.contains)
 		}
+	}
+}
+
+func TestFormatContainerUptimeRunning(t *testing.T) {
+	// Override nowFn for deterministic test.
+	orig := nowFn
+	defer func() { nowFn = orig }()
+
+	fakeNow := time.Unix(1700100000, 0) // 100000 seconds after startedAt
+	nowFn = func() time.Time { return fakeNow }
+
+	got := formatContainerUptime("running", 1700000000, 0)
+	// 100000 seconds = 1 day + 3 hours + ...
+	if !strings.Contains(got, "up 1d") {
+		t.Errorf("expected 'up 1d', got %q", got)
+	}
+
+	// 3600 seconds = 1h.
+	nowFn = func() time.Time { return time.Unix(1700003600, 0) }
+	got = formatContainerUptime("running", 1700000000, 0)
+	if !strings.Contains(got, "up 1h") {
+		t.Errorf("expected 'up 1h', got %q", got)
+	}
+
+	// 300 seconds = 5m.
+	nowFn = func() time.Time { return time.Unix(1700000300, 0) }
+	got = formatContainerUptime("running", 1700000000, 0)
+	if !strings.Contains(got, "up 5m") {
+		t.Errorf("expected 'up 5m', got %q", got)
 	}
 }
 

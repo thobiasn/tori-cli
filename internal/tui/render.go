@@ -136,6 +136,9 @@ func Sparkline(data []float64, width int, theme *Theme) string {
 			if h > 4 {
 				h = 4
 			}
+			if h < 1 && v > 0 {
+				h = 1
+			}
 			heights[i] = h
 		}
 	}
@@ -213,6 +216,9 @@ func Graph(data []float64, width, rows int, maxVal float64, theme *Theme) string
 		if h < 0 {
 			h = 0
 		}
+		if h < 1 && v > 0 {
+			h = 1
+		}
 		heights[i] = h
 	}
 
@@ -258,25 +264,27 @@ func Graph(data []float64, width, rows int, maxVal float64, theme *Theme) string
 			chars = append(chars, rune(0x2800+int(pattern)))
 		}
 
-		// Pad to width.
-		for len(chars) < width {
-			chars = append([]rune{0x2800}, chars...)
+		// Pad to width (left-pad with empty braille).
+		if pad := width - len(chars); pad > 0 {
+			padded := make([]rune, width)
+			for p := 0; p < pad; p++ {
+				padded[p] = 0x2800
+			}
+			copy(padded[pad:], chars)
+			chars = padded
 		}
 
-		// Color based on the highest value in this row.
-		var maxPct float64
-		for _, v := range data {
-			pct := v / maxVal * 100
-			if pct > maxPct {
-				maxPct = pct
-			}
-		}
-		color := theme.UsageColor(maxPct)
+		// Color based on the vertical position this row represents.
+		rowTopPct := float64(bottomDot+4) / float64(totalDots) * 100
+		color := theme.UsageColor(rowTopPct)
 		rowStrs[r] = lipgloss.NewStyle().Foreground(color).Render(string(chars))
 	}
 
 	return strings.Join(rowStrs, "\n")
 }
+
+// nowFn is the time source for formatContainerUptime. Tests override for determinism.
+var nowFn = time.Now
 
 // formatContainerUptime returns a short uptime string for a container.
 func formatContainerUptime(state string, startedAt int64, exitCode int) string {
@@ -289,7 +297,7 @@ func formatContainerUptime(state string, startedAt int64, exitCode int) string {
 	if startedAt <= 0 {
 		return "—"
 	}
-	secs := time.Now().Unix() - startedAt
+	secs := nowFn().Unix() - startedAt
 	if secs < 0 {
 		secs = 0
 	}

@@ -202,6 +202,61 @@ func TestUpdateDashboardCollapseToggle(t *testing.T) {
 	}
 }
 
+func TestCursorContainerMetrics(t *testing.T) {
+	groups := []containerGroup{
+		{name: "app", containers: []protocol.ContainerMetrics{
+			{ID: "c1", Name: "web"}, {ID: "c2", Name: "db"},
+		}},
+		{name: "other", containers: []protocol.ContainerMetrics{
+			{ID: "c3", Name: "cache"},
+		}},
+	}
+	collapsed := map[string]bool{}
+
+	// cursor=0 → group header "app".
+	g, idx := cursorContainerMetrics(groups, collapsed, 0)
+	if g == nil || g.name != "app" || idx != -1 {
+		t.Errorf("cursor=0: got group=%v idx=%d, want app/-1", g, idx)
+	}
+
+	// cursor=1 → c1.
+	g, idx = cursorContainerMetrics(groups, collapsed, 1)
+	if g == nil || idx != 0 || g.containers[idx].ID != "c1" {
+		t.Errorf("cursor=1: got idx=%d, want c1", idx)
+	}
+
+	// cursor=2 → c2.
+	g, idx = cursorContainerMetrics(groups, collapsed, 2)
+	if g == nil || idx != 1 || g.containers[idx].ID != "c2" {
+		t.Errorf("cursor=2: got idx=%d, want c2", idx)
+	}
+
+	// cursor=3 → group header "other".
+	g, idx = cursorContainerMetrics(groups, collapsed, 3)
+	if g == nil || g.name != "other" || idx != -1 {
+		t.Errorf("cursor=3: got group=%v idx=%d, want other/-1", g, idx)
+	}
+
+	// cursor=4 → c3.
+	g, idx = cursorContainerMetrics(groups, collapsed, 4)
+	if g == nil || idx != 0 || g.containers[idx].ID != "c3" {
+		t.Errorf("cursor=4: got idx=%d, want c3", idx)
+	}
+
+	// Out of range.
+	g, idx = cursorContainerMetrics(groups, collapsed, 99)
+	if g != nil {
+		t.Errorf("cursor=99: expected nil group, got %v", g)
+	}
+
+	// Collapsed group.
+	collapsed["app"] = true
+	g, idx = cursorContainerMetrics(groups, collapsed, 1)
+	if g == nil || g.name != "other" || idx != -1 {
+		t.Errorf("collapsed cursor=1: got group=%v idx=%d, want other/-1", g, idx)
+	}
+}
+
 func TestMaxCursorPos(t *testing.T) {
 	groups := []containerGroup{
 		{name: "app", containers: []protocol.ContainerMetrics{{ID: "c1"}, {ID: "c2"}}},

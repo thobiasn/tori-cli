@@ -126,13 +126,13 @@ func renderDetail(a *App, width, height int) string {
 	// Title.
 	title := "Detail"
 	if ci != nil {
-		title = ci.Name
+		title = stripANSI(ci.Name)
 		if cm != nil {
-			title += " -- " + cm.State
+			title += " -- " + stripANSI(cm.State)
 		}
-		title += " -- " + ci.Image
+		title += " -- " + stripANSI(ci.Image)
 	} else if cm != nil {
-		title = cm.Name + " -- " + cm.State
+		title = stripANSI(cm.Name) + " -- " + stripANSI(cm.State)
 	}
 
 	// Top section: metrics. Enough room for graph rows + info lines.
@@ -165,33 +165,50 @@ func renderDetailMetrics(a *App, s *DetailState, cm *protocol.ContainerMetrics, 
 		return "  Waiting for metrics..."
 	}
 	innerW := width - 2
-	graphW := innerW - 10
-	if graphW < 10 {
-		graphW = 10
-	}
 	graphRows := 2
+	labelW := 5 // " CPU " / " MEM "
 
 	var lines []string
 
 	// CPU graph + percent.
+	cpuVal := fmt.Sprintf("%5.1f%%", cm.CPUPercent)
+	graphW := innerW - labelW - len(cpuVal) - 1
+	if graphW < 10 {
+		graphW = 10
+	}
 	cpuData := historyData(a.cpuHistory, s.containerID)
 	if len(cpuData) > 0 {
 		cpuGraph := Graph(cpuData, graphW, graphRows, 100, theme)
-		for _, gl := range strings.Split(cpuGraph, "\n") {
-			lines = append(lines, " CPU "+gl)
+		for i, gl := range strings.Split(cpuGraph, "\n") {
+			if i == 0 {
+				lines = append(lines, " CPU "+gl+" "+cpuVal)
+			} else {
+				lines = append(lines, strings.Repeat(" ", labelW)+gl)
+			}
 		}
+	} else {
+		lines = append(lines, fmt.Sprintf(" CPU: %s", cpuVal))
 	}
-	lines = append(lines, fmt.Sprintf(" CPU %5.1f%%", cm.CPUPercent))
 
 	// MEM graph + usage.
+	memVal := fmt.Sprintf("%s / %s", FormatBytes(cm.MemUsage), FormatBytes(cm.MemLimit))
+	memGraphW := innerW - labelW - len(memVal) - 1
+	if memGraphW < 10 {
+		memGraphW = 10
+	}
 	memData := historyData(a.memHistory, s.containerID)
 	if len(memData) > 0 {
-		memGraph := Graph(memData, graphW, graphRows, 100, theme)
-		for _, gl := range strings.Split(memGraph, "\n") {
-			lines = append(lines, " MEM "+gl)
+		memGraph := Graph(memData, memGraphW, graphRows, 100, theme)
+		for i, gl := range strings.Split(memGraph, "\n") {
+			if i == 0 {
+				lines = append(lines, " MEM "+gl+" "+memVal)
+			} else {
+				lines = append(lines, strings.Repeat(" ", labelW)+gl)
+			}
 		}
+	} else {
+		lines = append(lines, fmt.Sprintf(" MEM: %s", memVal))
 	}
-	lines = append(lines, fmt.Sprintf(" MEM %s / %s", FormatBytes(cm.MemUsage), FormatBytes(cm.MemLimit)))
 
 	// NET rates.
 	rates := a.rates.ContainerRates[s.containerID]

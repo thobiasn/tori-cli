@@ -26,6 +26,16 @@ type DockerCollector struct {
 	// Cached container list from last Collect, protected by mu.
 	lastContainers []Container
 	mu             sync.RWMutex
+
+	// Cached inspect results for non-running containers to avoid redundant API calls.
+	inspectCache map[string]inspectResult
+}
+
+type inspectResult struct {
+	health       string
+	startedAt    int64
+	restartCount int
+	exitCode     int
 }
 
 type cpuPrev struct {
@@ -43,10 +53,11 @@ func NewDockerCollector(cfg *DockerConfig) (*DockerCollector, error) {
 		return nil, fmt.Errorf("docker client: %w", err)
 	}
 	return &DockerCollector{
-		client:  c,
-		include: cfg.Include,
-		exclude: cfg.Exclude,
-		prevCPU: make(map[string]cpuPrev),
+		client:       c,
+		include:      cfg.Include,
+		exclude:      cfg.Exclude,
+		prevCPU:      make(map[string]cpuPrev),
+		inspectCache: make(map[string]inspectResult),
 	}, nil
 }
 
@@ -145,12 +156,30 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 		}
 
 		// Inspect for health, startedAt, restartCount, exitCode.
-		health, startedAt, restartCount, exitCode := d.inspectContainer(ctx, c.ID)
+		// Cache results for non-running containers; evict running ones for fresh data.
+		image := truncate(c.Image, maxImageLen)
+		var health string
+		var startedAt int64
+		var restartCount, exitCode int
+		if c.State != "running" {
+			if cached, ok := d.inspectCache[c.ID]; ok {
+				health = cached.health
+				startedAt = cached.startedAt
+				restartCount = cached.restartCount
+				exitCode = cached.exitCode
+			} else {
+				health, startedAt, restartCount, exitCode = d.inspectContainer(ctx, c.ID)
+				d.inspectCache[c.ID] = inspectResult{health, startedAt, restartCount, exitCode}
+			}
+		} else {
+			delete(d.inspectCache, c.ID)
+			health, startedAt, restartCount, exitCode = d.inspectContainer(ctx, c.ID)
+		}
 
 		discovered = append(discovered, Container{
 			ID:           c.ID,
 			Name:         name,
-			Image:        c.Image,
+			Image:        image,
 			State:        c.State,
 			Project:      c.Labels["com.docker.compose.project"],
 			Health:       health,
@@ -164,7 +193,7 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 			metrics = append(metrics, ContainerMetrics{
 				ID:           c.ID,
 				Name:         name,
-				Image:        c.Image,
+				Image:        image,
 				State:        c.State,
 				Health:       health,
 				StartedAt:    startedAt,
@@ -174,13 +203,13 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 			continue
 		}
 
-		m, err := d.containerStats(ctx, c.ID, name, c.Image, c.State)
+		m, err := d.containerStats(ctx, c.ID, name, image, c.State)
 		if err != nil {
 			slog.Warn("failed to get container stats", "container", name, "error", err)
 			metrics = append(metrics, ContainerMetrics{
 				ID:           c.ID,
 				Name:         name,
-				Image:        c.Image,
+				Image:        image,
 				State:        c.State,
 				Health:       health,
 				StartedAt:    startedAt,
@@ -200,8 +229,21 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 	d.lastContainers = discovered
 	d.mu.Unlock()
 
+	// Evict stale inspect cache entries for containers no longer present.
+	seen := make(map[string]bool, len(discovered))
+	for _, c := range discovered {
+		seen[c.ID] = true
+	}
+	for id := range d.inspectCache {
+		if !seen[id] {
+			delete(d.inspectCache, id)
+		}
+	}
+
 	return metrics, discovered, nil
 }
+
+const maxHealthLen = 64
 
 // inspectContainer calls ContainerInspect and extracts health, startedAt, restartCount, exitCode.
 func (d *DockerCollector) inspectContainer(ctx context.Context, id string) (health string, startedAt int64, restartCount int, exitCode int) {
@@ -212,7 +254,7 @@ func (d *DockerCollector) inspectContainer(ctx context.Context, id string) (heal
 	}
 	if inspect.State != nil {
 		if inspect.State.Health != nil {
-			health = inspect.State.Health.Status
+			health = truncate(inspect.State.Health.Status, maxHealthLen)
 		}
 		if t, err := time.Parse(time.RFC3339Nano, inspect.State.StartedAt); err == nil {
 			startedAt = t.Unix()

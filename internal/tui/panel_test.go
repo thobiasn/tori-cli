@@ -113,6 +113,68 @@ func TestRenderContainerPanel(t *testing.T) {
 	}
 }
 
+func TestRenderSelectedPanelContainer(t *testing.T) {
+	a := newTestApp()
+	a.containers = []protocol.ContainerMetrics{
+		{ID: "c1", Name: "web", State: "running", CPUPercent: 5.5, MemUsage: 128 * 1024 * 1024, MemLimit: 512 * 1024 * 1024, Image: "nginx:latest"},
+	}
+	a.contInfo = []protocol.ContainerInfo{
+		{ID: "c1", Name: "web", Project: "app"},
+	}
+	a.dash.groups = buildGroups(a.containers, a.contInfo)
+	a.dash.cursor = 1 // First container.
+
+	// Add some CPU history.
+	a.cpuHistory["c1"] = NewRingBuffer[float64](60)
+	for i := 0; i < 10; i++ {
+		a.cpuHistory["c1"].Push(float64(i * 10))
+	}
+
+	got := renderSelectedPanel(&a, 50, 15, &a.theme)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "web") {
+		t.Error("should contain container name 'web'")
+	}
+	if !strings.Contains(plain, "CPU") {
+		t.Error("should contain CPU label")
+	}
+	if !strings.Contains(plain, "nginx") {
+		t.Error("should contain image name")
+	}
+}
+
+func TestRenderSelectedPanelGroupHeader(t *testing.T) {
+	a := newTestApp()
+	a.containers = []protocol.ContainerMetrics{
+		{ID: "c1", Name: "web", State: "running", CPUPercent: 5.0, MemUsage: 100e6},
+		{ID: "c2", Name: "db", State: "running", CPUPercent: 3.0, MemUsage: 200e6},
+	}
+	a.contInfo = []protocol.ContainerInfo{
+		{ID: "c1", Name: "web", Project: "app"},
+		{ID: "c2", Name: "db", Project: "app"},
+	}
+	a.dash.groups = buildGroups(a.containers, a.contInfo)
+	a.dash.cursor = 0 // Group header.
+
+	got := renderSelectedPanel(&a, 50, 10, &a.theme)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "Group: app") {
+		t.Error("should show group summary title")
+	}
+	if !strings.Contains(plain, "2/2 running") {
+		t.Error("should show running count")
+	}
+}
+
+func TestRenderSelectedPanelNoSelection(t *testing.T) {
+	a := newTestApp()
+	got := renderSelectedPanel(&a, 50, 10, &a.theme)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "Move cursor") {
+		t.Error("should show hint when no container selected")
+	}
+}
+
 func TestRenderContainerPanelCollapsed(t *testing.T) {
 	theme := DefaultTheme()
 	groups := []containerGroup{

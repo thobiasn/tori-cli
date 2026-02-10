@@ -58,34 +58,51 @@ func renderContainerSelected(a *App, c *protocol.ContainerMetrics, width, height
 
 	// State + health.
 	stateColor := theme.StateColor(c.State)
-	stateStr := lipgloss.NewStyle().Foreground(stateColor).Render(c.State)
+	stateStr := lipgloss.NewStyle().Foreground(stateColor).Render(stripANSI(c.State))
 	healthStr := theme.HealthIndicator(c.Health)
 	lines = append(lines, fmt.Sprintf(" %s %s", stateStr, healthStr))
 
 	// CPU mini graph.
 	cpuData := historyData(a.cpuHistory, c.ID)
 	graphRows := 2
-	graphW := innerW - 10
+	labelW := 5 // " CPU " / " MEM "
+	cpuVal := fmt.Sprintf("%5.1f%%", c.CPUPercent)
+	graphW := innerW - labelW - len(cpuVal) - 1
 	if graphW < 10 {
 		graphW = 10
 	}
 	if len(cpuData) > 0 {
 		cpuGraph := Graph(cpuData, graphW, graphRows, 100, theme)
-		for _, line := range strings.Split(cpuGraph, "\n") {
-			lines = append(lines, " CPU "+line)
+		for i, line := range strings.Split(cpuGraph, "\n") {
+			if i == 0 {
+				lines = append(lines, " CPU "+line+" "+cpuVal)
+			} else {
+				lines = append(lines, strings.Repeat(" ", labelW)+line)
+			}
 		}
+	} else {
+		lines = append(lines, fmt.Sprintf(" CPU: %s", cpuVal))
 	}
-	lines = append(lines, fmt.Sprintf(" CPU: %5.1f%%", c.CPUPercent))
 
 	// MEM mini graph.
 	memData := historyData(a.memHistory, c.ID)
-	if len(memData) > 0 {
-		memGraph := Graph(memData, graphW, graphRows, 100, theme)
-		for _, line := range strings.Split(memGraph, "\n") {
-			lines = append(lines, " MEM "+line)
-		}
+	memVal := fmt.Sprintf("%s / %s", FormatBytes(c.MemUsage), FormatBytes(c.MemLimit))
+	memGraphW := innerW - labelW - len(memVal) - 1
+	if memGraphW < 10 {
+		memGraphW = 10
 	}
-	lines = append(lines, fmt.Sprintf(" MEM: %s / %s", FormatBytes(c.MemUsage), FormatBytes(c.MemLimit)))
+	if len(memData) > 0 {
+		memGraph := Graph(memData, memGraphW, graphRows, 100, theme)
+		for i, line := range strings.Split(memGraph, "\n") {
+			if i == 0 {
+				lines = append(lines, " MEM "+line+" "+memVal)
+			} else {
+				lines = append(lines, strings.Repeat(" ", labelW)+line)
+			}
+		}
+	} else {
+		lines = append(lines, fmt.Sprintf(" MEM: %s", memVal))
+	}
 
 	// NET/BLK rates.
 	rates := a.rates.ContainerRates[c.ID]
@@ -103,7 +120,7 @@ func renderContainerSelected(a *App, c *protocol.ContainerMetrics, width, height
 
 	// Uptime and image.
 	uptime := formatContainerUptime(c.State, c.StartedAt, c.ExitCode)
-	lines = append(lines, fmt.Sprintf(" %s  %s", uptime, Truncate(c.Image, innerW-lipgloss.Width(uptime)-4)))
+	lines = append(lines, fmt.Sprintf(" %s  %s", uptime, Truncate(stripANSI(c.Image), innerW-lipgloss.Width(uptime)-4)))
 
 	// Separator + disk/net context.
 	lines = append(lines, lipgloss.NewStyle().Foreground(theme.Muted).Render(" "+strings.Repeat("─", innerW-2)))
@@ -119,6 +136,6 @@ func renderContainerSelected(a *App, c *protocol.ContainerMetrics, width, height
 		rxStyle.Render("▼"), FormatBytesRate(a.rates.NetRxRate),
 		txStyle.Render("▲"), FormatBytesRate(a.rates.NetTxRate)))
 
-	title := "Selected: " + c.Name
+	title := "Selected: " + stripANSI(c.Name)
 	return Box(title, strings.Join(lines, "\n"), width, height, theme)
 }

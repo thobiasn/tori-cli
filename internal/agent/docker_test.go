@@ -226,6 +226,66 @@ func TestUpdateContainerState(t *testing.T) {
 	}
 }
 
+func TestInspectCache(t *testing.T) {
+	d := &DockerCollector{
+		prevCPU:      make(map[string]cpuPrev),
+		inspectCache: make(map[string]inspectResult),
+	}
+
+	// Simulate caching for a non-running container.
+	d.inspectCache["c1"] = inspectResult{
+		health: "none", startedAt: 1000, restartCount: 2, exitCode: 137,
+	}
+
+	cached, ok := d.inspectCache["c1"]
+	if !ok {
+		t.Fatal("expected c1 in cache")
+	}
+	if cached.health != "none" || cached.exitCode != 137 {
+		t.Errorf("cached values wrong: %+v", cached)
+	}
+
+	// Evict running container.
+	delete(d.inspectCache, "c1")
+	if _, ok := d.inspectCache["c1"]; ok {
+		t.Error("c1 should be evicted")
+	}
+}
+
+func TestInspectCacheStaleEviction(t *testing.T) {
+	d := &DockerCollector{
+		prevCPU:      make(map[string]cpuPrev),
+		inspectCache: make(map[string]inspectResult),
+	}
+
+	// Populate cache with entries.
+	d.inspectCache["c1"] = inspectResult{health: "none"}
+	d.inspectCache["c2"] = inspectResult{health: "none"}
+	d.inspectCache["c3"] = inspectResult{health: "none"}
+
+	// Simulate end-of-Collect cleanup: only c1 and c3 are discovered.
+	discovered := []Container{{ID: "c1"}, {ID: "c3"}}
+	seen := make(map[string]bool, len(discovered))
+	for _, c := range discovered {
+		seen[c.ID] = true
+	}
+	for id := range d.inspectCache {
+		if !seen[id] {
+			delete(d.inspectCache, id)
+		}
+	}
+
+	if _, ok := d.inspectCache["c2"]; ok {
+		t.Error("c2 should be evicted (not in discovered)")
+	}
+	if _, ok := d.inspectCache["c1"]; !ok {
+		t.Error("c1 should remain in cache")
+	}
+	if _, ok := d.inspectCache["c3"]; !ok {
+		t.Error("c3 should remain in cache")
+	}
+}
+
 func TestMatchFilterExported(t *testing.T) {
 	d := &DockerCollector{include: []string{"web-*"}, exclude: []string{"web-test"}}
 	if !d.MatchFilter("web-prod") {

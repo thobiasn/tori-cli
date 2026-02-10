@@ -50,7 +50,7 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 		// Container rows.
 		for _, c := range g.containers {
 			indicator := theme.StateIndicator(c.State)
-			name := Truncate(c.Name, nameW)
+			name := Truncate(stripANSI(c.Name), nameW)
 			health := theme.HealthIndicator(c.Health)
 			uptime := formatContainerUptime(c.State, c.StartedAt, c.ExitCode)
 			restarts := formatRestarts(c.RestartCount, theme)

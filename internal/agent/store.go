@@ -146,7 +146,7 @@ func (s *Store) ensureColumns() {
 	for _, stmt := range migrations {
 		_, err := s.db.Exec(stmt)
 		if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-			slog.Warn("migration", "stmt", stmt, "error", err)
+			slog.Warn("migration failed", "error", err)
 		}
 	}
 }
