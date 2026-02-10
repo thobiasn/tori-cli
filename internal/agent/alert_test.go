@@ -711,6 +711,71 @@ func TestDeterministicRuleOrder(t *testing.T) {
 	}
 }
 
+func TestAlertSilence(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"high_cpu": {
+			Condition: "host.cpu_percent > 90",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, _ := testAlerter(t, alerts)
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Silence for 1 minute.
+	a.Silence("high_cpu", 1*time.Minute)
+
+	if !a.isSilenced("high_cpu") {
+		t.Fatal("expected silenced")
+	}
+
+	// Advance past silence duration.
+	now = now.Add(2 * time.Minute)
+	if a.isSilenced("high_cpu") {
+		t.Fatal("expected silence expired")
+	}
+
+	// Non-silenced rule.
+	if a.isSilenced("nonexistent") {
+		t.Fatal("nonexistent rule should not be silenced")
+	}
+}
+
+func TestAlertStateChangeCallback(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"high_cpu": {
+			Condition: "host.cpu_percent > 90",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, _ := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	var callbacks []string
+	a.onStateChange = func(alert *Alert, state string) {
+		callbacks = append(callbacks, state)
+	}
+
+	// Fire.
+	a.Evaluate(ctx, &MetricSnapshot{Host: &HostMetrics{CPUPercent: 95}})
+	// Resolve.
+	now = now.Add(10 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{Host: &HostMetrics{CPUPercent: 50}})
+
+	if len(callbacks) != 2 {
+		t.Fatalf("expected 2 callbacks, got %d", len(callbacks))
+	}
+	if callbacks[0] != "firing" || callbacks[1] != "resolved" {
+		t.Errorf("callbacks = %v, want [firing, resolved]", callbacks)
+	}
+}
+
 func TestNilDiskSnapshotDoesNotFalseResolve(t *testing.T) {
 	alerts := map[string]AlertConfig{
 		"disk_full": {

@@ -1,0 +1,305 @@
+package protocol
+
+import (
+	"bytes"
+	"testing"
+
+	"github.com/vmihailenco/msgpack/v5"
+)
+
+func TestMetricsUpdateRoundtrip(t *testing.T) {
+	orig := MetricsUpdate{
+		Timestamp: 1700000000,
+		Host: &HostMetrics{
+			CPUPercent: 45.5, MemTotal: 16e9, MemUsed: 8e9, MemPercent: 50,
+			SwapTotal: 4e9, SwapUsed: 1e9, Load1: 1.5, Load5: 1.2, Load15: 0.9, Uptime: 86400,
+		},
+		Disks: []DiskMetrics{
+			{Mountpoint: "/", Device: "/dev/sda1", Total: 100e9, Used: 50e9, Free: 50e9, Percent: 50},
+		},
+		Networks: []NetMetrics{
+			{Iface: "eth0", RxBytes: 1000, TxBytes: 500, RxPackets: 10, TxPackets: 5},
+		},
+		Containers: []ContainerMetrics{
+			{ID: "abc123", Name: "web", Image: "nginx", State: "running", CPUPercent: 5, MemUsage: 100e6, MemLimit: 512e6, MemPercent: 19.5},
+		},
+	}
+
+	env, err := NewEnvelope(TypeMetricsUpdate, 0, &orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := WriteMsg(&buf, env); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadMsg(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != TypeMetricsUpdate {
+		t.Fatalf("type = %q, want %q", got.Type, TypeMetricsUpdate)
+	}
+
+	var decoded MetricsUpdate
+	if err := DecodeBody(got.Body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Timestamp != orig.Timestamp {
+		t.Errorf("timestamp = %d, want %d", decoded.Timestamp, orig.Timestamp)
+	}
+	if decoded.Host.CPUPercent != orig.Host.CPUPercent {
+		t.Errorf("host cpu = %f, want %f", decoded.Host.CPUPercent, orig.Host.CPUPercent)
+	}
+	if len(decoded.Disks) != 1 || decoded.Disks[0].Mountpoint != "/" {
+		t.Errorf("disks mismatch: %+v", decoded.Disks)
+	}
+	if len(decoded.Networks) != 1 || decoded.Networks[0].Iface != "eth0" {
+		t.Errorf("networks mismatch: %+v", decoded.Networks)
+	}
+	if len(decoded.Containers) != 1 || decoded.Containers[0].ID != "abc123" {
+		t.Errorf("containers mismatch: %+v", decoded.Containers)
+	}
+}
+
+func TestLogEntryMsgRoundtrip(t *testing.T) {
+	orig := LogEntryMsg{
+		Timestamp:     1700000000,
+		ContainerID:   "abc123",
+		ContainerName: "web",
+		Stream:        "stdout",
+		Message:       "hello world",
+	}
+
+	env, err := NewEnvelope(TypeLogEntry, 0, &orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := WriteMsg(&buf, env); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadMsg(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded LogEntryMsg
+	if err := DecodeBody(got.Body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded != orig {
+		t.Errorf("got %+v, want %+v", decoded, orig)
+	}
+}
+
+func TestAlertEventRoundtrip(t *testing.T) {
+	orig := AlertEvent{
+		ID: 42, RuleName: "high_cpu", Severity: "critical",
+		Condition: "host.cpu_percent > 90", InstanceKey: "high_cpu",
+		FiredAt: 1700000000, Message: "CPU high", State: "firing",
+	}
+
+	env, err := NewEnvelope(TypeAlertEvent, 0, &orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := WriteMsg(&buf, env); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadMsg(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded AlertEvent
+	if err := DecodeBody(got.Body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded != orig {
+		t.Errorf("got %+v, want %+v", decoded, orig)
+	}
+}
+
+func TestQueryMessagesRoundtrip(t *testing.T) {
+	tests := []struct {
+		name string
+		typ  MsgType
+		body any
+	}{
+		{"QueryMetricsReq", TypeQueryMetrics, &QueryMetricsReq{Start: 1000, End: 2000}},
+		{"QueryLogsReq", TypeQueryLogs, &QueryLogsReq{Start: 1000, End: 2000, ContainerID: "abc", Stream: "stdout", Search: "error", Limit: 500}},
+		{"QueryAlertsReq", TypeQueryAlerts, &QueryAlertsReq{Start: 1000, End: 2000}},
+		{"AckAlertReq", TypeActionAckAlert, &AckAlertReq{AlertID: 42}},
+		{"SilenceAlertReq", TypeActionSilence, &SilenceAlertReq{RuleName: "high_cpu", Duration: 3600}},
+		{"RestartContainerReq", TypeActionRestart, &RestartContainerReq{ContainerID: "abc123"}},
+		{"SubscribeLogs", TypeSubscribeLogs, &SubscribeLogs{ContainerID: "abc", Project: "myapp", Stream: "stderr", Search: "panic"}},
+		{"Unsubscribe", TypeUnsubscribe, &Unsubscribe{Topic: "metrics"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env, err := NewEnvelope(tt.typ, 1, tt.body)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var buf bytes.Buffer
+			if err := WriteMsg(&buf, env); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := ReadMsg(&buf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Type != tt.typ {
+				t.Errorf("type = %q, want %q", got.Type, tt.typ)
+			}
+			if got.ID != 1 {
+				t.Errorf("id = %d, want 1", got.ID)
+			}
+		})
+	}
+}
+
+func TestResponseRoundtrip(t *testing.T) {
+	t.Run("Result", func(t *testing.T) {
+		orig := Result{OK: true, Message: "done"}
+		env, err := NewEnvelope(TypeResult, 5, &orig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var buf bytes.Buffer
+		if err := WriteMsg(&buf, env); err != nil {
+			t.Fatal(err)
+		}
+		got, err := ReadMsg(&buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded Result
+		if err := DecodeBody(got.Body, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded != orig {
+			t.Errorf("got %+v, want %+v", decoded, orig)
+		}
+	})
+
+	t.Run("ErrorResult", func(t *testing.T) {
+		orig := ErrorResult{Error: "not found"}
+		env, err := NewEnvelope(TypeError, 5, &orig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var buf bytes.Buffer
+		if err := WriteMsg(&buf, env); err != nil {
+			t.Fatal(err)
+		}
+		got, err := ReadMsg(&buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded ErrorResult
+		if err := DecodeBody(got.Body, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded != orig {
+			t.Errorf("got %+v, want %+v", decoded, orig)
+		}
+	})
+
+	t.Run("QueryContainersResp", func(t *testing.T) {
+		orig := QueryContainersResp{
+			Containers: []ContainerInfo{
+				{ID: "abc", Name: "web", Image: "nginx", State: "running", Project: "myapp"},
+			},
+		}
+		env, err := NewEnvelope(TypeResult, 3, &orig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var buf bytes.Buffer
+		if err := WriteMsg(&buf, env); err != nil {
+			t.Fatal(err)
+		}
+		got, err := ReadMsg(&buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded QueryContainersResp
+		if err := DecodeBody(got.Body, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if len(decoded.Containers) != 1 || decoded.Containers[0].Project != "myapp" {
+			t.Errorf("containers mismatch: %+v", decoded.Containers)
+		}
+	})
+}
+
+func TestNewEnvelopeNoBody(t *testing.T) {
+	env := NewEnvelopeNoBody(TypeSubscribeMetrics, 1)
+	if env.Type != TypeSubscribeMetrics {
+		t.Errorf("type = %q, want %q", env.Type, TypeSubscribeMetrics)
+	}
+	if env.ID != 1 {
+		t.Errorf("id = %d, want 1", env.ID)
+	}
+	if env.Body != nil {
+		t.Errorf("body should be nil, got %v", env.Body)
+	}
+
+	// Should still round-trip.
+	var buf bytes.Buffer
+	if err := WriteMsg(&buf, env); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadMsg(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != TypeSubscribeMetrics {
+		t.Errorf("type = %q, want %q", got.Type, TypeSubscribeMetrics)
+	}
+}
+
+func TestTimedMetricsRoundtrip(t *testing.T) {
+	orig := QueryMetricsResp{
+		Host: []TimedHostMetrics{
+			{Timestamp: 1700000000, HostMetrics: HostMetrics{CPUPercent: 45.5, MemTotal: 16e9}},
+		},
+		Disks: []TimedDiskMetrics{
+			{Timestamp: 1700000000, DiskMetrics: DiskMetrics{Mountpoint: "/", Total: 100e9}},
+		},
+		Networks: []TimedNetMetrics{
+			{Timestamp: 1700000000, NetMetrics: NetMetrics{Iface: "eth0", RxBytes: 1000}},
+		},
+		Containers: []TimedContainerMetrics{
+			{Timestamp: 1700000000, ContainerMetrics: ContainerMetrics{ID: "abc", Name: "web"}},
+		},
+	}
+
+	raw, err := msgpack.Marshal(&orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded QueryMetricsResp
+	if err := msgpack.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Host) != 1 || decoded.Host[0].CPUPercent != 45.5 {
+		t.Errorf("host mismatch: %+v", decoded.Host)
+	}
+	if len(decoded.Containers) != 1 || decoded.Containers[0].ID != "abc" {
+		t.Errorf("containers mismatch: %+v", decoded.Containers)
+	}
+}

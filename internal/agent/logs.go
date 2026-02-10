@@ -25,6 +25,7 @@ type LogTailer struct {
 	tailers map[string]context.CancelFunc // container ID -> cancel
 	mu      sync.Mutex
 	wg      sync.WaitGroup
+	onEntry func(LogEntry) // called for each log entry, if set
 }
 
 // NewLogTailer creates a new log tailer.
@@ -152,6 +153,9 @@ func (lt *LogTailer) tail(ctx context.Context, containerID, containerName string
 			if !ok {
 				flush()
 				return
+			}
+			if lt.onEntry != nil {
+				lt.onEntry(entry)
 			}
 			batch = append(batch, entry)
 			if len(batch) >= logBatchSize {

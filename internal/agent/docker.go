@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"sync"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
@@ -20,6 +21,10 @@ type DockerCollector struct {
 
 	// Previous CPU readings per container for delta calculation.
 	prevCPU map[string]cpuPrev
+
+	// Cached container list from last Collect, protected by mu.
+	lastContainers []Container
+	mu             sync.RWMutex
 }
 
 type cpuPrev struct {
@@ -54,6 +59,15 @@ func (d *DockerCollector) Client() *client.Client {
 	return d.client
 }
 
+// Containers returns a copy of the most recently discovered containers.
+func (d *DockerCollector) Containers() []Container {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	out := make([]Container, len(d.lastContainers))
+	copy(out, d.lastContainers)
+	return out
+}
+
 // RestartContainer restarts a container by ID with a 10-second timeout.
 func (d *DockerCollector) RestartContainer(ctx context.Context, containerID string) error {
 	timeout := 10
@@ -62,10 +76,11 @@ func (d *DockerCollector) RestartContainer(ctx context.Context, containerID stri
 
 // Container represents a discovered container with basic info.
 type Container struct {
-	ID    string
-	Name  string
-	Image string
-	State string
+	ID      string
+	Name    string
+	Image   string
+	State   string
+	Project string // compose project from label
 }
 
 // Collect lists containers, gets stats for each, and returns metrics.
@@ -85,10 +100,11 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 		}
 
 		discovered = append(discovered, Container{
-			ID:    c.ID,
-			Name:  name,
-			Image: c.Image,
-			State: c.State,
+			ID:      c.ID,
+			Name:    name,
+			Image:   c.Image,
+			State:   c.State,
+			Project: c.Labels["com.docker.compose.project"],
 		})
 
 		// Only get stats for running containers.
@@ -115,6 +131,10 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 		}
 		metrics = append(metrics, *m)
 	}
+
+	d.mu.Lock()
+	d.lastContainers = discovered
+	d.mu.Unlock()
 
 	return metrics, discovered, nil
 }

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -162,6 +163,11 @@ type Alerter struct {
 	docker    *DockerCollector
 	now       func() time.Time
 	restartFn func(ctx context.Context, containerID string) error // injectable for tests
+
+	onStateChange func(a *Alert, state string) // called on "firing" / "resolved"
+
+	silences   map[string]time.Time // rule name -> silenced until
+	silencesMu sync.Mutex
 }
 
 // NewAlerter creates an Alerter from the config's alert rules.
@@ -172,6 +178,7 @@ func NewAlerter(alerts map[string]AlertConfig, store *Store, notifier *Notifier,
 		notifier:  notifier,
 		docker:    docker,
 		now:       time.Now,
+		silences:  make(map[string]time.Time),
 	}
 
 	// Sort rule names for deterministic evaluation order.
@@ -330,24 +337,35 @@ func (a *Alerter) transition(ctx context.Context, r *alertRule, key string, matc
 func (a *Alerter) fire(ctx context.Context, r *alertRule, key string, inst *alertInstance, now time.Time, containerID, label string) {
 	inst.firedAt = now
 
+	condStr := r.condition.Scope + "." + r.condition.Field + " " + r.condition.Op + " " + conditionValue(&r.condition)
 	msg := fmt.Sprintf("[%s] %s: %s", r.severity, r.name, r.condition.Scope+"."+r.condition.Field)
 	if label != "" {
 		msg += " (" + label + ")"
 	}
 	slog.Warn("alert firing", "rule", r.name, "key", key)
 
-	id, err := a.store.InsertAlert(ctx, &Alert{
+	alert := &Alert{
 		RuleName:    r.name,
 		Severity:    r.severity,
-		Condition:   r.condition.Scope + "." + r.condition.Field + " " + r.condition.Op + " " + conditionValue(&r.condition),
+		Condition:   condStr,
 		InstanceKey: key,
 		FiredAt:     now,
 		Message:     msg,
-	})
+	}
+	id, err := a.store.InsertAlert(ctx, alert)
 	if err != nil {
 		slog.Error("insert alert", "error", err)
 	}
 	inst.dbID = id
+	alert.ID = id
+
+	if a.onStateChange != nil {
+		a.onStateChange(alert, "firing")
+	}
+
+	if a.isSilenced(r.name) {
+		return
+	}
 
 	for _, action := range r.actions {
 		switch action {
@@ -366,6 +384,14 @@ func (a *Alerter) resolve(ctx context.Context, key string, inst *alertInstance, 
 	if inst.dbID > 0 {
 		if err := a.store.ResolveAlert(ctx, inst.dbID, now); err != nil {
 			slog.Error("resolve alert", "error", err)
+		}
+		if a.onStateChange != nil {
+			a.onStateChange(&Alert{
+				ID:         inst.dbID,
+				InstanceKey: key,
+				FiredAt:    inst.firedAt,
+				ResolvedAt: &now,
+			}, "resolved")
 		}
 	}
 
@@ -397,6 +423,27 @@ func (a *Alerter) doRestart(ctx context.Context, r *alertRule, inst *alertInstan
 	}
 	inst.restarts++
 	slog.Info("restarted container", "rule", r.name, "container", containerID, "restarts", inst.restarts)
+}
+
+// Silence suppresses notifications for a rule for the given duration.
+func (a *Alerter) Silence(ruleName string, dur time.Duration) {
+	a.silencesMu.Lock()
+	defer a.silencesMu.Unlock()
+	a.silences[ruleName] = a.now().Add(dur)
+}
+
+func (a *Alerter) isSilenced(ruleName string) bool {
+	a.silencesMu.Lock()
+	defer a.silencesMu.Unlock()
+	until, ok := a.silences[ruleName]
+	if !ok {
+		return false
+	}
+	if a.now().After(until) {
+		delete(a.silences, ruleName)
+		return false
+	}
+	return true
 }
 
 func conditionValue(c *Condition) string {

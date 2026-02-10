@@ -327,6 +327,240 @@ func (s *Store) ResolveAlert(ctx context.Context, id int64, resolvedAt time.Time
 	return err
 }
 
+// --- Query types ---
+
+// TimedHostMetrics is a HostMetrics with a timestamp.
+type TimedHostMetrics struct {
+	Timestamp time.Time
+	HostMetrics
+}
+
+// TimedDiskMetrics is a DiskMetrics with a timestamp.
+type TimedDiskMetrics struct {
+	Timestamp time.Time
+	DiskMetrics
+}
+
+// TimedNetMetrics is a NetMetrics with a timestamp.
+type TimedNetMetrics struct {
+	Timestamp time.Time
+	NetMetrics
+}
+
+// TimedContainerMetrics is a ContainerMetrics with a timestamp.
+type TimedContainerMetrics struct {
+	Timestamp time.Time
+	ContainerMetrics
+}
+
+// LogFilter specifies query parameters for log retrieval.
+type LogFilter struct {
+	Start        int64  // unix seconds
+	End          int64  // unix seconds
+	ContainerIDs []string
+	Stream       string
+	Search       string
+	Limit        int
+}
+
+func (s *Store) QueryHostMetrics(ctx context.Context, start, end int64) ([]TimedHostMetrics, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT timestamp, cpu_percent, mem_total, mem_used, mem_percent, swap_total, swap_used, load1, load5, load15, uptime
+		 FROM host_metrics WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp`, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []TimedHostMetrics
+	for rows.Next() {
+		var t TimedHostMetrics
+		var ts int64
+		if err := rows.Scan(&ts, &t.CPUPercent, &t.MemTotal, &t.MemUsed, &t.MemPercent,
+			&t.SwapTotal, &t.SwapUsed, &t.Load1, &t.Load5, &t.Load15, &t.Uptime); err != nil {
+			return nil, err
+		}
+		t.Timestamp = time.Unix(ts, 0)
+		result = append(result, t)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) QueryDiskMetrics(ctx context.Context, start, end int64) ([]TimedDiskMetrics, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT timestamp, mountpoint, device, total, used, free, percent
+		 FROM disk_metrics WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp`, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []TimedDiskMetrics
+	for rows.Next() {
+		var t TimedDiskMetrics
+		var ts int64
+		if err := rows.Scan(&ts, &t.Mountpoint, &t.Device, &t.Total, &t.Used, &t.Free, &t.Percent); err != nil {
+			return nil, err
+		}
+		t.Timestamp = time.Unix(ts, 0)
+		result = append(result, t)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) QueryNetMetrics(ctx context.Context, start, end int64) ([]TimedNetMetrics, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT timestamp, iface, rx_bytes, tx_bytes, rx_packets, tx_packets, rx_errors, tx_errors
+		 FROM net_metrics WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp`, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []TimedNetMetrics
+	for rows.Next() {
+		var t TimedNetMetrics
+		var ts int64
+		if err := rows.Scan(&ts, &t.Iface, &t.RxBytes, &t.TxBytes, &t.RxPackets, &t.TxPackets, &t.RxErrors, &t.TxErrors); err != nil {
+			return nil, err
+		}
+		t.Timestamp = time.Unix(ts, 0)
+		result = append(result, t)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) QueryContainerMetrics(ctx context.Context, start, end int64) ([]TimedContainerMetrics, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT timestamp, id, name, image, state, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids
+		 FROM container_metrics WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp`, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []TimedContainerMetrics
+	for rows.Next() {
+		var t TimedContainerMetrics
+		var ts int64
+		if err := rows.Scan(&ts, &t.ID, &t.Name, &t.Image, &t.State,
+			&t.CPUPercent, &t.MemUsage, &t.MemLimit, &t.MemPercent,
+			&t.NetRx, &t.NetTx, &t.BlockRead, &t.BlockWrite, &t.PIDs); err != nil {
+			return nil, err
+		}
+		t.Timestamp = time.Unix(ts, 0)
+		result = append(result, t)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) {
+	query := `SELECT timestamp, container_id, container_name, stream, message FROM logs WHERE timestamp >= ? AND timestamp <= ?`
+	args := []any{f.Start, f.End}
+
+	if len(f.ContainerIDs) == 1 {
+		query += ` AND container_id = ?`
+		args = append(args, f.ContainerIDs[0])
+	} else if len(f.ContainerIDs) > 1 {
+		placeholders := make([]string, len(f.ContainerIDs))
+		for i, id := range f.ContainerIDs {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		query += ` AND container_id IN (` + joinStrings(placeholders, ",") + `)`
+	}
+	if f.Stream != "" {
+		query += ` AND stream = ?`
+		args = append(args, f.Stream)
+	}
+	if f.Search != "" {
+		query += ` AND message LIKE ?`
+		args = append(args, "%"+f.Search+"%")
+	}
+
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 1000
+	}
+	query += ` ORDER BY timestamp DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []LogEntry
+	for rows.Next() {
+		var e LogEntry
+		var ts int64
+		if err := rows.Scan(&ts, &e.ContainerID, &e.ContainerName, &e.Stream, &e.Message); err != nil {
+			return nil, err
+		}
+		e.Timestamp = time.Unix(ts, 0)
+		result = append(result, e)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) QueryAlerts(ctx context.Context, start, end int64) ([]Alert, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, rule_name, severity, condition, instance_key, fired_at, resolved_at, message, acknowledged
+		 FROM alerts WHERE fired_at >= ? AND fired_at <= ? ORDER BY fired_at DESC`, start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []Alert
+	for rows.Next() {
+		var a Alert
+		var firedAt int64
+		var resolvedAt *int64
+		var ack int
+		if err := rows.Scan(&a.ID, &a.RuleName, &a.Severity, &a.Condition, &a.InstanceKey,
+			&firedAt, &resolvedAt, &a.Message, &ack); err != nil {
+			return nil, err
+		}
+		a.FiredAt = time.Unix(firedAt, 0)
+		if resolvedAt != nil {
+			t := time.Unix(*resolvedAt, 0)
+			a.ResolvedAt = &t
+		}
+		a.Acknowledged = ack != 0
+		result = append(result, a)
+	}
+	return result, rows.Err()
+}
+
+// AckAlert marks an alert as acknowledged.
+func (s *Store) AckAlert(ctx context.Context, id int64) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE alerts SET acknowledged = 1 WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("alert %d not found", id)
+	}
+	return nil
+}
+
+func joinStrings(s []string, sep string) string {
+	result := ""
+	for i, v := range s {
+		if i > 0 {
+			result += sep
+		}
+		result += v
+	}
+	return result
+}
+
 // Prune deletes data older than the retention period.
 func (s *Store) Prune(ctx context.Context, retentionDays int) error {
 	cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour).Unix()

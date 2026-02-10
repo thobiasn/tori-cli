@@ -309,6 +309,240 @@ func TestPruneAlerts(t *testing.T) {
 	}
 }
 
+func TestQueryHostMetrics(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := t1.Add(10 * time.Second)
+	t3 := t1.Add(20 * time.Second)
+
+	s.InsertHostMetrics(ctx, t1, &HostMetrics{CPUPercent: 10})
+	s.InsertHostMetrics(ctx, t2, &HostMetrics{CPUPercent: 20})
+	s.InsertHostMetrics(ctx, t3, &HostMetrics{CPUPercent: 30})
+
+	results, err := s.QueryHostMetrics(ctx, t1.Unix(), t2.Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	if results[0].CPUPercent != 10 || results[1].CPUPercent != 20 {
+		t.Errorf("cpu values = %f, %f; want 10, 20", results[0].CPUPercent, results[1].CPUPercent)
+	}
+	if results[0].Timestamp.Unix() != t1.Unix() {
+		t.Errorf("timestamp = %v, want %v", results[0].Timestamp, t1)
+	}
+}
+
+func TestQueryDiskMetrics(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.InsertDiskMetrics(ctx, ts, []DiskMetrics{
+		{Mountpoint: "/", Device: "/dev/sda1", Total: 100e9, Used: 50e9, Free: 50e9, Percent: 50},
+		{Mountpoint: "/home", Device: "/dev/sda2", Total: 200e9, Used: 100e9, Free: 100e9, Percent: 50},
+	})
+
+	results, err := s.QueryDiskMetrics(ctx, ts.Unix(), ts.Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	if results[0].Mountpoint != "/" || results[1].Mountpoint != "/home" {
+		t.Errorf("mountpoints = %q, %q", results[0].Mountpoint, results[1].Mountpoint)
+	}
+}
+
+func TestQueryNetMetrics(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.InsertNetMetrics(ctx, ts, []NetMetrics{
+		{Iface: "eth0", RxBytes: 1000, TxBytes: 500},
+	})
+
+	results, err := s.QueryNetMetrics(ctx, ts.Unix(), ts.Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].Iface != "eth0" || results[0].RxBytes != 1000 {
+		t.Errorf("got iface=%q rx=%d", results[0].Iface, results[0].RxBytes)
+	}
+}
+
+func TestQueryContainerMetrics(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.InsertContainerMetrics(ctx, ts, []ContainerMetrics{
+		{ID: "abc", Name: "web", Image: "nginx", State: "running", CPUPercent: 5},
+	})
+
+	results, err := s.QueryContainerMetrics(ctx, ts.Unix(), ts.Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].ID != "abc" || results[0].CPUPercent != 5 {
+		t.Errorf("got id=%q cpu=%f", results[0].ID, results[0].CPUPercent)
+	}
+}
+
+func TestQueryLogs(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: ts, ContainerID: "aaa", ContainerName: "web", Stream: "stdout", Message: "hello world"},
+		{Timestamp: ts, ContainerID: "aaa", ContainerName: "web", Stream: "stderr", Message: "error occurred"},
+		{Timestamp: ts, ContainerID: "bbb", ContainerName: "api", Stream: "stdout", Message: "started"},
+	})
+
+	// Query all.
+	results, err := s.QueryLogs(ctx, LogFilter{Start: ts.Unix(), End: ts.Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("got %d results, want 3", len(results))
+	}
+
+	// Filter by container.
+	results, err = s.QueryLogs(ctx, LogFilter{Start: ts.Unix(), End: ts.Unix(), ContainerIDs: []string{"aaa"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("container filter: got %d, want 2", len(results))
+	}
+
+	// Filter by stream.
+	results, err = s.QueryLogs(ctx, LogFilter{Start: ts.Unix(), End: ts.Unix(), Stream: "stderr"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("stream filter: got %d, want 1", len(results))
+	}
+
+	// Filter by search.
+	results, err = s.QueryLogs(ctx, LogFilter{Start: ts.Unix(), End: ts.Unix(), Search: "error"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("search filter: got %d, want 1", len(results))
+	}
+
+	// Limit.
+	results, err = s.QueryLogs(ctx, LogFilter{Start: ts.Unix(), End: ts.Unix(), Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("limit: got %d, want 1", len(results))
+	}
+}
+
+func TestQueryLogsMultipleContainers(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: ts, ContainerID: "aaa", ContainerName: "web", Stream: "stdout", Message: "a"},
+		{Timestamp: ts, ContainerID: "bbb", ContainerName: "api", Stream: "stdout", Message: "b"},
+		{Timestamp: ts, ContainerID: "ccc", ContainerName: "db", Stream: "stdout", Message: "c"},
+	})
+
+	results, err := s.QueryLogs(ctx, LogFilter{
+		Start:        ts.Unix(),
+		End:          ts.Unix(),
+		ContainerIDs: []string{"aaa", "bbb"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+}
+
+func TestQueryAlerts(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := t1.Add(time.Hour)
+
+	s.InsertAlert(ctx, &Alert{
+		RuleName: "high_cpu", Severity: "critical", Condition: "host.cpu_percent > 90",
+		InstanceKey: "high_cpu", FiredAt: t1, Message: "CPU high",
+	})
+	s.InsertAlert(ctx, &Alert{
+		RuleName: "disk_full", Severity: "warning", Condition: "host.disk_percent > 90",
+		InstanceKey: "disk_full:/", FiredAt: t2, Message: "Disk full",
+	})
+
+	results, err := s.QueryAlerts(ctx, t1.Unix(), t2.Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	// Ordered by fired_at DESC.
+	if results[0].RuleName != "disk_full" {
+		t.Errorf("first result = %q, want disk_full", results[0].RuleName)
+	}
+}
+
+func TestAckAlert(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	id, err := s.InsertAlert(ctx, &Alert{
+		RuleName: "high_cpu", Severity: "critical", Condition: "test",
+		InstanceKey: "high_cpu", FiredAt: time.Now(), Message: "test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.AckAlert(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+
+	var ack int
+	if err := s.db.QueryRow("SELECT acknowledged FROM alerts WHERE id = ?", id).Scan(&ack); err != nil {
+		t.Fatal(err)
+	}
+	if ack != 1 {
+		t.Errorf("acknowledged = %d, want 1", ack)
+	}
+}
+
+func TestAckAlertNotFound(t *testing.T) {
+	s := testStore(t)
+	err := s.AckAlert(context.Background(), 9999)
+	if err == nil {
+		t.Fatal("expected error for non-existent alert")
+	}
+}
+
 func TestSchemaCreation(t *testing.T) {
 	s := testStore(t)
 
