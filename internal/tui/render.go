@@ -106,6 +106,35 @@ func ProgressBar(percent float64, width int, theme *Theme) string {
 	return "[" + filledStr + emptyStr + "]" + label
 }
 
+// ProgressBarSimple renders a horizontal bar like [████░░░░] without percentage label.
+// Width is the total character width including brackets.
+func ProgressBarSimple(percent float64, width int, theme *Theme) string {
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+
+	barW := width - 2 // subtract []
+	if barW < 1 {
+		barW = 1
+	}
+
+	filled := int(float64(barW) * percent / 100)
+	if filled > barW {
+		filled = barW
+	}
+
+	color := theme.UsageColor(percent)
+	style := lipgloss.NewStyle().Foreground(color)
+
+	filledStr := style.Render(strings.Repeat("█", filled))
+	emptyStr := lipgloss.NewStyle().Foreground(theme.Muted).Render(strings.Repeat("░", barW-filled))
+
+	return "[" + filledStr + emptyStr + "]"
+}
+
 // Sparkline renders a single row of braille characters representing data points.
 // Each braille character encodes two data points (left and right columns).
 // Values are normalized to 0–4 dots high in the 2×4 braille grid.
@@ -371,6 +400,29 @@ func FormatUptime(seconds float64) string {
 func FormatTimestamp(ts int64) string {
 	t := time.Unix(ts, 0)
 	return t.Format("15:04:05")
+}
+
+// FormatNumber formats an integer with comma separators (e.g., 2847 → "2,847").
+func FormatNumber(n int) string {
+	if n < 0 {
+		return "-" + FormatNumber(-n)
+	}
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	offset := len(s) % 3
+	if offset > 0 {
+		b.WriteString(s[:offset])
+	}
+	for i := offset; i < len(s); i += 3 {
+		if b.Len() > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(s[i : i+3])
+	}
+	return b.String()
 }
 
 // Truncate shortens a plain (non-styled) string to maxLen, appending … if truncated.

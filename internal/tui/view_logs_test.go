@@ -185,6 +185,44 @@ func TestWrapTextFits(t *testing.T) {
 	}
 }
 
+func TestLogViewCycleProjectFilter(t *testing.T) {
+	s := newLogViewState()
+	contInfo := []protocol.ContainerInfo{
+		{ID: "c1", Project: "beta"},
+		{ID: "c2", Project: "alpha"},
+		{ID: "c3", Project: "alpha"},
+		{ID: "c4"}, // no project
+	}
+
+	// Cycle: "" → alpha → beta → ""
+	s.cycleProjectFilter(contInfo)
+	if s.filterProject != "alpha" {
+		t.Errorf("first cycle = %q, want alpha", s.filterProject)
+	}
+
+	s.cycleProjectFilter(contInfo)
+	if s.filterProject != "beta" {
+		t.Errorf("second cycle = %q, want beta", s.filterProject)
+	}
+
+	s.cycleProjectFilter(contInfo)
+	if s.filterProject != "" {
+		t.Errorf("third cycle = %q, want empty (all)", s.filterProject)
+	}
+}
+
+func TestLogViewCycleProjectFilterEmpty(t *testing.T) {
+	s := newLogViewState()
+	contInfo := []protocol.ContainerInfo{
+		{ID: "c1"}, // no project
+	}
+
+	s.cycleProjectFilter(contInfo)
+	if s.filterProject != "" {
+		t.Errorf("should stay empty with no projects, got %q", s.filterProject)
+	}
+}
+
 func TestLogViewCycleContainerFilter(t *testing.T) {
 	s := newLogViewState()
 	contInfo := []protocol.ContainerInfo{

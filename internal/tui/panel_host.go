@@ -15,21 +15,33 @@ func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, hei
 	}
 
 	innerW := width - 2
-	graphRows := height - 4 // borders (2) + info line (1) + cpu% line (1)
+	graphRows := height - 3 // borders (2) + info line (1)
 	if graphRows < 1 {
 		graphRows = 1
 	}
 
+	cpuVal := fmt.Sprintf("%5.1f%%", host.CPUPercent)
+
 	var lines []string
 
-	// CPU percentage line.
-	cpuPct := fmt.Sprintf(" CPU %5.1f%%", host.CPUPercent)
-	lines = append(lines, cpuPct)
-
-	// Braille graph.
+	// Braille graph with CPU% embedded in the last line.
 	if len(cpuHistory) > 0 {
-		graph := Graph(cpuHistory, innerW, graphRows, 100, theme)
-		lines = append(lines, graph)
+		graphW := innerW - len(cpuVal) - 2 // space + value + leading space
+		if graphW < 10 {
+			graphW = 10
+		}
+		graph := Graph(cpuHistory, graphW, graphRows, 0, theme)
+		graphLines := strings.Split(graph, "\n")
+		pad := strings.Repeat(" ", len(cpuVal)+1)
+		for i, gl := range graphLines {
+			if i == len(graphLines)-1 {
+				lines = append(lines, " "+gl+" "+cpuVal)
+			} else {
+				lines = append(lines, " "+gl+pad)
+			}
+		}
+	} else {
+		lines = append(lines, fmt.Sprintf(" CPU %s", cpuVal))
 	}
 
 	// Bottom info: load + uptime.
@@ -59,12 +71,12 @@ func renderMemPanel(host *protocol.HostMetrics, width, height int, theme *Theme)
 
 	var lines []string
 
-	// Memory progress bar.
-	memLine := fmt.Sprintf(" %s", ProgressBar(host.MemPercent, barW, theme))
+	// Memory progress bar (no percentage).
+	memLine := fmt.Sprintf(" %s", ProgressBarSimple(host.MemPercent, barW, theme))
 	lines = append(lines, memLine)
 
-	// Used / Total.
-	usedLine := fmt.Sprintf(" Used: %s / %s", FormatBytes(host.MemUsed), FormatBytes(host.MemTotal))
+	// Used / Total with percentage.
+	usedLine := fmt.Sprintf(" Used: %s / %s  %.1f%%", FormatBytes(host.MemUsed), FormatBytes(host.MemTotal), host.MemPercent)
 	lines = append(lines, usedLine)
 
 	// Cached + Free.

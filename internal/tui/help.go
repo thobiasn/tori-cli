@@ -18,8 +18,9 @@ var dashboardHelp = `
 
 var logViewHelp = `
  Navigation
-   j/k, ↑/↓    Scroll logs
+   j/k, ↑/↓    Move cursor / scroll
    c            Cycle container filter
+   g            Cycle project filter
    s            Cycle stream (all/stdout/stderr)
    /            Text search
    Enter        Expand/collapse line
@@ -40,9 +41,12 @@ var alertViewHelp = `
 
 var detailViewHelp = `
  Navigation
-   j/k, ↑/↓    Scroll logs
+   j/k, ↑/↓    Move cursor / scroll
+   Enter        Expand/collapse line
+   /            Text search
+   s            Cycle stream (all/stdout/stderr)
    r            Restart container
-   Esc          Back to dashboard
+   Esc          Clear filters / back
    Tab, 1-4     Switch view
    ?            Toggle help
    q            Quit`

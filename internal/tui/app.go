@@ -14,9 +14,9 @@ type view int
 
 const (
 	viewDashboard view = iota
-	viewLogs
-	viewAlerts
 	viewDetail
+	viewAlerts
+	viewLogs
 )
 
 // App is the root Bubbletea model.
@@ -250,11 +250,11 @@ func (a *App) handleViewSwitch(key string) (tea.Cmd, bool) {
 	case "1":
 		a.active = viewDashboard
 	case "2":
-		a.active = viewLogs
+		a.active = viewDetail
 	case "3":
 		a.active = viewAlerts
 	case "4":
-		a.active = viewDetail
+		a.active = viewLogs
 	default:
 		return nil, false
 	}
@@ -315,9 +315,9 @@ func (a *App) renderFooter() string {
 		name string
 	}{
 		{"1", "Dashboard"},
-		{"2", "Logs"},
+		{"2", "Detail"},
 		{"3", "Alerts"},
-		{"4", "Detail"},
+		{"4", "Logs"},
 	}
 
 	var footer string

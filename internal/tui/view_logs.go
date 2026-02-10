@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -24,7 +25,8 @@ type LogViewState struct {
 	searchText        string
 	searchMode        bool
 
-	// Expanded line.
+	// Cursor and expanded line.
+	cursor   int // -1 = inactive
 	expanded int // -1 = none
 
 	// Backfill tracking.
@@ -40,6 +42,7 @@ func newLogViewState() LogViewState {
 	return LogViewState{
 		logs:     NewRingBuffer[protocol.LogEntryMsg](5000),
 		live:     true,
+		cursor:   -1,
 		expanded: -1,
 	}
 }
@@ -178,17 +181,19 @@ func renderLogView(a *App, width, height int) string {
 		visible = filtered[start:end]
 	}
 
+	cursorStyle := lipgloss.NewStyle().Reverse(true)
 	var lines []string
 	for i, entry := range visible {
+		line := formatLogLine(entry, innerW, theme)
+		if i == s.cursor {
+			line = cursorStyle.Render(line)
+		}
+		lines = append(lines, line)
 		if i == s.expanded {
-			// Expanded: show full message.
-			lines = append(lines, formatLogLine(entry, innerW, theme))
 			wrapped := wrapText(entry.Message, innerW-2)
 			for _, wl := range wrapped {
 				lines = append(lines, "  "+wl)
 			}
-		} else {
-			lines = append(lines, formatLogLine(entry, innerW, theme))
 		}
 	}
 
@@ -197,17 +202,18 @@ func renderLogView(a *App, width, height int) string {
 	if s.filterContainerID != "" {
 		name := containerNameByID(s.filterContainerID, a.contInfo)
 		if name != "" {
-			title += " -- " + name
+			title += " ── " + name
 		}
 	} else if s.filterProject != "" {
-		title += " -- " + s.filterProject
+		title += " ── " + s.filterProject
 	} else {
-		title += " -- all containers"
+		title += " ── all containers"
 	}
+	title += " ── " + FormatNumber(len(filtered)) + " lines"
 	if s.scroll == 0 {
-		title += " -- LIVE"
+		title += " ── LIVE"
 	} else {
-		title += " -- PAUSED"
+		title += " ── PAUSED"
 	}
 
 	boxH := height - 1 // leave room for filter footer
@@ -245,8 +251,13 @@ func renderLogFooter(s *LogViewState, width int, theme *Theme) string {
 		searchPart = "/ search"
 	}
 
-	footer := fmt.Sprintf(" c: %s | s: %s | %s | Esc clear | ? Help",
-		muted.Render(contLabel), muted.Render(streamLabel), searchPart)
+	projectLabel := "all"
+	if s.filterProject != "" {
+		projectLabel = s.filterProject
+	}
+
+	footer := fmt.Sprintf(" c: %s | g: %s | s: %s | %s | Esc clear | ? Help",
+		muted.Render(contLabel), muted.Render(projectLabel), muted.Render(streamLabel), searchPart)
 	return Truncate(footer, width)
 }
 
@@ -297,33 +308,55 @@ func updateLogView(a *App, msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 
-	maxScroll := s.logs.Len() - 1
+	filtered := s.filteredEntries(a.contInfo)
+	innerH := a.height - 4
+	if innerH < 1 {
+		innerH = 1
+	}
+	visibleCount := len(filtered)
+	if visibleCount > innerH {
+		visibleCount = innerH
+	}
+
+	maxScroll := len(filtered) - innerH
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
 
 	switch key {
 	case "j", "down":
-		s.scroll--
-		if s.scroll < 0 {
-			s.scroll = 0
+		if s.cursor == -1 {
+			// Activate cursor at bottom, pause live tail.
+			s.cursor = visibleCount - 1
+			if s.cursor < 0 {
+				s.cursor = 0
+			}
+			if s.scroll == 0 {
+				s.scroll = 0 // already at bottom, stay paused from cursor activation
+			}
+		} else if s.cursor < visibleCount-1 {
+			s.cursor++
+		} else if s.scroll > 0 {
+			s.scroll--
 		}
 		s.expanded = -1
 	case "k", "up":
-		if s.scroll < maxScroll {
+		if s.cursor == -1 {
+			s.cursor = visibleCount - 1
+			if s.cursor < 0 {
+				s.cursor = 0
+			}
+		} else if s.cursor > 0 {
+			s.cursor--
+		} else if s.scroll < maxScroll {
 			s.scroll++
 		}
 		s.expanded = -1
 	case "g":
-		// Cycle project filter (simplified: toggle off).
-		if s.filterProject != "" {
-			s.filterProject = ""
-		}
+		s.cycleProjectFilter(a.contInfo)
 	case "c":
-		// Cycle container filter: all → each container → all.
 		s.cycleContainerFilter(a.contInfo)
 	case "s":
-		// Toggle stream filter.
 		switch s.filterStream {
 		case "":
 			s.filterStream = "stdout"
@@ -335,36 +368,62 @@ func updateLogView(a *App, msg tea.KeyMsg) tea.Cmd {
 	case "/":
 		s.searchMode = true
 	case "enter":
-		// Toggle expanded line.
-		if s.expanded >= 0 {
-			s.expanded = -1
-		} else {
-			// Expand bottom visible line.
-			filtered := s.filteredEntries(a.contInfo)
-			innerH := a.height - 4
-			if innerH < 1 {
-				innerH = 1
-			}
-			if len(filtered) > 0 {
-				idx := len(filtered) - 1 - s.scroll
-				if idx >= 0 && idx < len(filtered) {
-					s.expanded = min(idx, innerH-1)
-				}
+		if s.cursor >= 0 {
+			if s.expanded == s.cursor {
+				s.expanded = -1
+			} else {
+				s.expanded = s.cursor
 			}
 		}
 	case "esc":
-		// Clear filters.
-		if s.searchText != "" {
+		if s.cursor >= 0 {
+			s.cursor = -1
+			s.expanded = -1
+			s.scroll = 0
+		} else if s.searchText != "" {
 			s.searchText = ""
 		} else if s.filterContainerID != "" || s.filterProject != "" || s.filterStream != "" {
 			s.filterContainerID = ""
 			s.filterProject = ""
 			s.filterStream = ""
 		}
-		s.scroll = 0
-		s.expanded = -1
 	}
 	return nil
+}
+
+func (s *LogViewState) cycleProjectFilter(contInfo []protocol.ContainerInfo) {
+	// Collect unique project names.
+	seen := make(map[string]bool)
+	for _, ci := range contInfo {
+		if ci.Project != "" {
+			seen[ci.Project] = true
+		}
+	}
+	if len(seen) == 0 {
+		s.filterProject = ""
+		return
+	}
+	projects := make([]string, 0, len(seen))
+	for p := range seen {
+		projects = append(projects, p)
+	}
+	sort.Strings(projects)
+
+	if s.filterProject == "" {
+		s.filterProject = projects[0]
+		return
+	}
+	for i, p := range projects {
+		if p == s.filterProject {
+			if i+1 < len(projects) {
+				s.filterProject = projects[i+1]
+			} else {
+				s.filterProject = ""
+			}
+			return
+		}
+	}
+	s.filterProject = ""
 }
 
 func (s *LogViewState) cycleContainerFilter(contInfo []protocol.ContainerInfo) {

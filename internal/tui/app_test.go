@@ -184,8 +184,8 @@ func TestAppViewSwitchTab(t *testing.T) {
 
 	model, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
 	a = model.(App)
-	if a.active != viewLogs {
-		t.Errorf("after '2', active = %d, want viewLogs", a.active)
+	if a.active != viewDetail {
+		t.Errorf("after '2', active = %d, want viewDetail", a.active)
 	}
 
 	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})

@@ -17,6 +17,11 @@ type DetailState struct {
 	logs           *RingBuffer[protocol.LogEntryMsg]
 	logScroll      int
 	logLive        bool
+	logCursor      int // -1 = inactive
+	logExpanded    int // -1 = none
+	filterStream   string // "", "stdout", "stderr"
+	searchText     string
+	searchMode     bool
 	confirmRestart bool
 	backfilled     bool
 }
@@ -29,6 +34,11 @@ func (s *DetailState) reset() {
 	s.logs = NewRingBuffer[protocol.LogEntryMsg](2000)
 	s.logScroll = 0
 	s.logLive = true
+	s.logCursor = -1
+	s.logExpanded = -1
+	s.filterStream = ""
+	s.searchText = ""
+	s.searchMode = false
 	s.confirmRestart = false
 	s.backfilled = false
 }
@@ -96,6 +106,33 @@ func (s *DetailState) handleBackfill(msg detailLogQueryMsg) {
 	s.backfilled = true
 }
 
+func (s *DetailState) matchesFilter(entry protocol.LogEntryMsg) bool {
+	if s.filterStream != "" && entry.Stream != s.filterStream {
+		return false
+	}
+	if s.searchText != "" && !strings.Contains(strings.ToLower(entry.Message), strings.ToLower(s.searchText)) {
+		return false
+	}
+	return true
+}
+
+func (s *DetailState) filteredData() []protocol.LogEntryMsg {
+	if s.logs == nil {
+		return nil
+	}
+	all := s.logs.Data()
+	if s.filterStream == "" && s.searchText == "" {
+		return all
+	}
+	var out []protocol.LogEntryMsg
+	for _, e := range all {
+		if s.matchesFilter(e) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // renderDetail renders the container detail full-screen view.
 func renderDetail(a *App, width, height int) string {
 	theme := &a.theme
@@ -128,14 +165,15 @@ func renderDetail(a *App, width, height int) string {
 	if ci != nil {
 		title = stripANSI(ci.Name)
 		if cm != nil {
-			title += " -- " + stripANSI(cm.State)
+			stateInd := theme.StateIndicator(cm.State)
+			title += " ── " + stateInd + " " + stripANSI(cm.State)
 		}
-		title += " -- " + stripANSI(ci.Image)
 	} else if cm != nil {
-		title = stripANSI(cm.Name) + " -- " + stripANSI(cm.State)
+		stateInd := theme.StateIndicator(cm.State)
+		title = stripANSI(cm.Name) + " ── " + stateInd + " " + stripANSI(cm.State)
 	}
 
-	// Top section: metrics. Enough room for graph rows + info lines.
+	// Top section: metrics. CPU (3 graph) + MEM (3 graph) + NET + BLK + PID + IMG + UP + RESTARTS+HC = 12 content + 2 borders = 14
 	metricsH := 14
 	logH := height - metricsH - 1
 	if logH < 5 {
@@ -147,9 +185,15 @@ func renderDetail(a *App, width, height int) string {
 	metricsBox := Box(title, metricsContent, width, metricsH, theme)
 
 	// Bottom section: logs.
+	containerName := ""
+	if ci != nil {
+		containerName = stripANSI(ci.Name)
+	} else if cm != nil {
+		containerName = stripANSI(cm.Name)
+	}
 	var logBox string
 	if s.logs != nil && logH > 3 {
-		logBox = renderDetailLogs(s, width, logH, theme)
+		logBox = renderDetailLogs(s, containerName, width, logH, theme)
 	}
 
 	// Restart confirmation overlay.
@@ -165,20 +209,25 @@ func renderDetailMetrics(a *App, s *DetailState, cm *protocol.ContainerMetrics, 
 		return "  Waiting for metrics..."
 	}
 	innerW := width - 2
-	graphRows := 2
+	graphRows := 3
 	labelW := 5 // " CPU " / " MEM "
 
 	var lines []string
 
-	// CPU graph + percent.
+	// CPU + MEM graphs with aligned widths.
 	cpuVal := fmt.Sprintf("%5.1f%%", cm.CPUPercent)
-	graphW := innerW - labelW - len(cpuVal) - 1
+	memVal := fmt.Sprintf("%s / %s limit", FormatBytes(cm.MemUsage), FormatBytes(cm.MemLimit))
+	valW := max(len(cpuVal), len(memVal))
+	graphW := innerW - labelW - valW - 1
 	if graphW < 10 {
 		graphW = 10
 	}
+	cpuVal = fmt.Sprintf("%*s", valW, cpuVal)
+	memVal = fmt.Sprintf("%*s", valW, memVal)
+
 	cpuData := historyData(a.cpuHistory, s.containerID)
 	if len(cpuData) > 0 {
-		cpuGraph := Graph(cpuData, graphW, graphRows, 100, theme)
+		cpuGraph := Graph(cpuData, graphW, graphRows, 0, theme)
 		for i, gl := range strings.Split(cpuGraph, "\n") {
 			if i == 0 {
 				lines = append(lines, " CPU "+gl+" "+cpuVal)
@@ -190,15 +239,9 @@ func renderDetailMetrics(a *App, s *DetailState, cm *protocol.ContainerMetrics, 
 		lines = append(lines, fmt.Sprintf(" CPU: %s", cpuVal))
 	}
 
-	// MEM graph + usage.
-	memVal := fmt.Sprintf("%s / %s", FormatBytes(cm.MemUsage), FormatBytes(cm.MemLimit))
-	memGraphW := innerW - labelW - len(memVal) - 1
-	if memGraphW < 10 {
-		memGraphW = 10
-	}
 	memData := historyData(a.memHistory, s.containerID)
 	if len(memData) > 0 {
-		memGraph := Graph(memData, memGraphW, graphRows, 100, theme)
+		memGraph := Graph(memData, graphW, graphRows, 0, theme)
 		for i, gl := range strings.Split(memGraph, "\n") {
 			if i == 0 {
 				lines = append(lines, " MEM "+gl+" "+memVal)
@@ -210,25 +253,36 @@ func renderDetailMetrics(a *App, s *DetailState, cm *protocol.ContainerMetrics, 
 		lines = append(lines, fmt.Sprintf(" MEM: %s", memVal))
 	}
 
-	// NET rates.
+	// NET + BLK on separate lines.
 	rates := a.rates.ContainerRates[s.containerID]
 	rxStyle := lipgloss.NewStyle().Foreground(theme.Healthy)
 	txStyle := lipgloss.NewStyle().Foreground(theme.Accent)
-	netLine := fmt.Sprintf(" NET %s %s  %s %s",
+	lines = append(lines, fmt.Sprintf(" NET  %s %s  %s %s",
 		rxStyle.Render("▼"), FormatBytesRate(rates.NetRxRate),
-		txStyle.Render("▲"), FormatBytesRate(rates.NetTxRate))
-	lines = append(lines, netLine)
-
-	// BLK rates.
-	blkLine := fmt.Sprintf(" BLK %s %s  %s %s",
+		txStyle.Render("▲"), FormatBytesRate(rates.NetTxRate)))
+	lines = append(lines, fmt.Sprintf(" BLK  %s %s  %s %s",
 		rxStyle.Render("R"), FormatBytesRate(rates.BlockReadRate),
-		txStyle.Render("W"), FormatBytesRate(rates.BlockWriteRate))
-	lines = append(lines, blkLine)
+		txStyle.Render("W"), FormatBytesRate(rates.BlockWriteRate)))
 
-	// PIDs + health + restarts.
-	healthStr := theme.HealthIndicator(cm.Health)
+	// PID, IMG, UP, RESTARTS+HC.
+	// Find container info for image.
+	var image string
+	for _, ci := range a.contInfo {
+		if ci.ID == s.containerID {
+			image = stripANSI(ci.Image)
+			break
+		}
+	}
+	lines = append(lines, fmt.Sprintf(" PID  %d", cm.PIDs))
+	if image != "" {
+		lines = append(lines, fmt.Sprintf(" IMG  %s", Truncate(image, innerW-6)))
+	} else {
+		lines = append(lines, fmt.Sprintf(" IMG  %s", Truncate(stripANSI(cm.Image), innerW-6)))
+	}
 	uptime := formatContainerUptime(cm.State, cm.StartedAt, cm.ExitCode)
-	lines = append(lines, fmt.Sprintf(" PIDs: %d  %s  %s  %s", cm.PIDs, healthStr, uptime, formatRestarts(cm.RestartCount, theme)))
+	lines = append(lines, fmt.Sprintf(" UP   %s", uptime))
+	healthFull := theme.HealthText(cm.Health)
+	lines = append(lines, fmt.Sprintf(" RESTARTS  %-6d HC   %s", cm.RestartCount, healthFull))
 
 	return strings.Join(lines, "\n")
 }
@@ -240,19 +294,24 @@ func historyData(hist map[string]*RingBuffer[float64], id string) []float64 {
 	return nil
 }
 
-func renderDetailLogs(s *DetailState, width, height int, theme *Theme) string {
-	innerH := height - 2
+func renderDetailLogs(s *DetailState, containerName string, width, height int, theme *Theme) string {
+	hasFilters := s.filterStream != "" || s.searchText != "" || s.searchMode
+	boxH := height
+	if hasFilters {
+		boxH = height - 1 // leave room for filter footer
+	}
+	innerH := boxH - 2
 	if innerH < 1 {
 		innerH = 1
 	}
 	innerW := width - 2
 
-	data := s.logs.Data()
+	data := s.filteredData()
 	// Apply scroll.
 	var visible []protocol.LogEntryMsg
 	if len(data) <= innerH {
 		visible = data
-	} else if s.logScroll == 0 {
+	} else if s.logScroll == 0 && s.logCursor == -1 {
 		visible = data[len(data)-innerH:]
 	} else {
 		end := len(data) - s.logScroll
@@ -266,18 +325,59 @@ func renderDetailLogs(s *DetailState, width, height int, theme *Theme) string {
 		visible = data[start:end]
 	}
 
+	cursorStyle := lipgloss.NewStyle().Reverse(true)
 	var lines []string
-	for _, entry := range visible {
-		lines = append(lines, formatLogLine(entry, innerW, theme))
+	for i, entry := range visible {
+		line := formatLogLine(entry, innerW, theme)
+		if i == s.logCursor {
+			line = cursorStyle.Render(line)
+		}
+		lines = append(lines, line)
+		if i == s.logExpanded {
+			wrapped := wrapText(entry.Message, innerW-2)
+			for _, wl := range wrapped {
+				lines = append(lines, "  "+wl)
+			}
+		}
 	}
 
 	title := "Logs"
-	if s.logScroll == 0 {
-		title += " -- LIVE"
-	} else {
-		title += " -- PAUSED"
+	if containerName != "" {
+		title += " ── " + containerName
 	}
-	return Box(title, strings.Join(lines, "\n"), width, height, theme)
+	paused := s.logScroll > 0 || s.logCursor >= 0
+	if paused {
+		title += " ── PAUSED"
+	} else {
+		title += " ── LIVE"
+	}
+
+	box := Box(title, strings.Join(lines, "\n"), width, boxH, theme)
+	if hasFilters {
+		return box + "\n" + renderDetailLogFooter(s, innerW, theme)
+	}
+	return box
+}
+
+func renderDetailLogFooter(s *DetailState, width int, theme *Theme) string {
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+
+	streamLabel := "all"
+	if s.filterStream != "" {
+		streamLabel = s.filterStream
+	}
+
+	var searchPart string
+	if s.searchMode {
+		searchPart = fmt.Sprintf("/ search: %s_", s.searchText)
+	} else if s.searchText != "" {
+		searchPart = fmt.Sprintf("/ search: %s", s.searchText)
+	} else {
+		searchPart = "/ search"
+	}
+
+	footer := fmt.Sprintf(" s: %s | %s | Esc clear", muted.Render(streamLabel), searchPart)
+	return Truncate(footer, width)
 }
 
 func renderRestartConfirm(cm *protocol.ContainerMetrics, width, height int, theme *Theme) string {
@@ -314,7 +414,48 @@ func updateDetail(a *App, msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 
-	maxScroll := s.logs.Len() - 1
+	// Search mode captures all keys.
+	if s.searchMode {
+		switch key {
+		case "enter", "esc":
+			s.searchMode = false
+		case "backspace":
+			if len(s.searchText) > 0 {
+				s.searchText = s.searchText[:len(s.searchText)-1]
+			}
+		default:
+			if len(key) == 1 && len(s.searchText) < 128 {
+				s.searchText += key
+			}
+		}
+		return nil
+	}
+
+	data := s.filteredData()
+	// Compute innerH for cursor bounds (same formula as renderDetail).
+	metricsH := 14
+	logH := a.height - 1 - metricsH - 1
+	if logH < 5 {
+		logH = 5
+	}
+	innerH := logH - 2
+	if innerH < 1 {
+		innerH = 1
+	}
+	// Reserve footer line when filters are active.
+	if s.filterStream != "" || s.searchText != "" || s.searchMode {
+		innerH--
+		if innerH < 1 {
+			innerH = 1
+		}
+	}
+
+	visibleCount := len(data)
+	if visibleCount > innerH {
+		visibleCount = innerH
+	}
+
+	maxScroll := len(data) - innerH
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
@@ -323,16 +464,69 @@ func updateDetail(a *App, msg tea.KeyMsg) tea.Cmd {
 	case "r":
 		s.confirmRestart = true
 	case "j", "down":
-		s.logScroll--
-		if s.logScroll < 0 {
-			s.logScroll = 0
+		if s.logCursor == -1 {
+			s.logCursor = visibleCount - 1
+			if s.logCursor < 0 {
+				s.logCursor = 0
+			}
+		} else if s.logCursor < visibleCount-1 {
+			s.logCursor++
+		} else if s.logScroll > 0 {
+			s.logScroll--
 		}
+		s.logExpanded = -1
 	case "k", "up":
-		if s.logScroll < maxScroll {
+		if s.logCursor == -1 {
+			s.logCursor = visibleCount - 1
+			if s.logCursor < 0 {
+				s.logCursor = 0
+			}
+		} else if s.logCursor > 0 {
+			s.logCursor--
+		} else if s.logScroll < maxScroll {
 			s.logScroll++
 		}
+		s.logExpanded = -1
+	case "enter":
+		if s.logCursor >= 0 {
+			if s.logExpanded == s.logCursor {
+				s.logExpanded = -1
+			} else {
+				s.logExpanded = s.logCursor
+			}
+		}
+	case "/":
+		s.searchMode = true
+	case "s":
+		switch s.filterStream {
+		case "":
+			s.filterStream = "stdout"
+		case "stdout":
+			s.filterStream = "stderr"
+		default:
+			s.filterStream = ""
+		}
+		s.logScroll = 0
+		s.logCursor = -1
+		s.logExpanded = -1
 	case "esc":
-		a.active = viewDashboard
+		if s.searchText != "" {
+			s.searchText = ""
+			s.logScroll = 0
+			s.logCursor = -1
+			s.logExpanded = -1
+		} else if s.filterStream != "" {
+			s.filterStream = ""
+			s.logScroll = 0
+			s.logCursor = -1
+			s.logExpanded = -1
+		} else if s.logCursor >= 0 {
+			s.logCursor = -1
+			s.logExpanded = -1
+			s.logScroll = 0
+		} else {
+			a.active = viewDashboard
+		}
 	}
 	return nil
 }

@@ -76,6 +76,15 @@ func (t Theme) HealthIndicator(health string) string {
 	}
 }
 
+// HealthText returns a colored health indicator + label (e.g., "✓ healthy", "– none").
+func (t Theme) HealthText(health string) string {
+	indicator := t.HealthIndicator(health)
+	if health == "" {
+		return indicator + " none"
+	}
+	return indicator + " " + health
+}
+
 // RestartColor returns a color based on restart count severity.
 func (t Theme) RestartColor(count int) lipgloss.Color {
 	switch {
