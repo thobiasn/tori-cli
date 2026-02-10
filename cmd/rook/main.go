@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -61,10 +62,69 @@ func runAgent(args []string) {
 
 func runConnect(args []string) {
 	fs := flag.NewFlagSet("connect", flag.ExitOnError)
-	socketPath := fs.String("socket", "/run/rook.sock", "path to agent socket")
+	socketPath := fs.String("socket", "", "path to agent socket (direct connection)")
+	configPath := fs.String("config", "", "path to client config")
 	fs.Parse(args)
 
-	conn, err := net.Dial("unix", *socketPath)
+	var sockPath string
+	var tunnel *tui.Tunnel
+
+	positional := fs.Arg(0)
+
+	switch {
+	case *socketPath != "":
+		sockPath = *socketPath
+
+	case positional != "" && strings.Contains(positional, "@"):
+		// Ad-hoc SSH: rook connect user@host
+		var err error
+		tunnel, err = tui.NewTunnel(positional, "/run/rook.sock")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "tunnel: %v\n", err)
+			os.Exit(1)
+		}
+		sockPath = tunnel.LocalSocket()
+
+	case positional != "":
+		// Look up server name in config.
+		cfgPath := *configPath
+		if cfgPath == "" {
+			cfgPath = tui.DefaultConfigPath()
+		}
+		cfg, err := tui.LoadConfig(cfgPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "load config %s: %v\n", cfgPath, err)
+			os.Exit(1)
+		}
+		srv, ok := cfg.Servers[positional]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "unknown server %q in config\n", positional)
+			os.Exit(1)
+		}
+		remoteSock := srv.Socket
+		if remoteSock == "" {
+			remoteSock = "/run/rook.sock"
+		}
+		if srv.Host != "" {
+			tunnel, err = tui.NewTunnel(srv.Host, remoteSock)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "tunnel: %v\n", err)
+				os.Exit(1)
+			}
+			sockPath = tunnel.LocalSocket()
+		} else {
+			sockPath = remoteSock
+		}
+
+	default:
+		sockPath = "/run/rook.sock"
+	}
+
+	if tunnel != nil {
+		defer tunnel.Close()
+	}
+
+	conn, err := net.Dial("unix", sockPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "connect: %v\n", err)
 		os.Exit(1)

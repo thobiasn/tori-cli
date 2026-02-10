@@ -38,7 +38,7 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("load config: no servers defined")
 	}
 	for name, srv := range cfg.Servers {
-		if srv.Socket == "" {
+		if srv.Socket == "" && srv.Host == "" {
 			return nil, fmt.Errorf("load config: server %q missing socket path", name)
 		}
 	}

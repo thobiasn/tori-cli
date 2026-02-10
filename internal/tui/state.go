@@ -39,6 +39,16 @@ func (r *RingBuffer[T]) Data() []T {
 	return out
 }
 
+// Last returns the newest element, or false if the buffer is empty.
+func (r *RingBuffer[T]) Last() (T, bool) {
+	if r.count == 0 {
+		var zero T
+		return zero, false
+	}
+	idx := (r.head - 1 + r.size) % r.size
+	return r.buf[idx], true
+}
+
 // Len returns the number of stored values.
 func (r *RingBuffer[T]) Len() int {
 	return r.count

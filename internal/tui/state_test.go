@@ -83,6 +83,32 @@ func TestRingBufferExactFill(t *testing.T) {
 	}
 }
 
+func TestRingBufferLast(t *testing.T) {
+	r := NewRingBuffer[int](3)
+
+	// Empty buffer.
+	if _, ok := r.Last(); ok {
+		t.Fatal("Last() on empty buffer should return false")
+	}
+
+	r.Push(10)
+	if v, ok := r.Last(); !ok || v != 10 {
+		t.Fatalf("Last() = (%d, %v), want (10, true)", v, ok)
+	}
+
+	r.Push(20)
+	r.Push(30)
+	if v, ok := r.Last(); !ok || v != 30 {
+		t.Fatalf("Last() = (%d, %v), want (30, true)", v, ok)
+	}
+
+	// Overflow: push 40, oldest (10) overwritten.
+	r.Push(40)
+	if v, ok := r.Last(); !ok || v != 40 {
+		t.Fatalf("Last() after overflow = (%d, %v), want (40, true)", v, ok)
+	}
+}
+
 func TestRingBufferSingleElement(t *testing.T) {
 	r := NewRingBuffer[int](1)
 	r.Push(1)
