@@ -117,21 +117,36 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case LogMsg:
 		a.logs.Push(msg.LogEntryMsg)
-		if a.active == viewLogs {
-			a.logv.onStreamEntry(msg.LogEntryMsg)
-		}
-		if a.active == viewDetail {
-			a.detail.onStreamEntry(msg.LogEntryMsg)
-		}
+		a.logv.onStreamEntry(msg.LogEntryMsg)
+		a.detail.onStreamEntry(msg.LogEntryMsg)
 		return a, nil
 
 	case AlertEventMsg:
 		if msg.State == "resolved" {
 			delete(a.alerts, msg.ID)
 		} else {
+			if len(a.alerts) >= 1000 {
+				// Evict oldest to prevent unbounded growth.
+				var oldestID int64
+				var oldestTS int64
+				for id, e := range a.alerts {
+					if oldestTS == 0 || e.FiredAt < oldestTS {
+						oldestID = id
+						oldestTS = e.FiredAt
+					}
+				}
+				delete(a.alerts, oldestID)
+			}
 			e := msg.AlertEvent
 			a.alerts[msg.ID] = &e
 		}
+		return a, nil
+
+	case alertActionDoneMsg:
+		a.alertv.stale = true
+		return a, nil
+
+	case restartDoneMsg:
 		return a, nil
 
 	case logQueryMsg:
@@ -288,7 +303,7 @@ func (a App) View() string {
 	}
 
 	if a.showHelp {
-		content = helpOverlay(a.active, a.width, contentH, &a.theme, content)
+		content = helpOverlay(a.active, a.width, contentH, &a.theme)
 	}
 
 	return content + "\n" + a.renderFooter()

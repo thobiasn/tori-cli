@@ -56,8 +56,12 @@ func (r *RateCalc) Update(ts int64, nets []protocol.NetMetrics, containers []pro
 		if prev, ok := r.prevNet[n.Iface]; ok {
 			dt := float64(ts - prev.ts)
 			if dt > 0 {
-				totalRx += float64(n.RxBytes-prev.rxBytes) / dt
-				totalTx += float64(n.TxBytes-prev.txBytes) / dt
+				if n.RxBytes >= prev.rxBytes {
+					totalRx += float64(n.RxBytes-prev.rxBytes) / dt
+				}
+				if n.TxBytes >= prev.txBytes {
+					totalTx += float64(n.TxBytes-prev.txBytes) / dt
+				}
 			}
 		}
 		r.prevNet[n.Iface] = netSample{rxBytes: n.RxBytes, txBytes: n.TxBytes, ts: ts}
@@ -79,12 +83,20 @@ func (r *RateCalc) Update(ts int64, nets []protocol.NetMetrics, containers []pro
 		if prev, ok := r.prevCont[c.ID]; ok {
 			dt := float64(ts - prev.ts)
 			if dt > 0 {
-				r.ContainerRates[c.ID] = ContainerRate{
-					NetRxRate:      float64(c.NetRx-prev.netRx) / dt,
-					NetTxRate:      float64(c.NetTx-prev.netTx) / dt,
-					BlockReadRate:  float64(c.BlockRead-prev.blockRead) / dt,
-					BlockWriteRate: float64(c.BlockWrite-prev.blockWrite) / dt,
+				var cr ContainerRate
+				if c.NetRx >= prev.netRx {
+					cr.NetRxRate = float64(c.NetRx-prev.netRx) / dt
 				}
+				if c.NetTx >= prev.netTx {
+					cr.NetTxRate = float64(c.NetTx-prev.netTx) / dt
+				}
+				if c.BlockRead >= prev.blockRead {
+					cr.BlockReadRate = float64(c.BlockRead-prev.blockRead) / dt
+				}
+				if c.BlockWrite >= prev.blockWrite {
+					cr.BlockWriteRate = float64(c.BlockWrite-prev.blockWrite) / dt
+				}
+				r.ContainerRates[c.ID] = cr
 			}
 		}
 		r.prevCont[c.ID] = contSample{

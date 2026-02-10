@@ -288,6 +288,45 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
+func TestTruncateStyled(t *testing.T) {
+	// Plain text should work like Truncate.
+	if got := TruncateStyled("hello", 10); got != "hello" {
+		t.Errorf("TruncateStyled plain fits = %q, want hello", got)
+	}
+	if got := TruncateStyled("hello world", 5); got != "hell…" {
+		t.Errorf("TruncateStyled plain truncated = %q, want hell…", got)
+	}
+
+	// Styled text that fits visually should be returned as-is.
+	styled := "\x1b[31mhello\x1b[0m" // "hello" in red ANSI
+	if got := TruncateStyled(styled, 10); got != styled {
+		t.Errorf("TruncateStyled styled fits = %q, want original", got)
+	}
+
+	// Zero maxLen.
+	if got := TruncateStyled("hello", 0); got != "" {
+		t.Errorf("TruncateStyled zero = %q, want empty", got)
+	}
+}
+
+func TestStripANSI(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"hello", "hello"},
+		{"\x1b[31mred\x1b[0m", "red"},
+		{"\x1b[1;32mbold green\x1b[0m text", "bold green text"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := stripANSI(tt.input)
+		if got != tt.want {
+			t.Errorf("stripANSI(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestContainerNameColor(t *testing.T) {
 	theme := DefaultTheme()
 

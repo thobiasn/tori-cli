@@ -87,20 +87,31 @@ func renderDashboard(a *App, width, height int) string {
 	if len(a.alerts) > 0 {
 		alertH = len(a.alerts) + 2
 	}
-	if alertH > height/3 {
-		alertH = height / 3
+	maxAlertH := height / 3
+	if maxAlertH < 3 {
+		maxAlertH = 3
+	}
+	if alertH > maxAlertH {
+		alertH = maxAlertH
 	}
 	alertPanel := renderAlertPanel(a.alerts, width, theme)
 
 	remaining := height - alertH
+	if remaining < 10 {
+		remaining = 10
+	}
 
 	// Log panel: minimum 5 lines, takes remaining space.
 	logH := remaining / 4
 	if logH < 5 {
 		logH = 5
 	}
-	if logH > remaining-5 {
-		logH = remaining - 5
+	maxLogH := remaining - 5
+	if maxLogH < 5 {
+		maxLogH = 5
+	}
+	if logH > maxLogH {
+		logH = maxLogH
 	}
 
 	middleH := remaining - logH

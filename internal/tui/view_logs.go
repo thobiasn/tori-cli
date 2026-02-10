@@ -263,13 +263,14 @@ func wrapText(s string, width int) []string {
 	if width <= 0 {
 		return nil
 	}
+	runes := []rune(s)
 	var lines []string
-	for len(s) > width {
-		lines = append(lines, s[:width])
-		s = s[width:]
+	for len(runes) > width {
+		lines = append(lines, string(runes[:width]))
+		runes = runes[width:]
 	}
-	if len(s) > 0 {
-		lines = append(lines, s)
+	if len(runes) > 0 {
+		lines = append(lines, string(runes))
 	}
 	return lines
 }
@@ -289,11 +290,16 @@ func updateLogView(a *App, msg tea.KeyMsg) tea.Cmd {
 				s.searchText = s.searchText[:len(s.searchText)-1]
 			}
 		default:
-			if len(key) == 1 {
+			if len(key) == 1 && len(s.searchText) < 128 {
 				s.searchText += key
 			}
 		}
 		return nil
+	}
+
+	maxScroll := s.logs.Len() - 1
+	if maxScroll < 0 {
+		maxScroll = 0
 	}
 
 	switch key {
@@ -302,8 +308,12 @@ func updateLogView(a *App, msg tea.KeyMsg) tea.Cmd {
 		if s.scroll < 0 {
 			s.scroll = 0
 		}
+		s.expanded = -1
 	case "k", "up":
-		s.scroll++
+		if s.scroll < maxScroll {
+			s.scroll++
+		}
+		s.expanded = -1
 	case "g":
 		// Cycle project filter (simplified: toggle off).
 		if s.filterProject != "" {

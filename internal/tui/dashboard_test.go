@@ -3,6 +3,7 @@ package tui
 import (
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/thobiasn/rook/internal/protocol"
 )
 
@@ -119,6 +120,85 @@ func TestCursorContainerIDCollapsed(t *testing.T) {
 	}
 	if id := cursorContainerID(groups, collapsed, 2); id != "c3" {
 		t.Errorf("cursor=2 = %q, want c3", id)
+	}
+}
+
+func TestCursorGroupName(t *testing.T) {
+	groups := []containerGroup{
+		{name: "app", containers: []protocol.ContainerMetrics{{ID: "c1"}, {ID: "c2"}}},
+		{name: "other", containers: []protocol.ContainerMetrics{{ID: "c3"}}},
+	}
+	collapsed := map[string]bool{}
+
+	// cursor=0 is "app" header.
+	if name := cursorGroupName(groups, collapsed, 0); name != "app" {
+		t.Errorf("cursor=0 group name = %q, want app", name)
+	}
+	// cursor=1 is c1, not a header.
+	if name := cursorGroupName(groups, collapsed, 1); name != "" {
+		t.Errorf("cursor=1 should not be header, got %q", name)
+	}
+	// cursor=3 is "other" header.
+	if name := cursorGroupName(groups, collapsed, 3); name != "other" {
+		t.Errorf("cursor=3 group name = %q, want other", name)
+	}
+
+	// With collapsed "app": cursor=0 is "app", cursor=1 is "other".
+	collapsed["app"] = true
+	if name := cursorGroupName(groups, collapsed, 0); name != "app" {
+		t.Errorf("collapsed cursor=0 = %q, want app", name)
+	}
+	if name := cursorGroupName(groups, collapsed, 1); name != "other" {
+		t.Errorf("collapsed cursor=1 = %q, want other", name)
+	}
+}
+
+func TestUpdateDashboardCursorNav(t *testing.T) {
+	a := newTestApp()
+	a.dash.groups = []containerGroup{
+		{name: "app", containers: []protocol.ContainerMetrics{{ID: "c1"}, {ID: "c2"}}},
+	}
+
+	// Move down.
+	updateDashboard(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if a.dash.cursor != 1 {
+		t.Errorf("cursor after j = %d, want 1", a.dash.cursor)
+	}
+
+	updateDashboard(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if a.dash.cursor != 2 {
+		t.Errorf("cursor after j = %d, want 2", a.dash.cursor)
+	}
+
+	// At end (max=2), shouldn't go further.
+	updateDashboard(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if a.dash.cursor != 2 {
+		t.Errorf("cursor should stay at 2, got %d", a.dash.cursor)
+	}
+
+	// Move up.
+	updateDashboard(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	if a.dash.cursor != 1 {
+		t.Errorf("cursor after k = %d, want 1", a.dash.cursor)
+	}
+}
+
+func TestUpdateDashboardCollapseToggle(t *testing.T) {
+	a := newTestApp()
+	a.dash.groups = []containerGroup{
+		{name: "app", containers: []protocol.ContainerMetrics{{ID: "c1"}}},
+	}
+	a.dash.cursor = 0 // On "app" header.
+
+	// Space toggles collapse.
+	updateDashboard(&a, tea.KeyMsg{Type: tea.KeySpace})
+	if !a.dash.collapsed["app"] {
+		t.Error("app should be collapsed after space")
+	}
+
+	updateDashboard(&a, tea.KeyMsg{Type: tea.KeySpace})
+	if a.dash.collapsed["app"] {
+		t.Error("app should be expanded after second space")
 	}
 }
 

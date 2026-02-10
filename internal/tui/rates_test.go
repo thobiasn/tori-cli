@@ -64,6 +64,44 @@ func TestRateCalcStaleCleanup(t *testing.T) {
 	}
 }
 
+func TestRateCalcZeroTimeDelta(t *testing.T) {
+	rc := NewRateCalc()
+	nets := []protocol.NetMetrics{{Iface: "eth0", RxBytes: 1000, TxBytes: 500}}
+	rc.Update(100, nets, nil)
+
+	// Same timestamp — should not produce rates (division by zero guard).
+	nets2 := []protocol.NetMetrics{{Iface: "eth0", RxBytes: 2000, TxBytes: 1000}}
+	rc.Update(100, nets2, nil)
+
+	if rc.NetRxRate != 0 || rc.NetTxRate != 0 {
+		t.Errorf("zero dt should yield zero rates, got rx=%f tx=%f", rc.NetRxRate, rc.NetTxRate)
+	}
+}
+
+func TestRateCalcCounterWraparound(t *testing.T) {
+	rc := NewRateCalc()
+	nets := []protocol.NetMetrics{{Iface: "eth0", RxBytes: 1000, TxBytes: 500}}
+	conts := []protocol.ContainerMetrics{{ID: "c1", NetRx: 1000, NetTx: 500, BlockRead: 200, BlockWrite: 100}}
+	rc.Update(100, nets, conts)
+
+	// Counter reset: new values smaller than previous (wraparound).
+	nets2 := []protocol.NetMetrics{{Iface: "eth0", RxBytes: 100, TxBytes: 50}}
+	conts2 := []protocol.ContainerMetrics{{ID: "c1", NetRx: 50, NetTx: 25, BlockRead: 10, BlockWrite: 5}}
+	rc.Update(110, nets2, conts2)
+
+	// Should produce zero rates (not huge unsigned wraparound values).
+	if rc.NetRxRate != 0 {
+		t.Errorf("counter reset should yield 0 host rx rate, got %f", rc.NetRxRate)
+	}
+	if rc.NetTxRate != 0 {
+		t.Errorf("counter reset should yield 0 host tx rate, got %f", rc.NetTxRate)
+	}
+	cr := rc.ContainerRates["c1"]
+	if cr.NetRxRate != 0 || cr.NetTxRate != 0 || cr.BlockReadRate != 0 || cr.BlockWriteRate != 0 {
+		t.Errorf("counter reset should yield 0 container rates, got %+v", cr)
+	}
+}
+
 func TestRateCalcMultipleInterfaces(t *testing.T) {
 	rc := NewRateCalc()
 	nets1 := []protocol.NetMetrics{

@@ -45,6 +45,13 @@ func TestTunnelStartFailsOnBadHost(t *testing.T) {
 	}
 }
 
+func TestTunnelRejectsHostStartingWithDash(t *testing.T) {
+	_, err := NewTunnel("-oProxyCommand=evil", "/run/rook.sock")
+	if err == nil {
+		t.Fatal("should reject host starting with -")
+	}
+}
+
 func TestTunnelCloseNilProcess(t *testing.T) {
 	tun := &Tunnel{
 		done: make(chan error, 1),

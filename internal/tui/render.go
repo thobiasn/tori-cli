@@ -226,7 +226,7 @@ func FormatTimestamp(ts int64) string {
 	return t.Format("15:04:05")
 }
 
-// Truncate shortens a string to maxLen, appending … if truncated.
+// Truncate shortens a plain (non-styled) string to maxLen, appending … if truncated.
 func Truncate(s string, maxLen int) string {
 	if maxLen <= 0 {
 		return ""
@@ -239,6 +239,19 @@ func Truncate(s string, maxLen int) string {
 		return "…"
 	}
 	return string(runes[:maxLen-1]) + "…"
+}
+
+// TruncateStyled shortens a string that may contain ANSI escape sequences.
+// If the visual width fits, the string is returned as-is. Otherwise, ANSI
+// is stripped and the plain text is truncated.
+func TruncateStyled(s string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= maxLen {
+		return s
+	}
+	return Truncate(stripANSI(s), maxLen)
 }
 
 // stripANSI removes ANSI escape sequences from a string.

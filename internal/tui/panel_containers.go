@@ -34,7 +34,7 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 		if pos == cursor {
 			headerLine = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(headerLine), innerW))
 		}
-		lines = append(lines, Truncate(headerLine, innerW))
+		lines = append(lines, TruncateStyled(headerLine, innerW))
 		pos++
 
 		if collapsed[g.name] {
@@ -57,7 +57,7 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 			if pos == cursor {
 				row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
 			}
-			lines = append(lines, Truncate(row, innerW))
+			lines = append(lines, TruncateStyled(row, innerW))
 			pos++
 		}
 	}

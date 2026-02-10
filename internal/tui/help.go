@@ -1,6 +1,10 @@
 package tui
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 var dashboardHelp = `
  Navigation
@@ -44,7 +48,7 @@ var detailViewHelp = `
    q            Quit`
 
 // helpOverlay renders a centered help box on top of the current view.
-func helpOverlay(active view, width, height int, theme *Theme, base string) string {
+func helpOverlay(active view, width, height int, theme *Theme) string {
 	var text string
 	switch active {
 	case viewDashboard:
@@ -68,5 +72,6 @@ func helpOverlay(active view, width, height int, theme *Theme, base string) stri
 	}
 
 	content := strings.Join(lines, "\n")
-	return Box("Help", content, boxW, boxH, theme)
+	overlay := Box("Help", content, boxW, boxH, theme)
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, overlay)
 }

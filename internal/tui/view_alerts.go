@@ -29,6 +29,8 @@ type alertQueryMsg struct {
 	alerts []protocol.AlertMsg
 }
 
+type alertActionDoneMsg struct{}
+
 var silenceDurations = []struct {
 	label string
 	secs  int64
@@ -109,7 +111,7 @@ func renderAlertView(a *App, width, height int) string {
 		if globalIdx == s.cursor {
 			row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
 		}
-		lines = append(lines, Truncate(row, innerW))
+		lines = append(lines, TruncateStyled(row, innerW))
 	}
 
 	title := fmt.Sprintf("Alerts (%d)", len(alerts))
@@ -119,13 +121,13 @@ func renderAlertView(a *App, width, height int) string {
 
 	// Silence picker overlay.
 	if s.silenceMode {
-		box = renderSilencePicker(s, box, width, height, theme)
+		box = renderSilencePicker(s, width, boxH, theme)
 	}
 
 	return box + "\n" + renderAlertFooter(s, width, theme)
 }
 
-func renderSilencePicker(s *AlertViewState, base string, width, height int, theme *Theme) string {
+func renderSilencePicker(s *AlertViewState, width, height int, theme *Theme) string {
 	var lines []string
 	lines = append(lines, fmt.Sprintf(" Silence %s for:", Truncate(s.silenceRule, 20)))
 	for i, d := range silenceDurations {
@@ -139,10 +141,7 @@ func renderSilencePicker(s *AlertViewState, base string, width, height int, them
 	pickerW := 30
 	pickerH := len(silenceDurations) + 3
 	picker := Box("Silence", content, pickerW, pickerH, theme)
-
-	// Center the picker overlay on the base.
-	_ = base
-	return picker
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, picker)
 }
 
 func renderAlertFooter(s *AlertViewState, width int, theme *Theme) string {
@@ -233,7 +232,7 @@ func ackAlertCmd(c *Client, alertID int64) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		c.AckAlert(ctx, alertID)
-		return nil
+		return alertActionDoneMsg{}
 	}
 }
 
@@ -242,6 +241,6 @@ func silenceAlertCmd(c *Client, rule string, dur int64) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		c.SilenceAlert(ctx, rule, dur)
-		return nil
+		return alertActionDoneMsg{}
 	}
 }

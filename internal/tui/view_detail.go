@@ -258,6 +258,8 @@ func renderRestartConfirm(cm *protocol.ContainerMetrics, width, height int, them
 	return Box("Confirm Restart", content, width, height, theme)
 }
 
+type restartDoneMsg struct{}
+
 // updateDetail handles keys in the detail view.
 func updateDetail(a *App, msg tea.KeyMsg) tea.Cmd {
 	s := &a.detail
@@ -268,16 +270,22 @@ func updateDetail(a *App, msg tea.KeyMsg) tea.Cmd {
 		case "y":
 			s.confirmRestart = false
 			id := s.containerID
+			client := a.client
 			return func() tea.Msg {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
-				a.client.RestartContainer(ctx, id)
-				return nil
+				client.RestartContainer(ctx, id)
+				return restartDoneMsg{}
 			}
 		case "n", "esc":
 			s.confirmRestart = false
 		}
 		return nil
+	}
+
+	maxScroll := s.logs.Len() - 1
+	if maxScroll < 0 {
+		maxScroll = 0
 	}
 
 	switch key {
@@ -289,7 +297,9 @@ func updateDetail(a *App, msg tea.KeyMsg) tea.Cmd {
 			s.logScroll = 0
 		}
 	case "k", "up":
-		s.logScroll++
+		if s.logScroll < maxScroll {
+			s.logScroll++
+		}
 	case "esc":
 		a.active = viewDashboard
 	}

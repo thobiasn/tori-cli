@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -20,6 +21,9 @@ type Tunnel struct {
 // NewTunnel creates an SSH tunnel forwarding a local Unix socket to the remote one.
 // It blocks until the local socket appears or the timeout expires.
 func NewTunnel(host, remoteSock string) (*Tunnel, error) {
+	if strings.HasPrefix(host, "-") {
+		return nil, fmt.Errorf("invalid host: %q", host)
+	}
 	t := &Tunnel{
 		execFn: exec.Command,
 		done:   make(chan error, 1),

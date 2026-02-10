@@ -145,6 +145,46 @@ func TestLogViewMatchesFilterSearch(t *testing.T) {
 	}
 }
 
+func TestWrapTextBasic(t *testing.T) {
+	lines := wrapText("hello world!", 5)
+	want := []string{"hello", " worl", "d!"}
+	if len(lines) != len(want) {
+		t.Fatalf("wrapText lines = %d, want %d", len(lines), len(want))
+	}
+	for i, l := range lines {
+		if l != want[i] {
+			t.Errorf("wrapText[%d] = %q, want %q", i, l, want[i])
+		}
+	}
+}
+
+func TestWrapTextUnicode(t *testing.T) {
+	// 3 CJK chars = 3 runes, should not be split mid-character.
+	lines := wrapText("日本語test", 3)
+	if len(lines) == 0 {
+		t.Fatal("expected wrapped lines")
+	}
+	// First line should have exactly 3 runes.
+	runes := []rune(lines[0])
+	if len(runes) != 3 {
+		t.Errorf("first line has %d runes, want 3", len(runes))
+	}
+}
+
+func TestWrapTextZeroWidth(t *testing.T) {
+	lines := wrapText("hello", 0)
+	if lines != nil {
+		t.Errorf("zero width should return nil, got %v", lines)
+	}
+}
+
+func TestWrapTextFits(t *testing.T) {
+	lines := wrapText("hi", 10)
+	if len(lines) != 1 || lines[0] != "hi" {
+		t.Errorf("short text should fit in one line, got %v", lines)
+	}
+}
+
 func TestLogViewCycleContainerFilter(t *testing.T) {
 	s := newLogViewState()
 	contInfo := []protocol.ContainerInfo{
