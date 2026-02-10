@@ -535,6 +535,46 @@ func TestAckAlert(t *testing.T) {
 	}
 }
 
+func TestQueryAlertsResolvedAndAcknowledged(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	id, err := s.InsertAlert(ctx, &Alert{
+		RuleName: "high_cpu", Severity: "critical", Condition: "host.cpu_percent > 90",
+		InstanceKey: "high_cpu", FiredAt: ts, Message: "CPU high",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := ts.Add(30 * time.Second)
+	if err := s.ResolveAlert(ctx, id, resolved); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AckAlert(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := s.QueryAlerts(ctx, ts.Unix(), ts.Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	a := results[0]
+	if a.ResolvedAt == nil {
+		t.Fatal("ResolvedAt should be set")
+	}
+	if a.ResolvedAt.Unix() != resolved.Unix() {
+		t.Errorf("ResolvedAt = %v, want %v", a.ResolvedAt, resolved)
+	}
+	if !a.Acknowledged {
+		t.Error("expected acknowledged = true")
+	}
+}
+
 func TestAckAlertNotFound(t *testing.T) {
 	s := testStore(t)
 	err := s.AckAlert(context.Background(), 9999)

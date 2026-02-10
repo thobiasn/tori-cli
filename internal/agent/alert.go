@@ -231,7 +231,7 @@ func (a *Alerter) Evaluate(ctx context.Context, snap *MetricSnapshot) {
 		}
 		switch inst.state {
 		case stateFiring:
-			a.resolve(ctx, key, inst, now)
+			a.resolve(ctx, a.ruleForKey(key), key, inst, now)
 		case statePending:
 			inst.state = stateInactive
 		}
@@ -329,7 +329,7 @@ func (a *Alerter) transition(ctx context.Context, r *alertRule, key string, matc
 		}
 	case stateFiring:
 		if !matched {
-			a.resolve(ctx, key, inst, now)
+			a.resolve(ctx, r, key, inst, now)
 		}
 	}
 }
@@ -363,21 +363,20 @@ func (a *Alerter) fire(ctx context.Context, r *alertRule, key string, inst *aler
 		a.onStateChange(alert, "firing")
 	}
 
-	if a.isSilenced(r.name) {
-		return
-	}
-
+	silenced := a.isSilenced(r.name)
 	for _, action := range r.actions {
 		switch action {
 		case "notify":
-			a.notifier.Send(ctx, "Alert: "+r.name, msg)
+			if !silenced {
+				a.notifier.Send(ctx, "Alert: "+r.name, msg)
+			}
 		case "restart":
 			a.doRestart(ctx, r, inst, containerID)
 		}
 	}
 }
 
-func (a *Alerter) resolve(ctx context.Context, key string, inst *alertInstance, now time.Time) {
+func (a *Alerter) resolve(ctx context.Context, r *alertRule, key string, inst *alertInstance, now time.Time) {
 	slog.Info("alert resolved", "key", key)
 	inst.state = stateInactive
 
@@ -386,17 +385,38 @@ func (a *Alerter) resolve(ctx context.Context, key string, inst *alertInstance, 
 			slog.Error("resolve alert", "error", err)
 		}
 		if a.onStateChange != nil {
+			condStr := ""
+			ruleName := ""
+			severity := ""
+			if r != nil {
+				ruleName = r.name
+				severity = r.severity
+				condStr = r.condition.Scope + "." + r.condition.Field + " " + r.condition.Op + " " + conditionValue(&r.condition)
+			}
 			a.onStateChange(&Alert{
-				ID:         inst.dbID,
+				ID:          inst.dbID,
+				RuleName:    ruleName,
+				Severity:    severity,
+				Condition:   condStr,
 				InstanceKey: key,
-				FiredAt:    inst.firedAt,
-				ResolvedAt: &now,
+				FiredAt:     inst.firedAt,
+				ResolvedAt:  &now,
 			}, "resolved")
 		}
 	}
 
 	inst.restarts = 0
 	inst.dbID = 0
+}
+
+// ruleForKey finds the alertRule for a given instance key (used for stale resolution).
+func (a *Alerter) ruleForKey(key string) *alertRule {
+	for i := range a.rules {
+		if key == a.rules[i].name || strings.HasPrefix(key, a.rules[i].name+":") {
+			return &a.rules[i]
+		}
+	}
+	return nil
 }
 
 func (a *Alerter) doRestart(ctx context.Context, r *alertRule, inst *alertInstance, containerID string) {
@@ -423,6 +443,16 @@ func (a *Alerter) doRestart(ctx context.Context, r *alertRule, inst *alertInstan
 	}
 	inst.restarts++
 	slog.Info("restarted container", "rule", r.name, "container", containerID, "restarts", inst.restarts)
+}
+
+// HasRule returns whether a rule with the given name exists.
+func (a *Alerter) HasRule(name string) bool {
+	for i := range a.rules {
+		if a.rules[i].name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Silence suppresses notifications for a rule for the given duration.

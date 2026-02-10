@@ -776,6 +776,88 @@ func TestAlertStateChangeCallback(t *testing.T) {
 	}
 }
 
+func TestAlertSilenceOnlySuppressesNotify(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"exited": {
+			Condition:   "container.state == 'exited'",
+			Severity:    "critical",
+			Actions:     []string{"notify", "restart"},
+			MaxRestarts: 3,
+		},
+	}
+	a, _, fd := testAlerterWithDocker(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Silence the rule.
+	a.Silence("exited", 5*time.Minute)
+
+	// Fire — notify should be suppressed, but restart should still happen.
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
+	})
+
+	if len(fd.restarted) != 1 {
+		t.Errorf("expected 1 restart even when silenced, got %d", len(fd.restarted))
+	}
+	if fd.restarted[0] != "aaa" {
+		t.Errorf("restarted = %v, want [aaa]", fd.restarted)
+	}
+}
+
+func TestAlertResolveCallbackFields(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"high_cpu": {
+			Condition: "host.cpu_percent > 90",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, _ := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	var fired, resolved *Alert
+	a.onStateChange = func(alert *Alert, state string) {
+		if state == "firing" {
+			fired = alert
+		} else if state == "resolved" {
+			resolved = alert
+		}
+	}
+
+	// Fire.
+	a.Evaluate(ctx, &MetricSnapshot{Host: &HostMetrics{CPUPercent: 95}})
+	// Resolve.
+	now = now.Add(10 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{Host: &HostMetrics{CPUPercent: 50}})
+
+	if fired == nil || resolved == nil {
+		t.Fatal("expected both firing and resolved callbacks")
+	}
+
+	// Verify resolved callback has full fields.
+	if resolved.RuleName != "high_cpu" {
+		t.Errorf("resolved.RuleName = %q, want high_cpu", resolved.RuleName)
+	}
+	if resolved.Severity != "critical" {
+		t.Errorf("resolved.Severity = %q, want critical", resolved.Severity)
+	}
+	if resolved.Condition != "host.cpu_percent > 90" {
+		t.Errorf("resolved.Condition = %q, want 'host.cpu_percent > 90'", resolved.Condition)
+	}
+	if resolved.ID != fired.ID {
+		t.Errorf("resolved.ID = %d, want %d (same as fired)", resolved.ID, fired.ID)
+	}
+	if resolved.ResolvedAt == nil {
+		t.Error("resolved.ResolvedAt should be set")
+	}
+}
+
 func TestNilDiskSnapshotDoesNotFalseResolve(t *testing.T) {
 	alerts := map[string]AlertConfig{
 		"disk_full": {

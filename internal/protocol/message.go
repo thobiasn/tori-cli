@@ -22,9 +22,8 @@ const (
 	TypeQueryContainers    MsgType = "query:containers"
 	TypeActionAckAlert     MsgType = "action:ack_alert"
 	TypeActionSilence      MsgType = "action:silence_alert"
-	TypeActionRestart      MsgType = "action:restart_container"
-	TypeActionSetTracking  MsgType = "action:set_tracking"
-	TypeResult             MsgType = "result"
+	TypeActionRestart MsgType = "action:restart_container"
+	TypeResult        MsgType = "result"
 	TypeError              MsgType = "error"
 )
 

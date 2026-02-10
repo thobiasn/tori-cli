@@ -15,6 +15,14 @@ import (
 	"github.com/thobiasn/rook/internal/protocol"
 )
 
+const maxConnections = 64
+
+// maxQueryRange is the maximum allowed time range for metric/alert queries (24 hours).
+const maxQueryRange = 24 * 60 * 60
+
+// maxSilenceDuration is the maximum silence duration (30 days in seconds).
+const maxSilenceDuration = 30 * 24 * 60 * 60
+
 // SocketServer serves protocol messages over a Unix domain socket.
 type SocketServer struct {
 	hub      *Hub
@@ -22,7 +30,9 @@ type SocketServer struct {
 	docker   *DockerCollector
 	alerter  *Alerter
 	listener net.Listener
+	path     string
 	wg       sync.WaitGroup
+	connSem  chan struct{}
 }
 
 // NewSocketServer creates a SocketServer. Call Start to begin accepting connections.
@@ -32,6 +42,7 @@ func NewSocketServer(hub *Hub, store *Store, docker *DockerCollector, alerter *A
 		store:   store,
 		docker:  docker,
 		alerter: alerter,
+		connSem: make(chan struct{}, maxConnections),
 	}
 }
 
@@ -54,18 +65,22 @@ func (ss *SocketServer) Start(path string) error {
 	}
 
 	ss.listener = ln
+	ss.path = path
 	ss.wg.Add(1)
 	go ss.acceptLoop()
 	slog.Info("socket server started", "path", path)
 	return nil
 }
 
-// Stop closes the listener and waits for all connections to finish.
+// Stop closes the listener, waits for all connections, and removes the socket file.
 func (ss *SocketServer) Stop() {
 	if ss.listener != nil {
 		ss.listener.Close()
 	}
 	ss.wg.Wait()
+	if ss.path != "" {
+		os.Remove(ss.path)
+	}
 	slog.Info("socket server stopped")
 }
 
@@ -79,6 +94,16 @@ func (ss *SocketServer) acceptLoop() {
 			}
 			return
 		}
+
+		// Enforce connection limit.
+		select {
+		case ss.connSem <- struct{}{}:
+		default:
+			slog.Warn("connection limit reached, rejecting")
+			conn.Close()
+			continue
+		}
+
 		ss.wg.Add(1)
 		go ss.handleConn(conn)
 	}
@@ -87,10 +112,15 @@ func (ss *SocketServer) acceptLoop() {
 func (ss *SocketServer) handleConn(conn net.Conn) {
 	defer ss.wg.Done()
 	defer conn.Close()
+	defer func() { <-ss.connSem }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	c := &connState{
 		ss:   ss,
 		conn: conn,
+		ctx:  ctx,
 		subs: make(map[string]*subscription),
 	}
 	defer c.cleanup()
@@ -117,6 +147,7 @@ type subscription struct {
 type connState struct {
 	ss      *SocketServer
 	conn    net.Conn
+	ctx     context.Context // cancelled when connection closes
 	writeMu sync.Mutex
 	subs    map[string]*subscription // topic -> subscription
 }
@@ -157,8 +188,8 @@ func (c *connState) sendError(id uint32, msg string) {
 	c.writeMsg(env)
 }
 
-func (c *connState) sendResponse(id uint32, typ protocol.MsgType, body any) {
-	env, err := protocol.NewEnvelope(typ, id, body)
+func (c *connState) sendResponse(id uint32, body any) {
+	env, err := protocol.NewEnvelope(protocol.TypeResult, id, body)
 	if err != nil {
 		slog.Error("encode response", "error", err)
 		return
@@ -170,11 +201,11 @@ func (c *connState) dispatch(env *protocol.Envelope) {
 	switch env.Type {
 	// Streaming subscriptions.
 	case protocol.TypeSubscribeMetrics:
-		c.subscribeMetrics(env.ID)
+		c.subscribeMetrics()
 	case protocol.TypeSubscribeLogs:
 		c.subscribeLogs(env)
 	case protocol.TypeSubscribeAlerts:
-		c.subscribeAlerts(env.ID)
+		c.subscribeAlerts()
 	case protocol.TypeUnsubscribe:
 		c.unsubscribe(env)
 
@@ -203,7 +234,7 @@ func (c *connState) dispatch(env *protocol.Envelope) {
 
 // --- Streaming ---
 
-func (c *connState) subscribeMetrics(id uint32) {
+func (c *connState) subscribeMetrics() {
 	if _, exists := c.subs[TopicMetrics]; exists {
 		return
 	}
@@ -242,23 +273,18 @@ func (c *connState) subscribeLogs(env *protocol.Envelope) {
 
 	var filter protocol.SubscribeLogs
 	if env.Body != nil {
-		protocol.DecodeBody(env.Body, &filter)
-	}
-
-	// Resolve project to container IDs if specified.
-	var projectIDs map[string]bool
-	if filter.Project != "" {
-		projectIDs = make(map[string]bool)
-		for _, ctr := range c.ss.docker.Containers() {
-			if ctr.Project == filter.Project {
-				projectIDs[ctr.ID] = true
-			}
+		if err := protocol.DecodeBody(env.Body, &filter); err != nil {
+			c.sendError(env.ID, "invalid subscribe body")
+			return
 		}
 	}
 
 	sub, ch := c.ss.hub.Subscribe(TopicLogs)
 	ctx, cancel := context.WithCancel(context.Background())
 	c.subs[TopicLogs] = &subscription{sub: sub, topic: TopicLogs, cancel: cancel}
+
+	// Capture project name for dynamic resolution (not a snapshot of IDs).
+	project := filter.Project
 
 	go func() {
 		for {
@@ -277,7 +303,7 @@ func (c *connState) subscribeLogs(env *protocol.Envelope) {
 				if filter.ContainerID != "" && entry.ContainerID != filter.ContainerID {
 					continue
 				}
-				if projectIDs != nil && !projectIDs[entry.ContainerID] {
+				if project != "" && !c.containerInProject(entry.ContainerID, project) {
 					continue
 				}
 				if filter.Stream != "" && entry.Stream != filter.Stream {
@@ -296,7 +322,17 @@ func (c *connState) subscribeLogs(env *protocol.Envelope) {
 	}()
 }
 
-func (c *connState) subscribeAlerts(id uint32) {
+// containerInProject checks if a container belongs to a project using the live container list.
+func (c *connState) containerInProject(containerID, project string) bool {
+	for _, ctr := range c.ss.docker.Containers() {
+		if ctr.ID == containerID && ctr.Project == project {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *connState) subscribeAlerts() {
 	if _, exists := c.subs[TopicAlerts]; exists {
 		return
 	}
@@ -350,26 +386,37 @@ func (c *connState) queryMetrics(env *protocol.Envelope) {
 		c.sendError(env.ID, "invalid query body")
 		return
 	}
+	if req.Start > req.End {
+		c.sendError(env.ID, "start must be <= end")
+		return
+	}
+	if req.End-req.Start > maxQueryRange {
+		c.sendError(env.ID, "time range too large (max 24h)")
+		return
+	}
 
-	ctx := context.Background()
-	host, err := c.ss.store.QueryHostMetrics(ctx, req.Start, req.End)
+	host, err := c.ss.store.QueryHostMetrics(c.ctx, req.Start, req.End)
 	if err != nil {
-		c.sendError(env.ID, fmt.Sprintf("query host metrics: %v", err))
+		slog.Error("query host metrics", "error", err)
+		c.sendError(env.ID, "query failed")
 		return
 	}
-	disks, err := c.ss.store.QueryDiskMetrics(ctx, req.Start, req.End)
+	disks, err := c.ss.store.QueryDiskMetrics(c.ctx, req.Start, req.End)
 	if err != nil {
-		c.sendError(env.ID, fmt.Sprintf("query disk metrics: %v", err))
+		slog.Error("query disk metrics", "error", err)
+		c.sendError(env.ID, "query failed")
 		return
 	}
-	nets, err := c.ss.store.QueryNetMetrics(ctx, req.Start, req.End)
+	nets, err := c.ss.store.QueryNetMetrics(c.ctx, req.Start, req.End)
 	if err != nil {
-		c.sendError(env.ID, fmt.Sprintf("query net metrics: %v", err))
+		slog.Error("query net metrics", "error", err)
+		c.sendError(env.ID, "query failed")
 		return
 	}
-	containers, err := c.ss.store.QueryContainerMetrics(ctx, req.Start, req.End)
+	containers, err := c.ss.store.QueryContainerMetrics(c.ctx, req.Start, req.End)
 	if err != nil {
-		c.sendError(env.ID, fmt.Sprintf("query container metrics: %v", err))
+		slog.Error("query container metrics", "error", err)
+		c.sendError(env.ID, "query failed")
 		return
 	}
 
@@ -379,13 +426,17 @@ func (c *connState) queryMetrics(env *protocol.Envelope) {
 		Networks:   convertTimedNet(nets),
 		Containers: convertTimedContainer(containers),
 	}
-	c.sendResponse(env.ID, protocol.TypeResult, &resp)
+	c.sendResponse(env.ID, &resp)
 }
 
 func (c *connState) queryLogs(env *protocol.Envelope) {
 	var req protocol.QueryLogsReq
 	if err := protocol.DecodeBody(env.Body, &req); err != nil {
 		c.sendError(env.ID, "invalid query body")
+		return
+	}
+	if req.Start > req.End {
+		c.sendError(env.ID, "start must be <= end")
 		return
 	}
 
@@ -400,14 +451,15 @@ func (c *connState) queryLogs(env *protocol.Envelope) {
 		filter.ContainerIDs = []string{req.ContainerID}
 	}
 
-	entries, err := c.ss.store.QueryLogs(context.Background(), filter)
+	entries, err := c.ss.store.QueryLogs(c.ctx, filter)
 	if err != nil {
-		c.sendError(env.ID, fmt.Sprintf("query logs: %v", err))
+		slog.Error("query logs", "error", err)
+		c.sendError(env.ID, "query failed")
 		return
 	}
 
 	resp := protocol.QueryLogsResp{Entries: convertLogEntries(entries)}
-	c.sendResponse(env.ID, protocol.TypeResult, &resp)
+	c.sendResponse(env.ID, &resp)
 }
 
 func (c *connState) queryAlerts(env *protocol.Envelope) {
@@ -416,15 +468,20 @@ func (c *connState) queryAlerts(env *protocol.Envelope) {
 		c.sendError(env.ID, "invalid query body")
 		return
 	}
+	if req.Start > req.End {
+		c.sendError(env.ID, "start must be <= end")
+		return
+	}
 
-	alerts, err := c.ss.store.QueryAlerts(context.Background(), req.Start, req.End)
+	alerts, err := c.ss.store.QueryAlerts(c.ctx, req.Start, req.End)
 	if err != nil {
-		c.sendError(env.ID, fmt.Sprintf("query alerts: %v", err))
+		slog.Error("query alerts", "error", err)
+		c.sendError(env.ID, "query failed")
 		return
 	}
 
 	resp := protocol.QueryAlertsResp{Alerts: convertAlerts(alerts)}
-	c.sendResponse(env.ID, protocol.TypeResult, &resp)
+	c.sendResponse(env.ID, &resp)
 }
 
 func (c *connState) queryContainers(id uint32) {
@@ -441,7 +498,7 @@ func (c *connState) queryContainers(id uint32) {
 			Project: ctr.Project,
 		}
 	}
-	c.sendResponse(id, protocol.TypeResult, &resp)
+	c.sendResponse(id, &resp)
 }
 
 // --- Actions ---
@@ -452,8 +509,8 @@ func (c *connState) ackAlert(env *protocol.Envelope) {
 		c.sendError(env.ID, "invalid body")
 		return
 	}
-	if err := c.ss.store.AckAlert(context.Background(), req.AlertID); err != nil {
-		c.sendError(env.ID, err.Error())
+	if err := c.ss.store.AckAlert(c.ctx, req.AlertID); err != nil {
+		c.sendError(env.ID, "alert not found")
 		return
 	}
 	c.sendResult(env.ID, &protocol.Result{OK: true, Message: "acknowledged"})
@@ -469,6 +526,14 @@ func (c *connState) silenceAlert(env *protocol.Envelope) {
 		c.sendError(env.ID, "alerter not configured")
 		return
 	}
+	if req.Duration <= 0 || req.Duration > maxSilenceDuration {
+		c.sendError(env.ID, fmt.Sprintf("duration must be 1-%d seconds", maxSilenceDuration))
+		return
+	}
+	if !c.ss.alerter.HasRule(req.RuleName) {
+		c.sendError(env.ID, "unknown rule name")
+		return
+	}
 	c.ss.alerter.Silence(req.RuleName, time.Duration(req.Duration)*time.Second)
 	c.sendResult(env.ID, &protocol.Result{OK: true, Message: "silenced"})
 }
@@ -479,11 +544,26 @@ func (c *connState) restartContainer(env *protocol.Envelope) {
 		c.sendError(env.ID, "invalid body")
 		return
 	}
-	if err := c.ss.docker.RestartContainer(context.Background(), req.ContainerID); err != nil {
-		c.sendError(env.ID, fmt.Sprintf("restart: %v", err))
+	// Validate container is being monitored.
+	if !c.isMonitoredContainer(req.ContainerID) {
+		c.sendError(env.ID, "container not found")
+		return
+	}
+	if err := c.ss.docker.RestartContainer(c.ctx, req.ContainerID); err != nil {
+		slog.Error("restart container", "container", req.ContainerID, "error", err)
+		c.sendError(env.ID, "restart failed")
 		return
 	}
 	c.sendResult(env.ID, &protocol.Result{OK: true, Message: "restarted"})
+}
+
+func (c *connState) isMonitoredContainer(id string) bool {
+	for _, ctr := range c.ss.docker.Containers() {
+		if ctr.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // --- Converters: agent types -> protocol types ---
@@ -585,7 +665,6 @@ func isClosedErr(err error) bool {
 	if errors.Is(err, net.ErrClosed) {
 		return true
 	}
-	// net.ErrClosed is not always returned (e.g., on old Go versions).
 	return strings.Contains(err.Error(), "use of closed network connection")
 }
 

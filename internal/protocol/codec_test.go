@@ -143,6 +143,18 @@ func TestEncodeDecodeBody(t *testing.T) {
 	}
 }
 
+func TestReadMsgZeroSize(t *testing.T) {
+	var buf bytes.Buffer
+	var hdr [4]byte
+	binary.BigEndian.PutUint32(hdr[:], 0)
+	buf.Write(hdr[:])
+
+	_, err := ReadMsg(&buf)
+	if err == nil {
+		t.Fatal("expected error for zero-size message")
+	}
+}
+
 func TestReadMsgInvalidMsgpack(t *testing.T) {
 	var buf bytes.Buffer
 	var hdr [4]byte

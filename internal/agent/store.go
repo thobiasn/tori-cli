@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -474,8 +475,9 @@ func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) 
 		args = append(args, f.Stream)
 	}
 	if f.Search != "" {
-		query += ` AND message LIKE ?`
-		args = append(args, "%"+f.Search+"%")
+		query += ` AND message LIKE ? ESCAPE '\'`
+		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(f.Search)
+		args = append(args, "%"+escaped+"%")
 	}
 
 	limit := f.Limit
