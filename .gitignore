@@ -1,0 +1,26 @@
+# Build output
+rook
+*.exe
+
+# Test artifacts
+*.test
+*.out
+cover.html
+
+# SQLite
+*.db
+*.db-wal
+*.db-shm
+
+# Config (may contain credentials)
+config.toml
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
