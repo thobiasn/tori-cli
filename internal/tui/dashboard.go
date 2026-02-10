@@ -138,7 +138,7 @@ func renderDashboard(a *App, width, height int) string {
 		memPanel := renderMemPanel(a.host, rightW, cpuH, theme)
 		topRow := lipgloss.JoinHorizontal(lipgloss.Top, cpuPanel, memPanel)
 
-		contPanel := renderContainerPanel(a.dash.groups, a.dash.collapsed, a.dash.cursor, halfW, middleH, theme)
+		contPanel := renderContainerPanel(a.dash.groups, a.dash.collapsed, a.dash.cursor, a.alerts, halfW, middleH, theme)
 		selPanel := renderSelectedPanel(a, rightW, middleH, theme)
 		midRow := lipgloss.JoinHorizontal(lipgloss.Top, contPanel, selPanel)
 
@@ -159,7 +159,7 @@ func renderDashboard(a *App, width, height int) string {
 	}
 	cpuPanel := renderCPUPanel(cpuHistory, a.host, width, cpuH, theme)
 	memPanel := renderMemPanel(a.host, width, memH, theme)
-	contPanel := renderContainerPanel(a.dash.groups, a.dash.collapsed, a.dash.cursor, width, contH, theme)
+	contPanel := renderContainerPanel(a.dash.groups, a.dash.collapsed, a.dash.cursor, a.alerts, width, contH, theme)
 	selPanel := renderSelectedPanel(a, width, selH, theme)
 
 	return strings.Join([]string{alertPanel, cpuPanel, memPanel, contPanel, selPanel, logPanel}, "\n")

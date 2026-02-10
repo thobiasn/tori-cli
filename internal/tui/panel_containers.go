@@ -5,18 +5,27 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/thobiasn/rook/internal/protocol"
 )
 
 // renderContainerPanel renders the container list with grouping and cursor.
-func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cursor int, width, height int, theme *Theme) string {
+func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cursor int, alerts map[int64]*protocol.AlertEvent, width, height int, theme *Theme) string {
 	innerH := height - 2
 	if innerH < 1 {
 		innerH = 1
 	}
 	innerW := width - 2
 
-	// Fixed-width columns: state(1) + space(1) + health(1) + space(1) + cpu(5) + space(1) + mem(5) + space(1) + uptime(7) + space(1) + restart(3) = ~27
-	fixedCols := 27
+	// Build set of container IDs with active alerts.
+	alertIDs := make(map[string]bool)
+	for _, a := range alerts {
+		if idx := strings.LastIndex(a.InstanceKey, ":"); idx >= 0 {
+			alertIDs[a.InstanceKey[idx+1:]] = true
+		}
+	}
+
+	// Fixed-width columns: state(1) + space(1) + alert(2) + health(1) + space(1) + cpu(5) + space(1) + mem(5) + space(1) + uptime(7) + space(1) + restart(3) = ~29
+	fixedCols := 29
 	nameW := innerW - fixedCols - 2 // 2 for leading/trailing space
 	if nameW < 8 {
 		nameW = 8
@@ -50,6 +59,10 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 		// Container rows.
 		for _, c := range g.containers {
 			indicator := theme.StateIndicator(c.State)
+			alertInd := "  "
+			if alertIDs[c.ID] {
+				alertInd = lipgloss.NewStyle().Foreground(theme.Critical).Render("▲ ")
+			}
 			name := Truncate(stripANSI(c.Name), nameW)
 			health := theme.HealthIndicator(c.Health)
 			uptime := formatContainerUptime(c.State, c.StartedAt, c.ExitCode)
@@ -62,7 +75,7 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 				stats = fmt.Sprintf("   —      — %-7s", Truncate(uptime, 7))
 			}
 
-			row := fmt.Sprintf(" %s %-*s %s %s %s", indicator, nameW, name, health, stats, restarts)
+			row := fmt.Sprintf(" %s %s%-*s %s %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
 			if pos == cursor {
 				row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
 			}

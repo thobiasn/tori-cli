@@ -100,7 +100,7 @@ func TestRenderContainerPanel(t *testing.T) {
 			{ID: "c2", Name: "db", State: "running", CPUPercent: 0.8, MemUsage: 256 * 1024 * 1024},
 		}, running: 2},
 	}
-	got := renderContainerPanel(groups, map[string]bool{}, 0, 50, 10, &theme)
+	got := renderContainerPanel(groups, map[string]bool{}, 0, nil, 50, 10, &theme)
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "myapp") {
 		t.Error("should contain group name")
@@ -182,7 +182,7 @@ func TestRenderContainerPanelCollapsed(t *testing.T) {
 			{ID: "c1", Name: "web", State: "running"},
 		}, running: 1},
 	}
-	got := renderContainerPanel(groups, map[string]bool{"myapp": true}, 0, 50, 10, &theme)
+	got := renderContainerPanel(groups, map[string]bool{"myapp": true}, 0, nil, 50, 10, &theme)
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "myapp") {
 		t.Error("collapsed should still show group header")

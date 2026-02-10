@@ -181,15 +181,33 @@ func renderLogView(a *App, width, height int) string {
 		visible = filtered[start:end]
 	}
 
-	cursorStyle := lipgloss.NewStyle().Reverse(true)
+	// Calculate expansion lines so we can reduce visible entries if needed.
+	cursorIdx := s.cursor
+	expandIdx := s.expanded
+	var expandLines int
+	if expandIdx >= 0 && expandIdx < len(visible) {
+		expandLines = len(wrapText(visible[expandIdx].Message, innerW-2))
+	}
+
+	// If expansion would overflow, trim entries from the top.
+	if expandLines > 0 && len(visible)+expandLines > innerH {
+		trim := len(visible) + expandLines - innerH
+		if trim > len(visible) {
+			trim = len(visible)
+		}
+		visible = visible[trim:]
+		cursorIdx -= trim
+		expandIdx -= trim
+	}
+
 	var lines []string
 	for i, entry := range visible {
 		line := formatLogLine(entry, innerW, theme)
-		if i == s.cursor {
-			line = cursorStyle.Render(line)
+		if i == cursorIdx {
+			line = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(line), innerW))
 		}
 		lines = append(lines, line)
-		if i == s.expanded {
+		if i == expandIdx {
 			wrapped := wrapText(entry.Message, innerW-2)
 			for _, wl := range wrapped {
 				lines = append(lines, "  "+wl)

@@ -81,6 +81,9 @@ func subscribeAll(c *Client) tea.Cmd {
 		if err := c.Subscribe(protocol.TypeSubscribeAlerts, nil); err != nil {
 			return ConnErrMsg{Err: fmt.Errorf("subscribe alerts: %w", err)}
 		}
+		if err := c.Subscribe(protocol.TypeSubscribeContainers, nil); err != nil {
+			return ConnErrMsg{Err: fmt.Errorf("subscribe containers: %w", err)}
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		containers, err := c.QueryContainers(ctx)
@@ -140,6 +143,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			e := msg.AlertEvent
 			a.alerts[msg.ID] = &e
 		}
+		return a, nil
+
+	case ContainerEventMsg:
+		entry := containerEventToLog(msg.ContainerEvent)
+		a.logs.Push(entry)
+		a.logv.onStreamEntry(entry)
+		a.detail.onStreamEntry(entry)
 		return a, nil
 
 	case alertActionDoneMsg:
@@ -330,4 +340,17 @@ func (a *App) renderFooter() string {
 	}
 	footer += "  ? Help  q Quit"
 	return Truncate(footer, a.width)
+}
+
+// containerEventToLog converts a container lifecycle event into a synthetic
+// log entry. The Stream field is set to "event" so it can be visually
+// distinguished from real container logs.
+func containerEventToLog(e protocol.ContainerEvent) protocol.LogEntryMsg {
+	msg := fmt.Sprintf("── %s %s ──", e.Name, e.Action)
+	return protocol.LogEntryMsg{
+		Timestamp:   e.Timestamp,
+		ContainerID: e.ContainerID,
+		Stream:      "event",
+		Message:     msg,
+	}
 }

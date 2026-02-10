@@ -13,10 +13,11 @@ import (
 
 // AlertViewState holds state for the full-screen alert history view.
 type AlertViewState struct {
-	alerts []protocol.AlertMsg
-	cursor int
-	scroll int
-	stale  bool
+	alerts   []protocol.AlertMsg
+	cursor   int
+	scroll   int
+	expanded int // -1 = none
+	stale    bool
 
 	// Silence picker.
 	silenceMode    bool
@@ -43,7 +44,7 @@ var silenceDurations = []struct {
 }
 
 func newAlertViewState() AlertViewState {
-	return AlertViewState{stale: true}
+	return AlertViewState{stale: true, expanded: -1}
 }
 
 func (s *AlertViewState) onSwitch(c *Client) tea.Cmd {
@@ -90,6 +91,35 @@ func renderAlertView(a *App, width, height int) string {
 	}
 	visible := alerts[start:end]
 
+	// Count expansion lines for the expanded alert.
+	expandIdx := s.expanded - start // relative index within visible
+	var expandLines int
+	if s.expanded >= start && expandIdx < len(visible) {
+		a := visible[expandIdx]
+		expandLines = 1 // condition
+		if a.InstanceKey != "" {
+			expandLines++
+		}
+		expandLines++ // fired
+		if a.ResolvedAt > 0 {
+			expandLines++
+		}
+		if a.Message != "" {
+			expandLines += len(wrapText(a.Message, innerW-4))
+		}
+	}
+
+	// If expansion would overflow, trim entries from the top.
+	if expandLines > 0 && len(visible)+expandLines > innerH {
+		trim := len(visible) + expandLines - innerH
+		if trim > len(visible) {
+			trim = len(visible)
+		}
+		visible = visible[trim:]
+		start += trim
+	}
+
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 	var lines []string
 	for i, alert := range visible {
 		globalIdx := start + i
@@ -112,6 +142,24 @@ func renderAlertView(a *App, width, height int) string {
 			row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
 		}
 		lines = append(lines, TruncateStyled(row, innerW))
+
+		if globalIdx == s.expanded {
+			firedStr := time.Unix(alert.FiredAt, 0).Format("2006-01-02 15:04:05")
+			lines = append(lines, muted.Render("   Condition: ")+alert.Condition)
+			if alert.InstanceKey != "" {
+				lines = append(lines, muted.Render("   Instance:  ")+alert.InstanceKey)
+			}
+			lines = append(lines, muted.Render("   Fired:     ")+firedStr)
+			if alert.ResolvedAt > 0 {
+				resolvedStr := time.Unix(alert.ResolvedAt, 0).Format("2006-01-02 15:04:05")
+				lines = append(lines, muted.Render("   Resolved:  ")+resolvedStr)
+			}
+			if alert.Message != "" {
+				for _, wl := range wrapText(alert.Message, innerW-4) {
+					lines = append(lines, "   "+wl)
+				}
+			}
+		}
 	}
 
 	title := fmt.Sprintf("Alerts (%d)", len(alerts))
@@ -165,6 +213,7 @@ func updateAlertView(a *App, msg tea.KeyMsg) tea.Cmd {
 	case "j", "down":
 		if s.cursor < len(s.alerts)-1 {
 			s.cursor++
+			s.expanded = -1
 		}
 		// Auto-scroll.
 		innerH := a.height - 4
@@ -177,6 +226,7 @@ func updateAlertView(a *App, msg tea.KeyMsg) tea.Cmd {
 	case "k", "up":
 		if s.cursor > 0 {
 			s.cursor--
+			s.expanded = -1
 		}
 		if s.cursor < s.scroll {
 			s.scroll = s.cursor
@@ -198,10 +248,21 @@ func updateAlertView(a *App, msg tea.KeyMsg) tea.Cmd {
 			s.silenceAlertID = alert.ID
 			s.silenceRule = alert.RuleName
 		}
+	case "enter":
+		if s.cursor < len(s.alerts) {
+			if s.expanded == s.cursor {
+				s.expanded = -1
+			} else {
+				s.expanded = s.cursor
+			}
+		}
 	case "esc":
-		// Clear state.
-		s.cursor = 0
-		s.scroll = 0
+		if s.expanded >= 0 {
+			s.expanded = -1
+		} else {
+			s.cursor = 0
+			s.scroll = 0
+		}
 	}
 	return nil
 }

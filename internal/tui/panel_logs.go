@@ -31,6 +31,13 @@ func renderLogPanel(logs *RingBuffer[protocol.LogEntryMsg], width, height int, t
 }
 
 func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme) string {
+	// Synthetic lifecycle events render as a distinct separator line.
+	if entry.Stream == "event" {
+		style := lipgloss.NewStyle().Foreground(theme.Warning)
+		ts := lipgloss.NewStyle().Foreground(theme.Muted).Render(FormatTimestamp(entry.Timestamp))
+		return ts + " " + style.Render(Truncate(entry.Message, width-9))
+	}
+
 	ts := lipgloss.NewStyle().Foreground(theme.Muted).Render(FormatTimestamp(entry.Timestamp))
 	nameColor := ContainerNameColor(entry.ContainerName, theme)
 	name := lipgloss.NewStyle().Foreground(nameColor).Render(fmt.Sprintf("%-14s", Truncate(entry.ContainerName, 14)))

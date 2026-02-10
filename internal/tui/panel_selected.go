@@ -189,20 +189,17 @@ func renderContainerSelected(a *App, c *protocol.ContainerMetrics, width, height
 		rxStyle.Render("R"), FormatBytesRate(rates.BlockReadRate),
 		txStyle.Render("W"), FormatBytesRate(rates.BlockWriteRate)))
 
-	// PID + RESTARTS.
-	lines = append(lines, fmt.Sprintf(" PID  %-14d RESTARTS  %s", c.PIDs, formatRestarts(c.RestartCount, theme)))
-
-	// IMG.
+	// PID + IMG + UP.
+	lines = append(lines, fmt.Sprintf(" PID  %d", c.PIDs))
 	lines = append(lines, fmt.Sprintf(" IMG  %s", Truncate(stripANSI(c.Image), innerW-6)))
-
-	// UP.
 	uptime := formatContainerUptime(c.State, c.StartedAt, c.ExitCode)
 	lines = append(lines, fmt.Sprintf(" UP   %s", uptime))
 
 	lines = append(lines, "")
 
-	// HC.
+	// HC + RESTARTS grouped.
 	lines = append(lines, fmt.Sprintf(" HC   %s", theme.HealthText(c.Health)))
+	lines = append(lines, fmt.Sprintf(" RESTARTS  %s", formatRestarts(c.RestartCount, theme)))
 
 	// Separator + disk/net context.
 	lines = append(lines, lipgloss.NewStyle().Foreground(theme.Muted).Render(" "+strings.Repeat("─", innerW-2)))

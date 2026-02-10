@@ -17,6 +17,7 @@ import (
 type MetricsMsg struct{ *protocol.MetricsUpdate }
 type LogMsg struct{ protocol.LogEntryMsg }
 type AlertEventMsg struct{ protocol.AlertEvent }
+type ContainerEventMsg struct{ protocol.ContainerEvent }
 type ConnErrMsg struct{ Err error }
 
 // Client wraps a protocol connection to the agent and dispatches
@@ -106,6 +107,11 @@ func (c *Client) dispatchStreaming(env *protocol.Envelope) {
 		var m protocol.AlertEvent
 		if err := protocol.DecodeBody(env.Body, &m); err == nil {
 			c.prog.Send(AlertEventMsg{m})
+		}
+	case protocol.TypeContainerEvent:
+		var m protocol.ContainerEvent
+		if err := protocol.DecodeBody(env.Body, &m); err == nil {
+			c.prog.Send(ContainerEventMsg{m})
 		}
 	}
 }
