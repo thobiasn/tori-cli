@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"net"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -78,23 +79,18 @@ func TestCursorContainerID(t *testing.T) {
 	}
 	collapsed := map[string]bool{}
 
-	// cursor=0 is group header "app".
 	if id := cursorContainerID(groups, collapsed, 0); id != "" {
 		t.Errorf("cursor=0 should be header, got %q", id)
 	}
-	// cursor=1 is c1.
 	if id := cursorContainerID(groups, collapsed, 1); id != "c1" {
 		t.Errorf("cursor=1 = %q, want c1", id)
 	}
-	// cursor=2 is c2.
 	if id := cursorContainerID(groups, collapsed, 2); id != "c2" {
 		t.Errorf("cursor=2 = %q, want c2", id)
 	}
-	// cursor=3 is header "other".
 	if id := cursorContainerID(groups, collapsed, 3); id != "" {
 		t.Errorf("cursor=3 should be header, got %q", id)
 	}
-	// cursor=4 is c3.
 	if id := cursorContainerID(groups, collapsed, 4); id != "c3" {
 		t.Errorf("cursor=4 = %q, want c3", id)
 	}
@@ -111,7 +107,6 @@ func TestCursorContainerIDCollapsed(t *testing.T) {
 	}
 	collapsed := map[string]bool{"app": true}
 
-	// cursor=0 is "app" header, cursor=1 is "other" header, cursor=2 is c3.
 	if id := cursorContainerID(groups, collapsed, 0); id != "" {
 		t.Errorf("cursor=0 should be header, got %q", id)
 	}
@@ -130,20 +125,16 @@ func TestCursorGroupName(t *testing.T) {
 	}
 	collapsed := map[string]bool{}
 
-	// cursor=0 is "app" header.
 	if name := cursorGroupName(groups, collapsed, 0); name != "app" {
 		t.Errorf("cursor=0 group name = %q, want app", name)
 	}
-	// cursor=1 is c1, not a header.
 	if name := cursorGroupName(groups, collapsed, 1); name != "" {
 		t.Errorf("cursor=1 should not be header, got %q", name)
 	}
-	// cursor=3 is "other" header.
 	if name := cursorGroupName(groups, collapsed, 3); name != "other" {
 		t.Errorf("cursor=3 group name = %q, want other", name)
 	}
 
-	// With collapsed "app": cursor=0 is "app", cursor=1 is "other".
 	collapsed["app"] = true
 	if name := cursorGroupName(groups, collapsed, 0); name != "app" {
 		t.Errorf("collapsed cursor=0 = %q, want app", name)
@@ -155,50 +146,147 @@ func TestCursorGroupName(t *testing.T) {
 
 func TestUpdateDashboardCursorNav(t *testing.T) {
 	a := newTestApp()
-	a.dash.groups = []containerGroup{
+	s := a.session()
+	s.Dash.groups = []containerGroup{
 		{name: "app", containers: []protocol.ContainerMetrics{{ID: "c1"}, {ID: "c2"}}},
 	}
 
-	// Move down.
-	updateDashboard(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	if a.dash.cursor != 1 {
-		t.Errorf("cursor after j = %d, want 1", a.dash.cursor)
+	updateDashboard(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if s.Dash.cursor != 1 {
+		t.Errorf("cursor after j = %d, want 1", s.Dash.cursor)
 	}
 
-	updateDashboard(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	if a.dash.cursor != 2 {
-		t.Errorf("cursor after j = %d, want 2", a.dash.cursor)
+	updateDashboard(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if s.Dash.cursor != 2 {
+		t.Errorf("cursor after j = %d, want 2", s.Dash.cursor)
 	}
 
 	// At end (max=2), shouldn't go further.
-	updateDashboard(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	if a.dash.cursor != 2 {
-		t.Errorf("cursor should stay at 2, got %d", a.dash.cursor)
+	updateDashboard(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if s.Dash.cursor != 2 {
+		t.Errorf("cursor should stay at 2, got %d", s.Dash.cursor)
 	}
 
-	// Move up.
-	updateDashboard(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
-	if a.dash.cursor != 1 {
-		t.Errorf("cursor after k = %d, want 1", a.dash.cursor)
+	updateDashboard(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	if s.Dash.cursor != 1 {
+		t.Errorf("cursor after k = %d, want 1", s.Dash.cursor)
 	}
 }
 
 func TestUpdateDashboardCollapseToggle(t *testing.T) {
 	a := newTestApp()
-	a.dash.groups = []containerGroup{
+	s := a.session()
+	s.Dash.groups = []containerGroup{
 		{name: "app", containers: []protocol.ContainerMetrics{{ID: "c1"}}},
 	}
-	a.dash.cursor = 0 // On "app" header.
+	s.Dash.cursor = 0
 
-	// Space toggles collapse.
-	updateDashboard(&a, tea.KeyMsg{Type: tea.KeySpace})
-	if !a.dash.collapsed["app"] {
+	updateDashboard(&a, s, tea.KeyMsg{Type: tea.KeySpace})
+	if !s.Dash.collapsed["app"] {
 		t.Error("app should be collapsed after space")
 	}
 
-	updateDashboard(&a, tea.KeyMsg{Type: tea.KeySpace})
-	if a.dash.collapsed["app"] {
+	updateDashboard(&a, s, tea.KeyMsg{Type: tea.KeySpace})
+	if s.Dash.collapsed["app"] {
 		t.Error("app should be expanded after second space")
+	}
+}
+
+func TestUpdateDashboardToggleTrackingContainer(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	c1, c2 := net.Pipe()
+	defer c1.Close()
+	defer c2.Close()
+	s.Client = NewClient(c1, testServer)
+	s.Dash.groups = []containerGroup{
+		{name: "app", containers: []protocol.ContainerMetrics{
+			{ID: "c1", Name: "web"}, {ID: "c2", Name: "db"},
+		}},
+	}
+	s.ContInfo = []protocol.ContainerInfo{
+		{ID: "c1", Name: "web", Project: "app", Tracked: true},
+		{ID: "c2", Name: "db", Project: "app", Tracked: true},
+	}
+	s.Dash.cursor = 1
+
+	cmd := updateDashboard(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	if cmd == nil {
+		t.Error("expected non-nil cmd for tracking toggle on container")
+	}
+}
+
+func TestUpdateDashboardToggleTrackingGroup(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	c1, c2 := net.Pipe()
+	defer c1.Close()
+	defer c2.Close()
+	s.Client = NewClient(c1, testServer)
+	s.Dash.groups = []containerGroup{
+		{name: "app", containers: []protocol.ContainerMetrics{
+			{ID: "c1", Name: "web"},
+		}},
+	}
+	s.ContInfo = []protocol.ContainerInfo{
+		{ID: "c1", Name: "web", Project: "app", Tracked: true},
+	}
+	s.Dash.cursor = 0
+
+	cmd := updateDashboard(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	if cmd == nil {
+		t.Error("expected non-nil cmd for tracking toggle on group")
+	}
+}
+
+func TestUpdateDashboardToggleTrackingOtherGroup(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	s.Dash.groups = []containerGroup{
+		{name: "other", containers: []protocol.ContainerMetrics{
+			{ID: "c1", Name: "standalone"},
+		}},
+	}
+	s.Dash.cursor = 0
+
+	cmd := updateDashboard(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	if cmd != nil {
+		t.Error("'t' on 'other' group header should return nil cmd")
+	}
+}
+
+func TestIsProjectTracked(t *testing.T) {
+	info := []protocol.ContainerInfo{
+		{ID: "c1", Project: "app", Tracked: true},
+		{ID: "c2", Project: "app", Tracked: false},
+		{ID: "c3", Project: "db", Tracked: false},
+	}
+
+	if !isProjectTracked("app", info) {
+		t.Error("app should be tracked (c1 is tracked)")
+	}
+	if isProjectTracked("db", info) {
+		t.Error("db should not be tracked")
+	}
+	if isProjectTracked("nonexistent", info) {
+		t.Error("nonexistent should not be tracked")
+	}
+}
+
+func TestIsContainerTracked(t *testing.T) {
+	info := []protocol.ContainerInfo{
+		{ID: "c1", Tracked: true},
+		{ID: "c2", Tracked: false},
+	}
+
+	if !isContainerTracked("c1", info) {
+		t.Error("c1 should be tracked")
+	}
+	if isContainerTracked("c2", info) {
+		t.Error("c2 should not be tracked")
+	}
+	if !isContainerTracked("c3", info) {
+		t.Error("unknown container should default to tracked")
 	}
 }
 
@@ -213,43 +301,36 @@ func TestCursorContainerMetrics(t *testing.T) {
 	}
 	collapsed := map[string]bool{}
 
-	// cursor=0 → group header "app".
 	g, idx := cursorContainerMetrics(groups, collapsed, 0)
 	if g == nil || g.name != "app" || idx != -1 {
 		t.Errorf("cursor=0: got group=%v idx=%d, want app/-1", g, idx)
 	}
 
-	// cursor=1 → c1.
 	g, idx = cursorContainerMetrics(groups, collapsed, 1)
 	if g == nil || idx != 0 || g.containers[idx].ID != "c1" {
 		t.Errorf("cursor=1: got idx=%d, want c1", idx)
 	}
 
-	// cursor=2 → c2.
 	g, idx = cursorContainerMetrics(groups, collapsed, 2)
 	if g == nil || idx != 1 || g.containers[idx].ID != "c2" {
 		t.Errorf("cursor=2: got idx=%d, want c2", idx)
 	}
 
-	// cursor=3 → group header "other".
 	g, idx = cursorContainerMetrics(groups, collapsed, 3)
 	if g == nil || g.name != "other" || idx != -1 {
 		t.Errorf("cursor=3: got group=%v idx=%d, want other/-1", g, idx)
 	}
 
-	// cursor=4 → c3.
 	g, idx = cursorContainerMetrics(groups, collapsed, 4)
 	if g == nil || idx != 0 || g.containers[idx].ID != "c3" {
 		t.Errorf("cursor=4: got idx=%d, want c3", idx)
 	}
 
-	// Out of range.
 	g, idx = cursorContainerMetrics(groups, collapsed, 99)
 	if g != nil {
 		t.Errorf("cursor=99: expected nil group, got %v", g)
 	}
 
-	// Collapsed group.
 	collapsed["app"] = true
 	g, idx = cursorContainerMetrics(groups, collapsed, 1)
 	if g == nil || g.name != "other" || idx != -1 {
@@ -263,12 +344,10 @@ func TestMaxCursorPos(t *testing.T) {
 		{name: "other", containers: []protocol.ContainerMetrics{{ID: "c3"}}},
 	}
 
-	// Expanded: header + 2 + header + 1 = 5 items, max = 4.
 	if max := maxCursorPos(groups, map[string]bool{}); max != 4 {
 		t.Errorf("maxCursorPos expanded = %d, want 4", max)
 	}
 
-	// Collapsed "app": header + header + 1 = 3 items, max = 2.
 	if max := maxCursorPos(groups, map[string]bool{"app": true}); max != 2 {
 		t.Errorf("maxCursorPos collapsed = %d, want 2", max)
 	}

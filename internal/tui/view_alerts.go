@@ -65,9 +65,9 @@ func (s *AlertViewState) onSwitch(c *Client) tea.Cmd {
 }
 
 // renderAlertView renders the full-screen alert history.
-func renderAlertView(a *App, width, height int) string {
+func renderAlertView(a *App, s *Session, width, height int) string {
 	theme := &a.theme
-	s := &a.alertv
+	av := &s.Alertv
 	innerH := height - 3
 	if innerH < 1 {
 		innerH = 1
@@ -75,13 +75,13 @@ func renderAlertView(a *App, width, height int) string {
 	innerW := width - 2
 
 	// Determine visible slice.
-	alerts := s.alerts
+	alerts := av.alerts
 	if len(alerts) == 0 {
 		content := "  No alerts in the last 24 hours"
-		return Box("Alerts", content, width, height-1, theme) + "\n" + renderAlertFooter(s, width, theme)
+		return Box("Alerts", content, width, height-1, theme) + "\n" + renderAlertFooter(av, width, theme)
 	}
 
-	start := s.scroll
+	start := av.scroll
 	if start > len(alerts) {
 		start = len(alerts)
 	}
@@ -92,20 +92,20 @@ func renderAlertView(a *App, width, height int) string {
 	visible := alerts[start:end]
 
 	// Count expansion lines for the expanded alert.
-	expandIdx := s.expanded - start // relative index within visible
+	expandIdx := av.expanded - start // relative index within visible
 	var expandLines int
-	if s.expanded >= start && expandIdx < len(visible) {
-		a := visible[expandIdx]
+	if av.expanded >= start && expandIdx < len(visible) {
+		al := visible[expandIdx]
 		expandLines = 1 // condition
-		if a.InstanceKey != "" {
+		if al.InstanceKey != "" {
 			expandLines++
 		}
 		expandLines++ // fired
-		if a.ResolvedAt > 0 {
+		if al.ResolvedAt > 0 {
 			expandLines++
 		}
-		if a.Message != "" {
-			expandLines += len(wrapText(a.Message, innerW-4))
+		if al.Message != "" {
+			expandLines += len(wrapText(al.Message, innerW-4))
 		}
 	}
 
@@ -138,12 +138,12 @@ func renderAlertView(a *App, width, height int) string {
 		}
 
 		row := fmt.Sprintf(" %s  %s  %-16s %-*s %s", sev, ts, rule, innerW-42, msg, status)
-		if globalIdx == s.cursor {
+		if globalIdx == av.cursor {
 			row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
 		}
 		lines = append(lines, TruncateStyled(row, innerW))
 
-		if globalIdx == s.expanded {
+		if globalIdx == av.expanded {
 			firedStr := time.Unix(alert.FiredAt, 0).Format("2006-01-02 15:04:05")
 			lines = append(lines, muted.Render("   Condition: ")+alert.Condition)
 			if alert.InstanceKey != "" {
@@ -168,11 +168,11 @@ func renderAlertView(a *App, width, height int) string {
 	box := Box(title, content, width, boxH, theme)
 
 	// Silence picker overlay.
-	if s.silenceMode {
-		box = renderSilencePicker(s, width, boxH, theme)
+	if av.silenceMode {
+		box = renderSilencePicker(av, width, boxH, theme)
 	}
 
-	return box + "\n" + renderAlertFooter(s, width, theme)
+	return box + "\n" + renderAlertFooter(av, width, theme)
 }
 
 func renderSilencePicker(s *AlertViewState, width, height int, theme *Theme) string {
@@ -201,89 +201,89 @@ func renderAlertFooter(s *AlertViewState, width int, theme *Theme) string {
 }
 
 // updateAlertView handles keys in the alert view.
-func updateAlertView(a *App, msg tea.KeyMsg) tea.Cmd {
-	s := &a.alertv
+func updateAlertView(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
+	av := &s.Alertv
 	key := msg.String()
 
-	if s.silenceMode {
-		return updateSilencePicker(a, s, key)
+	if av.silenceMode {
+		return updateSilencePicker(s, av, key)
 	}
 
 	switch key {
 	case "j", "down":
-		if s.cursor < len(s.alerts)-1 {
-			s.cursor++
-			s.expanded = -1
+		if av.cursor < len(av.alerts)-1 {
+			av.cursor++
+			av.expanded = -1
 		}
 		// Auto-scroll.
 		innerH := a.height - 4
 		if innerH < 1 {
 			innerH = 1
 		}
-		if s.cursor >= s.scroll+innerH {
-			s.scroll = s.cursor - innerH + 1
+		if av.cursor >= av.scroll+innerH {
+			av.scroll = av.cursor - innerH + 1
 		}
 	case "k", "up":
-		if s.cursor > 0 {
-			s.cursor--
-			s.expanded = -1
+		if av.cursor > 0 {
+			av.cursor--
+			av.expanded = -1
 		}
-		if s.cursor < s.scroll {
-			s.scroll = s.cursor
+		if av.cursor < av.scroll {
+			av.scroll = av.cursor
 		}
 	case "a":
 		// Acknowledge selected alert.
-		if s.cursor < len(s.alerts) {
-			alert := s.alerts[s.cursor]
+		if av.cursor < len(av.alerts) {
+			alert := av.alerts[av.cursor]
 			if alert.ResolvedAt == 0 && !alert.Acknowledged {
-				return ackAlertCmd(a.client, alert.ID)
+				return ackAlertCmd(s.Client, alert.ID)
 			}
 		}
 	case "s":
 		// Open silence picker.
-		if s.cursor < len(s.alerts) {
-			alert := s.alerts[s.cursor]
-			s.silenceMode = true
-			s.silenceCursor = 0
-			s.silenceAlertID = alert.ID
-			s.silenceRule = alert.RuleName
+		if av.cursor < len(av.alerts) {
+			alert := av.alerts[av.cursor]
+			av.silenceMode = true
+			av.silenceCursor = 0
+			av.silenceAlertID = alert.ID
+			av.silenceRule = alert.RuleName
 		}
 	case "enter":
-		if s.cursor < len(s.alerts) {
-			if s.expanded == s.cursor {
-				s.expanded = -1
+		if av.cursor < len(av.alerts) {
+			if av.expanded == av.cursor {
+				av.expanded = -1
 			} else {
-				s.expanded = s.cursor
+				av.expanded = av.cursor
 			}
 		}
 	case "esc":
-		if s.expanded >= 0 {
-			s.expanded = -1
+		if av.expanded >= 0 {
+			av.expanded = -1
 		} else {
-			s.cursor = 0
-			s.scroll = 0
+			av.cursor = 0
+			av.scroll = 0
 		}
 	}
 	return nil
 }
 
-func updateSilencePicker(a *App, s *AlertViewState, key string) tea.Cmd {
+func updateSilencePicker(s *Session, av *AlertViewState, key string) tea.Cmd {
 	switch key {
 	case "j", "down":
-		if s.silenceCursor < len(silenceDurations)-1 {
-			s.silenceCursor++
+		if av.silenceCursor < len(silenceDurations)-1 {
+			av.silenceCursor++
 		}
 	case "k", "up":
-		if s.silenceCursor > 0 {
-			s.silenceCursor--
+		if av.silenceCursor > 0 {
+			av.silenceCursor--
 		}
 	case "enter":
-		dur := silenceDurations[s.silenceCursor].secs
-		rule := s.silenceRule
-		s.silenceMode = false
-		return silenceAlertCmd(a.client, rule, dur)
+		dur := silenceDurations[av.silenceCursor].secs
+		rule := av.silenceRule
+		av.silenceMode = false
+		return silenceAlertCmd(s.Client, rule, dur)
 	case "esc":
-		s.silenceMode = false
+		av.silenceMode = false
 	}
 	return nil
 }

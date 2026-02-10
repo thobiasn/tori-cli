@@ -9,22 +9,22 @@ import (
 )
 
 // renderSelectedPanel renders the selected container/group detail panel.
-func renderSelectedPanel(a *App, width, height int, theme *Theme) string {
-	group, idx := cursorContainerMetrics(a.dash.groups, a.dash.collapsed, a.dash.cursor)
+func renderSelectedPanel(a *App, s *Session, width, height int, theme *Theme) string {
+	group, idx := cursorContainerMetrics(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
 	if group == nil {
 		return Box("Selected", "  Move cursor to a container", width, height, theme)
 	}
 
 	// Cursor on group header — show group summary.
 	if idx < 0 {
-		return renderGroupSummary(a, group, width, height, theme)
+		return renderGroupSummary(s, group, width, height, theme)
 	}
 
 	c := &group.containers[idx]
-	return renderContainerSelected(a, c, width, height, theme)
+	return renderContainerSelected(s, c, width, height, theme)
 }
 
-func renderGroupSummary(a *App, g *containerGroup, width, height int, theme *Theme) string {
+func renderGroupSummary(s *Session, g *containerGroup, width, height int, theme *Theme) string {
 	innerW := width - 2
 	var totalCPU float64
 	var totalMem uint64
@@ -49,7 +49,7 @@ func renderGroupSummary(a *App, g *containerGroup, width, height int, theme *The
 		ids[i] = c.ID
 	}
 
-	cpuAgg := aggregateHistory(a.cpuHistory, ids)
+	cpuAgg := aggregateHistory(s.CPUHistory, ids)
 	if len(cpuAgg) > 0 {
 		cpuGraph := Graph(cpuAgg, graphW, graphRows, 0, theme)
 		for i, gl := range strings.Split(cpuGraph, "\n") {
@@ -69,7 +69,7 @@ func renderGroupSummary(a *App, g *containerGroup, width, height int, theme *The
 	if memGraphW < 10 {
 		memGraphW = 10
 	}
-	memAgg := aggregateHistory(a.memHistory, ids)
+	memAgg := aggregateHistory(s.MemHistory, ids)
 	if len(memAgg) > 0 {
 		memGraph := Graph(memAgg, memGraphW, graphRows, 0, theme)
 		for i, gl := range strings.Split(memGraph, "\n") {
@@ -131,13 +131,13 @@ func aggregateHistory(histories map[string]*RingBuffer[float64], ids []string) [
 	return agg
 }
 
-func renderContainerSelected(a *App, c *protocol.ContainerMetrics, width, height int, theme *Theme) string {
+func renderContainerSelected(s *Session, c *protocol.ContainerMetrics, width, height int, theme *Theme) string {
 	innerW := width - 2
 	var lines []string
 
 	// CPU + MEM graphs with aligned widths.
-	cpuData := historyData(a.cpuHistory, c.ID)
-	memData := historyData(a.memHistory, c.ID)
+	cpuData := historyData(s.CPUHistory, c.ID)
+	memData := historyData(s.MemHistory, c.ID)
 	graphRows := 3
 	labelW := 5 // " CPU " / " MEM "
 	cpuVal := fmt.Sprintf("%5.1f%%", c.CPUPercent)
@@ -179,7 +179,7 @@ func renderContainerSelected(a *App, c *protocol.ContainerMetrics, width, height
 	lines = append(lines, "")
 
 	// NET/BLK rates.
-	rates := a.rates.ContainerRates[c.ID]
+	rates := s.Rates.ContainerRates[c.ID]
 	rxStyle := lipgloss.NewStyle().Foreground(theme.Healthy)
 	txStyle := lipgloss.NewStyle().Foreground(theme.Accent)
 	lines = append(lines, fmt.Sprintf(" NET  %s %s  %s %s",
@@ -203,8 +203,8 @@ func renderContainerSelected(a *App, c *protocol.ContainerMetrics, width, height
 
 	// Separator + disk/net context.
 	lines = append(lines, lipgloss.NewStyle().Foreground(theme.Muted).Render(" "+strings.Repeat("─", innerW-2)))
-	if a.host != nil && len(a.disks) > 0 {
-		d := highestUsageDisk(a.disks)
+	if s.Host != nil && len(s.Disks) > 0 {
+		d := highestUsageDisk(s.Disks)
 		diskBarW := innerW - 8
 		if diskBarW < 10 {
 			diskBarW = 10
@@ -212,8 +212,8 @@ func renderContainerSelected(a *App, c *protocol.ContainerMetrics, width, height
 		lines = append(lines, fmt.Sprintf(" DISK %s", ProgressBar(d.Percent, diskBarW, theme)))
 	}
 	lines = append(lines, fmt.Sprintf(" NET  %s %s  %s %s",
-		rxStyle.Render("▼"), FormatBytesRate(a.rates.NetRxRate),
-		txStyle.Render("▲"), FormatBytesRate(a.rates.NetTxRate)))
+		rxStyle.Render("▼"), FormatBytesRate(s.Rates.NetRxRate),
+		txStyle.Render("▲"), FormatBytesRate(s.Rates.NetTxRate)))
 
 	// Title with state indicator.
 	stateIndicator := theme.StateIndicator(c.State)

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Rook is a lightweight server monitoring tool for Docker environments. A persistent agent collects metrics, watches containers, tails logs, and fires alerts. A TUI client connects over SSH to view everything in the terminal.
 
-**Status:** M1–M4 complete. M5 (multi-server) is next. The README.md contains the full specification.
+**Status:** M1–M5 complete. M6 (polish) is next. The README.md contains the full specification.
 
 ## Build & Development Commands
 
@@ -35,7 +35,7 @@ agent.go       — Agent struct, Run() loop, collect() orchestration, shutdown
 config.go      — Config types (storage, host, docker, collect, alerts, notify), TOML loading, validation
 store.go       — SQLite schema, Store struct, all Insert/Query/Prune methods, metric+alert types
 host.go        — HostCollector: reads /proc (cpu, memory, loadavg, uptime, disk, network)
-docker.go      — DockerCollector: container list, stats, CPU/mem/net/block calc, RestartContainer, UpdateContainerState
+docker.go      — DockerCollector: container list, stats, CPU/mem/net/block calc, RestartContainer, UpdateContainerState, runtime tracking toggle
 logs.go        — LogTailer: per-container goroutines, Docker log demux via stdcopy, batched insert
 alert.go       — Condition parser, Alerter state machine (inactive→pending→firing→resolved), Evaluate(), EvaluateContainerEvent()
 notify.go      — Notifier: email (net/smtp with timeout) + webhook (dedicated http.Client)
@@ -171,7 +171,15 @@ The alerter receives the same data already collected — no additional I/O.
 - `internal/tui/` is a flat package. `tui` imports `protocol` but never `agent`.
 - Client has one reader goroutine dispatching streaming msgs via `prog.Send()` and request-response via per-ID channels.
 - Reader goroutine starts in `SetProgram()`, not `NewClient()`, to avoid nil prog race.
+- **Multi-server:** `Session` struct (`session.go`) holds all per-server data (metrics, history, view state). `App` has `sessions map[string]*Session` and `activeSession`. All streaming messages carry a `Server` field for routing to the correct session. Server picker via `S` key when multiple sessions exist.
+- **Tracking toggle:** `t` key in dashboard toggles tracking per-container or per-group. Sends `action:set_tracking` to the agent. Untracked containers are visible but dimmed with `—` stats. Runtime-only state (resets on agent restart).
+
+### Docker runtime tracking
+- `DockerCollector` has `untracked`/`untrackedProjects` maps for runtime tracking state.
+- `SetTracking(name, project, tracked)` updates maps under `mu`. `IsTracked(name, project)` reads under `mu.RLock`.
+- `Collect()` separates all containers (for TUI visibility) from tracked containers (for log sync/alert eval).
+- Config `include`/`exclude` is the permanent baseline; runtime tracking overlays on top.
 
 ## Milestone Order
 
-~~M1 Agent foundation~~ → ~~M2 Alerting~~ → ~~M3 Protocol + socket~~ → ~~M4 TUI client~~ → M5 Multi-server → M6 Polish
+~~M1 Agent foundation~~ → ~~M2 Alerting~~ → ~~M3 Protocol + socket~~ → ~~M4 TUI client~~ → ~~M5 Multi-server + tracking~~ → M6 Polish

@@ -228,6 +228,10 @@ func (c *connState) dispatch(env *protocol.Envelope) {
 		c.silenceAlert(env)
 	case protocol.TypeActionRestart:
 		c.restartContainer(env)
+	case protocol.TypeActionSetTracking:
+		c.setTracking(env)
+	case protocol.TypeQueryTracking:
+		c.queryTracking(env)
 
 	default:
 		c.sendError(env.ID, fmt.Sprintf("unknown message type: %s", env.Type))
@@ -534,6 +538,7 @@ func (c *connState) queryContainers(id uint32) {
 			StartedAt:    ctr.StartedAt,
 			RestartCount: ctr.RestartCount,
 			ExitCode:     ctr.ExitCode,
+			Tracked:      c.ss.docker.IsTracked(ctr.Name, ctr.Project),
 		}
 	}
 	c.sendResponse(id, &resp)
@@ -574,6 +579,37 @@ func (c *connState) silenceAlert(env *protocol.Envelope) {
 	}
 	c.ss.alerter.Silence(req.RuleName, time.Duration(req.Duration)*time.Second)
 	c.sendResult(env.ID, &protocol.Result{OK: true, Message: "silenced"})
+}
+
+func (c *connState) setTracking(env *protocol.Envelope) {
+	var req protocol.SetTrackingReq
+	if err := protocol.DecodeBody(env.Body, &req); err != nil {
+		c.sendError(env.ID, "invalid body")
+		return
+	}
+	if (req.Container == "") == (req.Project == "") {
+		c.sendError(env.ID, "exactly one of container or project must be set")
+		return
+	}
+	name := truncate(req.Container, maxNameLen)
+	project := truncate(req.Project, maxLabelLen)
+	c.ss.docker.SetTracking(name, project, req.Tracked)
+	c.sendResult(env.ID, &protocol.Result{OK: true, Message: "tracking updated"})
+}
+
+func (c *connState) queryTracking(env *protocol.Envelope) {
+	containers, projects := c.ss.docker.GetTrackingState()
+	resp := protocol.QueryTrackingResp{
+		UntrackedContainers: containers,
+		UntrackedProjects:   projects,
+	}
+	if resp.UntrackedContainers == nil {
+		resp.UntrackedContainers = []string{}
+	}
+	if resp.UntrackedProjects == nil {
+		resp.UntrackedProjects = []string{}
+	}
+	c.sendResponse(env.ID, &resp)
 }
 
 func (c *connState) restartContainer(env *protocol.Envelope) {

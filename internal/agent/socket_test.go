@@ -22,6 +22,8 @@ func testSocketServer(t *testing.T, store *Store) (*SocketServer, *Hub, string) 
 			{ID: "def456", Name: "api", Image: "node", State: "running", Project: "myapp"},
 			{ID: "ghi789", Name: "db", Image: "postgres", State: "running", Project: "other"},
 		},
+		untracked:         make(map[string]bool),
+		untrackedProjects: make(map[string]bool),
 	}
 	ss := NewSocketServer(hub, store, dc, nil)
 	path := filepath.Join(t.TempDir(), "test.sock")
@@ -41,6 +43,8 @@ func testSocketServerWithAlerter(t *testing.T, store *Store, alerter *Alerter) (
 		lastContainers: []Container{
 			{ID: "abc123", Name: "web", Image: "nginx", State: "running", Project: "myapp"},
 		},
+		untracked:         make(map[string]bool),
+		untrackedProjects: make(map[string]bool),
 	}
 	ss := NewSocketServer(hub, store, dc, alerter)
 	path := filepath.Join(t.TempDir(), "test.sock")
@@ -884,8 +888,10 @@ func TestSocketConnectionLimit(t *testing.T) {
 	s := testStore(t)
 	hub := NewHub()
 	dc := &DockerCollector{
-		prevCPU:        make(map[string]cpuPrev),
-		lastContainers: []Container{},
+		prevCPU:           make(map[string]cpuPrev),
+		lastContainers:    []Container{},
+		untracked:         make(map[string]bool),
+		untrackedProjects: make(map[string]bool),
 	}
 	// Create a server with a small semaphore for testing.
 	ss := &SocketServer{
@@ -990,10 +996,137 @@ func TestSocketStreamContainers(t *testing.T) {
 	}
 }
 
+func TestSocketSetTracking(t *testing.T) {
+	s := testStore(t)
+	ss, _, path := testSocketServer(t, s)
+	conn := dial(t, path)
+
+	// Untrack a container.
+	req := protocol.SetTrackingReq{Container: "web", Tracked: false}
+	env, err := protocol.NewEnvelope(protocol.TypeActionSetTracking, 1, &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Type != protocol.TypeResult {
+		t.Fatalf("expected result, got %q", resp.Type)
+	}
+
+	// Verify via IsTracked.
+	if ss.docker.IsTracked("web", "myapp") {
+		t.Error("web should be untracked")
+	}
+	if !ss.docker.IsTracked("api", "myapp") {
+		t.Error("api should still be tracked")
+	}
+}
+
+func TestSocketSetTrackingValidation(t *testing.T) {
+	s := testStore(t)
+	_, _, path := testSocketServer(t, s)
+	conn := dial(t, path)
+
+	// Neither container nor project set.
+	req := protocol.SetTrackingReq{Tracked: false}
+	env, err := protocol.NewEnvelope(protocol.TypeActionSetTracking, 1, &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Type != protocol.TypeError {
+		t.Fatalf("expected error, got %q", resp.Type)
+	}
+}
+
+func TestSocketQueryTracking(t *testing.T) {
+	s := testStore(t)
+	ss, _, path := testSocketServer(t, s)
+
+	// Untrack some things.
+	ss.docker.SetTracking("web", "", false)
+	ss.docker.SetTracking("", "myapp", false)
+
+	conn := dial(t, path)
+	env := protocol.NewEnvelopeNoBody(protocol.TypeQueryTracking, 1)
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Type != protocol.TypeResult {
+		t.Fatalf("expected result, got %q", resp.Type)
+	}
+
+	var tracking protocol.QueryTrackingResp
+	if err := protocol.DecodeBody(resp.Body, &tracking); err != nil {
+		t.Fatal(err)
+	}
+	if len(tracking.UntrackedContainers) != 1 || tracking.UntrackedContainers[0] != "web" {
+		t.Errorf("untracked containers = %v, want [web]", tracking.UntrackedContainers)
+	}
+	if len(tracking.UntrackedProjects) != 1 || tracking.UntrackedProjects[0] != "myapp" {
+		t.Errorf("untracked projects = %v, want [myapp]", tracking.UntrackedProjects)
+	}
+}
+
+func TestSocketQueryContainersTracked(t *testing.T) {
+	s := testStore(t)
+	ss, _, path := testSocketServer(t, s)
+
+	// Untrack "web".
+	ss.docker.SetTracking("web", "", false)
+
+	conn := dial(t, path)
+	env := protocol.NewEnvelopeNoBody(protocol.TypeQueryContainers, 1)
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var containers protocol.QueryContainersResp
+	if err := protocol.DecodeBody(resp.Body, &containers); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range containers.Containers {
+		if c.Name == "web" && c.Tracked {
+			t.Error("web should have Tracked=false")
+		}
+		if c.Name == "api" && !c.Tracked {
+			t.Error("api should have Tracked=true")
+		}
+	}
+}
+
 func TestSocketFileCleanedUpOnStop(t *testing.T) {
 	s := testStore(t)
 	hub := NewHub()
-	dc := &DockerCollector{prevCPU: make(map[string]cpuPrev)}
+	dc := &DockerCollector{prevCPU: make(map[string]cpuPrev), untracked: make(map[string]bool), untrackedProjects: make(map[string]bool)}
 	ss := NewSocketServer(hub, s, dc, nil)
 
 	path := filepath.Join(t.TempDir(), "test.sock")

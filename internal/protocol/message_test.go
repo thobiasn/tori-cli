@@ -380,6 +380,90 @@ func TestNewFieldsRoundtrip(t *testing.T) {
 	}
 }
 
+func TestSetTrackingReqRoundtrip(t *testing.T) {
+	orig := SetTrackingReq{Container: "web", Tracked: false}
+	env, err := NewEnvelope(TypeActionSetTracking, 1, &orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := WriteMsg(&buf, env); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadMsg(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != TypeActionSetTracking {
+		t.Fatalf("type = %q, want %q", got.Type, TypeActionSetTracking)
+	}
+
+	var decoded SetTrackingReq
+	if err := DecodeBody(got.Body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Container != "web" || decoded.Tracked != false {
+		t.Errorf("got %+v, want container=web tracked=false", decoded)
+	}
+}
+
+func TestQueryTrackingRespRoundtrip(t *testing.T) {
+	orig := QueryTrackingResp{
+		UntrackedContainers: []string{"web", "api"},
+		UntrackedProjects:   []string{"myapp"},
+	}
+	env, err := NewEnvelope(TypeResult, 1, &orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := WriteMsg(&buf, env); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadMsg(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded QueryTrackingResp
+	if err := DecodeBody(got.Body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.UntrackedContainers) != 2 || decoded.UntrackedContainers[0] != "web" {
+		t.Errorf("containers = %v, want [web api]", decoded.UntrackedContainers)
+	}
+	if len(decoded.UntrackedProjects) != 1 || decoded.UntrackedProjects[0] != "myapp" {
+		t.Errorf("projects = %v, want [myapp]", decoded.UntrackedProjects)
+	}
+}
+
+func TestContainerInfoTrackedField(t *testing.T) {
+	orig := QueryContainersResp{
+		Containers: []ContainerInfo{
+			{ID: "abc", Name: "web", Tracked: true},
+			{ID: "def", Name: "api", Tracked: false},
+		},
+	}
+	raw, err := msgpack.Marshal(&orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded QueryContainersResp
+	if err := msgpack.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.Containers[0].Tracked {
+		t.Error("first container should be tracked")
+	}
+	if decoded.Containers[1].Tracked {
+		t.Error("second container should not be tracked")
+	}
+}
+
 func TestContainerInfoNewFields(t *testing.T) {
 	orig := QueryContainersResp{
 		Containers: []ContainerInfo{

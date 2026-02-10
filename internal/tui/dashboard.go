@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -80,7 +82,7 @@ func buildGroups(containers []protocol.ContainerMetrics, contInfo []protocol.Con
 }
 
 // renderDashboard assembles the 4-quadrant dashboard layout.
-func renderDashboard(a *App, width, height int) string {
+func renderDashboard(a *App, s *Session, width, height int) string {
 	theme := &a.theme
 
 	// Minimum size checks.
@@ -93,8 +95,8 @@ func renderDashboard(a *App, width, height int) string {
 
 	// Height calculations.
 	alertH := 3
-	if len(a.alerts) > 0 {
-		alertH = len(a.alerts) + 2
+	if len(s.Alerts) > 0 {
+		alertH = len(s.Alerts) + 2
 		maxAlertH := height / 4
 		if maxAlertH < 3 {
 			maxAlertH = 3
@@ -124,22 +126,22 @@ func renderDashboard(a *App, width, height int) string {
 		}
 	}
 
-	cpuHistory := a.hostCPUHistory.Data()
+	cpuHistory := s.HostCPUHistory.Data()
 
-	alertPanel := renderAlertPanel(a.alerts, width, theme)
-	logPanel := renderLogPanel(a.logs, width, logH, theme)
+	alertPanel := renderAlertPanel(s.Alerts, width, theme)
+	logPanel := renderLogPanel(s.Logs, width, logH, theme)
 
 	if width >= 100 {
 		// Wide: 4-quadrant layout (side-by-side top and middle).
 		halfW := width / 2
 		rightW := width - halfW
 
-		cpuPanel := renderCPUPanel(cpuHistory, a.host, halfW, cpuH, theme)
-		memPanel := renderMemPanel(a.host, rightW, cpuH, theme)
+		cpuPanel := renderCPUPanel(cpuHistory, s.Host, halfW, cpuH, theme)
+		memPanel := renderMemPanel(s.Host, rightW, cpuH, theme)
 		topRow := lipgloss.JoinHorizontal(lipgloss.Top, cpuPanel, memPanel)
 
-		contPanel := renderContainerPanel(a.dash.groups, a.dash.collapsed, a.dash.cursor, a.alerts, halfW, middleH, theme)
-		selPanel := renderSelectedPanel(a, rightW, middleH, theme)
+		contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, halfW, middleH, theme)
+		selPanel := renderSelectedPanel(a, s, rightW, middleH, theme)
 		midRow := lipgloss.JoinHorizontal(lipgloss.Top, contPanel, selPanel)
 
 		return strings.Join([]string{alertPanel, topRow, midRow, logPanel}, "\n")
@@ -157,48 +159,100 @@ func renderDashboard(a *App, width, height int) string {
 			selH = 4
 		}
 	}
-	cpuPanel := renderCPUPanel(cpuHistory, a.host, width, cpuH, theme)
-	memPanel := renderMemPanel(a.host, width, memH, theme)
-	contPanel := renderContainerPanel(a.dash.groups, a.dash.collapsed, a.dash.cursor, a.alerts, width, contH, theme)
-	selPanel := renderSelectedPanel(a, width, selH, theme)
+	cpuPanel := renderCPUPanel(cpuHistory, s.Host, width, cpuH, theme)
+	memPanel := renderMemPanel(s.Host, width, memH, theme)
+	contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, width, contH, theme)
+	selPanel := renderSelectedPanel(a, s, width, selH, theme)
 
 	return strings.Join([]string{alertPanel, cpuPanel, memPanel, contPanel, selPanel, logPanel}, "\n")
 }
 
 // updateDashboard handles keys for the dashboard view.
-func updateDashboard(a *App, msg tea.KeyMsg) tea.Cmd {
+func updateDashboard(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	key := msg.String()
 	switch key {
 	case "j", "down":
-		max := maxCursorPos(a.dash.groups, a.dash.collapsed)
-		if a.dash.cursor < max {
-			a.dash.cursor++
+		max := maxCursorPos(s.Dash.groups, s.Dash.collapsed)
+		if s.Dash.cursor < max {
+			s.Dash.cursor++
 		}
 	case "k", "up":
-		if a.dash.cursor > 0 {
-			a.dash.cursor--
+		if s.Dash.cursor > 0 {
+			s.Dash.cursor--
 		}
 	case " ":
-		name := cursorGroupName(a.dash.groups, a.dash.collapsed, a.dash.cursor)
+		name := cursorGroupName(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
 		if name != "" {
-			a.dash.collapsed[name] = !a.dash.collapsed[name]
+			s.Dash.collapsed[name] = !s.Dash.collapsed[name]
 		}
 	case "enter":
-		id := cursorContainerID(a.dash.groups, a.dash.collapsed, a.dash.cursor)
+		id := cursorContainerID(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
 		if id != "" {
-			a.detail.containerID = id
-			a.detail.reset()
+			s.Detail.containerID = id
+			s.Detail.reset()
 			a.active = viewDetail
-			return a.detail.onSwitch(a.client)
+			return s.Detail.onSwitch(s.Client)
 		}
 	case "l":
 		// Jump to log view filtered to selected container.
-		id := cursorContainerID(a.dash.groups, a.dash.collapsed, a.dash.cursor)
+		id := cursorContainerID(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
 		if id != "" {
-			a.logv.filterContainerID = id
+			s.Logv.filterContainerID = id
 			a.active = viewLogs
-			return a.logv.onSwitch(a.client)
+			return s.Logv.onSwitch(s.Client)
+		}
+	case "t":
+		return toggleTracking(s)
+	}
+	return nil
+}
+
+// toggleTracking toggles tracking for the container or group at the cursor.
+func toggleTracking(s *Session) tea.Cmd {
+	if s.Client == nil {
+		return nil
+	}
+	groupName := cursorGroupName(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
+	if groupName != "" && groupName != "other" {
+		// Toggle project tracking.
+		tracked := isProjectTracked(groupName, s.ContInfo)
+		client := s.Client
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			client.SetTracking(ctx, "", groupName, !tracked)
+			return trackingDoneMsg{server: client.server}
+		}
+	}
+	id := cursorContainerID(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
+	if id != "" {
+		name := containerNameByID(id, s.ContInfo)
+		tracked := isContainerTracked(id, s.ContInfo)
+		client := s.Client
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			client.SetTracking(ctx, name, "", !tracked)
+			return trackingDoneMsg{server: client.server}
 		}
 	}
 	return nil
+}
+
+func isProjectTracked(project string, contInfo []protocol.ContainerInfo) bool {
+	for _, ci := range contInfo {
+		if ci.Project == project && ci.Tracked {
+			return true
+		}
+	}
+	return false
+}
+
+func isContainerTracked(id string, contInfo []protocol.ContainerInfo) bool {
+	for _, ci := range contInfo {
+		if ci.ID == id {
+			return ci.Tracked
+		}
+	}
+	return true
 }

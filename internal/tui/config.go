@@ -10,8 +10,10 @@ import (
 
 // ServerConfig describes how to reach a single rook agent.
 type ServerConfig struct {
-	Host   string `toml:"host"`   // user@host or user@host:port (SSH)
-	Socket string `toml:"socket"` // /run/rook.sock
+	Host         string `toml:"host"`          // user@host (SSH)
+	Socket       string `toml:"socket"`        // /run/rook.sock
+	Port         int    `toml:"port"`          // SSH port (default: 22)
+	IdentityFile string `toml:"identity_file"` // path to SSH private key
 }
 
 // Config is the client-side configuration.

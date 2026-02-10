@@ -9,7 +9,7 @@ import (
 )
 
 // renderContainerPanel renders the container list with grouping and cursor.
-func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cursor int, alerts map[int64]*protocol.AlertEvent, width, height int, theme *Theme) string {
+func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cursor int, alerts map[int64]*protocol.AlertEvent, contInfo []protocol.ContainerInfo, width, height int, theme *Theme) string {
 	innerH := height - 2
 	if innerH < 1 {
 		innerH = 1
@@ -24,6 +24,12 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 		}
 	}
 
+	// Build tracked state lookup from contInfo.
+	trackedState := make(map[string]bool, len(contInfo))
+	for _, ci := range contInfo {
+		trackedState[ci.ID] = ci.Tracked
+	}
+
 	// Fixed-width columns: state(1) + space(1) + alert(2) + health(1) + space(1) + cpu(5) + space(1) + mem(5) + space(1) + uptime(7) + space(1) + restart(3) = ~29
 	fixedCols := 29
 	nameW := innerW - fixedCols - 2 // 2 for leading/trailing space
@@ -31,11 +37,25 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 		nameW = 8
 	}
 
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+
 	var lines []string
 	pos := 0
 	for _, g := range groups {
+		// Check if all containers in group are untracked.
+		allUntracked := len(g.containers) > 0
+		for _, c := range g.containers {
+			if tracked, ok := trackedState[c.ID]; ok && tracked {
+				allUntracked = false
+				break
+			}
+		}
+
 		// Group header: "myapp ────── 4/4 running"
 		runLabel := fmt.Sprintf(" %d/%d running", g.running, len(g.containers))
+		if allUntracked {
+			runLabel += " [not tracked]"
+		}
 		fillW := innerW - lipgloss.Width(g.name) - lipgloss.Width(runLabel) - 4
 		if fillW < 1 {
 			fillW = 1
@@ -43,8 +63,8 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 		fill := strings.Repeat("─", fillW)
 		headerLine := fmt.Sprintf(" %s %s %s",
 			lipgloss.NewStyle().Foreground(theme.Accent).Bold(true).Render(g.name),
-			lipgloss.NewStyle().Foreground(theme.Muted).Render(fill),
-			lipgloss.NewStyle().Foreground(theme.Muted).Render(runLabel))
+			muted.Render(fill),
+			muted.Render(runLabel))
 
 		if pos == cursor {
 			headerLine = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(headerLine), innerW))
@@ -58,6 +78,11 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 
 		// Container rows.
 		for _, c := range g.containers {
+			tracked := true
+			if t, ok := trackedState[c.ID]; ok {
+				tracked = t
+			}
+
 			indicator := theme.StateIndicator(c.State)
 			alertInd := "  "
 			if alertIDs[c.ID] {
@@ -69,17 +94,31 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 			restarts := formatRestarts(c.RestartCount, theme)
 
 			var stats string
-			if c.State == "running" {
+			if !tracked {
+				// Untracked: show dashes for stats in muted color.
+				stats = fmt.Sprintf("   —      — %-7s", Truncate(uptime, 7))
+				row := fmt.Sprintf(" %s %s%-*s %s %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
+				if pos == cursor {
+					row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
+				} else {
+					row = muted.Render(stripANSI(row))
+				}
+				lines = append(lines, TruncateStyled(row, innerW))
+			} else if c.State == "running" {
 				stats = fmt.Sprintf("%5.1f%% %5s %-7s", c.CPUPercent, FormatBytes(c.MemUsage), Truncate(uptime, 7))
+				row := fmt.Sprintf(" %s %s%-*s %s %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
+				if pos == cursor {
+					row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
+				}
+				lines = append(lines, TruncateStyled(row, innerW))
 			} else {
 				stats = fmt.Sprintf("   —      — %-7s", Truncate(uptime, 7))
+				row := fmt.Sprintf(" %s %s%-*s %s %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
+				if pos == cursor {
+					row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
+				}
+				lines = append(lines, TruncateStyled(row, innerW))
 			}
-
-			row := fmt.Sprintf(" %s %s%-*s %s %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
-			if pos == cursor {
-				row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
-			}
-			lines = append(lines, TruncateStyled(row, innerW))
 			pos++
 		}
 	}

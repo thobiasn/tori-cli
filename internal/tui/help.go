@@ -12,6 +12,7 @@ var dashboardHelp = `
    Space        Collapse/expand group
    Enter        Open container detail
    l            Open logs for container
+   t            Toggle tracking
    Tab, 1-4     Switch view
    ?            Toggle help
    q            Quit`

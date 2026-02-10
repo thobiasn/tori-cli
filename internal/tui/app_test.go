@@ -7,24 +7,24 @@ import (
 	"github.com/thobiasn/rook/internal/protocol"
 )
 
+const testServer = "test"
+
+// newTestSession creates a minimal Session for testing (no real client).
+func newTestSession() *Session {
+	return NewSession(testServer, nil, nil)
+}
+
 // newTestApp creates a minimal App for testing (no real client).
 func newTestApp() App {
-	a := App{
-		theme:          DefaultTheme(),
-		logs:           NewRingBuffer[protocol.LogEntryMsg](500),
-		alerts:         make(map[int64]*protocol.AlertEvent),
-		rates:          NewRateCalc(),
-		cpuHistory:     make(map[string]*RingBuffer[float64]),
-		memHistory:     make(map[string]*RingBuffer[float64]),
-		hostCPUHistory: NewRingBuffer[float64](180),
-		hostMemHistory: NewRingBuffer[float64](180),
-		dash:           newDashboardState(),
-		logv:           newLogViewState(),
-		alertv:         newAlertViewState(),
-		width:          120,
-		height:         40,
+	s := newTestSession()
+	return App{
+		sessions:      map[string]*Session{testServer: s},
+		sessionOrder:  []string{testServer},
+		activeSession: testServer,
+		theme:         DefaultTheme(),
+		width:         120,
+		height:        40,
 	}
-	return a
 }
 
 func TestAppUpdateMetricsAccumulates(t *testing.T) {
@@ -36,19 +36,20 @@ func TestAppUpdateMetricsAccumulates(t *testing.T) {
 			{ID: "c1", Name: "web", State: "running", CPUPercent: 10.0, MemPercent: 50.0},
 		},
 	}
-	model, _ := a.Update(MetricsMsg{m})
+	model, _ := a.Update(MetricsMsg{m, testServer})
 	a = model.(App)
 
-	if a.host == nil || a.host.CPUPercent != 42.5 {
+	s := a.session()
+	if s.Host == nil || s.Host.CPUPercent != 42.5 {
 		t.Error("host metrics not accumulated")
 	}
-	if len(a.containers) != 1 || a.containers[0].ID != "c1" {
+	if len(s.Containers) != 1 || s.Containers[0].ID != "c1" {
 		t.Error("container metrics not accumulated")
 	}
-	if a.hostCPUHistory.Len() != 1 {
-		t.Errorf("hostCPUHistory.Len() = %d, want 1", a.hostCPUHistory.Len())
+	if s.HostCPUHistory.Len() != 1 {
+		t.Errorf("HostCPUHistory.Len() = %d, want 1", s.HostCPUHistory.Len())
 	}
-	if _, ok := a.cpuHistory["c1"]; !ok {
+	if _, ok := s.CPUHistory["c1"]; !ok {
 		t.Error("container CPU history not created")
 	}
 }
@@ -60,10 +61,11 @@ func TestAppUpdateMetricsStaleCleanup(t *testing.T) {
 		Timestamp:  100,
 		Containers: []protocol.ContainerMetrics{{ID: "c1", CPUPercent: 5}},
 	}
-	model, _ := a.Update(MetricsMsg{m1})
+	model, _ := a.Update(MetricsMsg{m1, testServer})
 	a = model.(App)
 
-	if _, ok := a.cpuHistory["c1"]; !ok {
+	s := a.session()
+	if _, ok := s.CPUHistory["c1"]; !ok {
 		t.Fatal("c1 history should exist")
 	}
 
@@ -72,57 +74,58 @@ func TestAppUpdateMetricsStaleCleanup(t *testing.T) {
 		Timestamp:  110,
 		Containers: []protocol.ContainerMetrics{{ID: "c2", CPUPercent: 10}},
 	}
-	model, _ = a.Update(MetricsMsg{m2})
+	model, _ = a.Update(MetricsMsg{m2, testServer})
 	a = model.(App)
 
-	if _, ok := a.cpuHistory["c1"]; ok {
+	s = a.session()
+	if _, ok := s.CPUHistory["c1"]; ok {
 		t.Error("stale c1 history should be cleaned up")
 	}
-	if _, ok := a.cpuHistory["c2"]; !ok {
+	if _, ok := s.CPUHistory["c2"]; !ok {
 		t.Error("c2 history should exist")
 	}
 }
 
 func TestAppUpdateLogRoutesToAllViews(t *testing.T) {
 	a := newTestApp()
-	a.active = viewDashboard // Not on log view or detail view.
-	a.detail.containerID = "c1"
-	a.detail.reset()
+	a.active = viewDashboard
+	s := a.session()
+	s.Detail.containerID = "c1"
+	s.Detail.reset()
 
 	entry := protocol.LogEntryMsg{Timestamp: 100, ContainerID: "c1", Message: "hello"}
-	model, _ := a.Update(LogMsg{entry})
+	model, _ := a.Update(LogMsg{entry, testServer})
 	a = model.(App)
 
-	// Dashboard log buffer should have the entry.
-	if a.logs.Len() != 1 {
-		t.Errorf("dashboard logs.Len() = %d, want 1", a.logs.Len())
+	s = a.session()
+	if s.Logs.Len() != 1 {
+		t.Errorf("dashboard logs.Len() = %d, want 1", s.Logs.Len())
 	}
-	// Full-screen log view should have the entry.
-	if a.logv.logs.Len() != 1 {
-		t.Errorf("logv.logs.Len() = %d, want 1", a.logv.logs.Len())
+	if s.Logv.logs.Len() != 1 {
+		t.Errorf("logv.logs.Len() = %d, want 1", s.Logv.logs.Len())
 	}
-	// Detail view should have the entry (matches container).
-	if a.detail.logs.Len() != 1 {
-		t.Errorf("detail.logs.Len() = %d, want 1", a.detail.logs.Len())
+	if s.Detail.logs.Len() != 1 {
+		t.Errorf("detail.logs.Len() = %d, want 1", s.Detail.logs.Len())
 	}
 }
 
 func TestAppUpdateLogDetailFilters(t *testing.T) {
 	a := newTestApp()
-	a.detail.containerID = "c1"
-	a.detail.reset()
+	s := a.session()
+	s.Detail.containerID = "c1"
+	s.Detail.reset()
 
 	// Entry for different container should not appear in detail.
 	entry := protocol.LogEntryMsg{Timestamp: 100, ContainerID: "c2", Message: "other"}
-	model, _ := a.Update(LogMsg{entry})
+	model, _ := a.Update(LogMsg{entry, testServer})
 	a = model.(App)
 
-	if a.detail.logs.Len() != 0 {
-		t.Errorf("detail should filter non-matching container, got %d entries", a.detail.logs.Len())
+	s = a.session()
+	if s.Detail.logs.Len() != 0 {
+		t.Errorf("detail should filter non-matching container, got %d entries", s.Detail.logs.Len())
 	}
-	// But logv should still have it.
-	if a.logv.logs.Len() != 1 {
-		t.Errorf("logv should have entry, got %d", a.logv.logs.Len())
+	if s.Logv.logs.Len() != 1 {
+		t.Errorf("logv should have entry, got %d", s.Logv.logs.Len())
 	}
 }
 
@@ -131,46 +134,50 @@ func TestAppUpdateAlertAddDelete(t *testing.T) {
 
 	// Fire an alert.
 	evt := protocol.AlertEvent{ID: 1, RuleName: "test", State: "firing", FiredAt: 100}
-	model, _ := a.Update(AlertEventMsg{evt})
+	model, _ := a.Update(AlertEventMsg{evt, testServer})
 	a = model.(App)
 
-	if len(a.alerts) != 1 {
-		t.Fatalf("alerts count = %d, want 1", len(a.alerts))
+	s := a.session()
+	if len(s.Alerts) != 1 {
+		t.Fatalf("alerts count = %d, want 1", len(s.Alerts))
 	}
 
 	// Resolve the alert.
 	resolved := protocol.AlertEvent{ID: 1, State: "resolved"}
-	model, _ = a.Update(AlertEventMsg{resolved})
+	model, _ = a.Update(AlertEventMsg{resolved, testServer})
 	a = model.(App)
 
-	if len(a.alerts) != 0 {
-		t.Errorf("alerts count after resolve = %d, want 0", len(a.alerts))
+	s = a.session()
+	if len(s.Alerts) != 0 {
+		t.Errorf("alerts count after resolve = %d, want 0", len(s.Alerts))
 	}
 }
 
 func TestAppUpdateAlertMapCapped(t *testing.T) {
 	a := newTestApp()
 
-	// Fill up to cap.
 	for i := int64(0); i < 1001; i++ {
 		evt := protocol.AlertEvent{ID: i, RuleName: "test", State: "firing", FiredAt: i}
-		model, _ := a.Update(AlertEventMsg{evt})
+		model, _ := a.Update(AlertEventMsg{evt, testServer})
 		a = model.(App)
 	}
 
-	if len(a.alerts) > 1000 {
-		t.Errorf("alerts count = %d, should be capped at 1000", len(a.alerts))
+	s := a.session()
+	if len(s.Alerts) > 1000 {
+		t.Errorf("alerts count = %d, should be capped at 1000", len(s.Alerts))
 	}
 }
 
 func TestAppUpdateAlertActionDone(t *testing.T) {
 	a := newTestApp()
-	a.alertv.stale = false
+	s := a.session()
+	s.Alertv.stale = false
 
 	model, _ := a.Update(alertActionDoneMsg{})
 	a = model.(App)
 
-	if !a.alertv.stale {
+	s = a.session()
+	if !s.Alertv.stale {
 		t.Error("alertv should be marked stale after action done")
 	}
 }
@@ -259,5 +266,65 @@ func TestAppViewRendersWithoutPanic(t *testing.T) {
 		if v == "" {
 			t.Errorf("view %d rendered empty", view)
 		}
+	}
+}
+
+func TestAppServerPickerToggle(t *testing.T) {
+	// Multi-server setup.
+	s1 := NewSession("prod", nil, nil)
+	s2 := NewSession("staging", nil, nil)
+	a := NewApp(map[string]*Session{"prod": s1, "staging": s2})
+	a.width = 120
+	a.height = 40
+
+	// S opens picker.
+	model, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")})
+	a = model.(App)
+	if !a.showServerPicker {
+		t.Error("S should open server picker")
+	}
+
+	// "2" selects second server.
+	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	a = model.(App)
+	if a.showServerPicker {
+		t.Error("picker should close after selection")
+	}
+	if a.activeSession != "staging" {
+		t.Errorf("activeSession = %q, want staging", a.activeSession)
+	}
+}
+
+func TestAppServerPickerSingleServer(t *testing.T) {
+	a := newTestApp()
+
+	// S should NOT open picker when single server.
+	model, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")})
+	a = model.(App)
+	if a.showServerPicker {
+		t.Error("S should not open picker for single server")
+	}
+}
+
+func TestAppMultiServerMessageRouting(t *testing.T) {
+	s1 := NewSession("prod", nil, nil)
+	s2 := NewSession("staging", nil, nil)
+	a := NewApp(map[string]*Session{"prod": s1, "staging": s2})
+	a.width = 120
+	a.height = 40
+
+	// Metrics for prod should only go to prod.
+	m := &protocol.MetricsUpdate{
+		Timestamp: 100,
+		Host:      &protocol.HostMetrics{CPUPercent: 42.0},
+	}
+	model, _ := a.Update(MetricsMsg{m, "prod"})
+	a = model.(App)
+
+	if a.sessions["prod"].Host == nil || a.sessions["prod"].Host.CPUPercent != 42.0 {
+		t.Error("prod should have received metrics")
+	}
+	if a.sessions["staging"].Host != nil {
+		t.Error("staging should not have received prod's metrics")
 	}
 }

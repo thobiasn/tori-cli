@@ -6,9 +6,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
+
+// SSHOptions holds optional SSH connection parameters.
+type SSHOptions struct {
+	Port         int    // SSH port (0 = default)
+	IdentityFile string // path to private key (empty = default)
+}
 
 // Tunnel manages an SSH tunnel to a remote rook agent socket.
 type Tunnel struct {
@@ -20,18 +27,22 @@ type Tunnel struct {
 
 // NewTunnel creates an SSH tunnel forwarding a local Unix socket to the remote one.
 // It blocks until the local socket appears or the timeout expires.
-func NewTunnel(host, remoteSock string) (*Tunnel, error) {
+func NewTunnel(host, remoteSock string, opts ...SSHOptions) (*Tunnel, error) {
 	if strings.HasPrefix(host, "-") {
 		return nil, fmt.Errorf("invalid host: %q", host)
+	}
+	var o SSHOptions
+	if len(opts) > 0 {
+		o = opts[0]
 	}
 	t := &Tunnel{
 		execFn: exec.Command,
 		done:   make(chan error, 1),
 	}
-	return t, t.start(host, remoteSock)
+	return t, t.start(host, remoteSock, o)
 }
 
-func (t *Tunnel) start(host, remoteSock string) error {
+func (t *Tunnel) start(host, remoteSock string, opts SSHOptions) error {
 	// Create temp socket path.
 	dir, err := os.MkdirTemp("", "rook-tunnel-*")
 	if err != nil {
@@ -39,8 +50,17 @@ func (t *Tunnel) start(host, remoteSock string) error {
 	}
 	t.localSock = filepath.Join(dir, "rook.sock")
 
+	args := []string{"-N"}
+	if opts.Port > 0 {
+		args = append(args, "-p", strconv.Itoa(opts.Port))
+	}
+	if opts.IdentityFile != "" {
+		args = append(args, "-i", opts.IdentityFile)
+	}
+	args = append(args, "-L", t.localSock+":"+remoteSock, host)
+
 	var stderr bytes.Buffer
-	t.cmd = t.execFn("ssh", "-N", "-L", t.localSock+":"+remoteSock, host)
+	t.cmd = t.execFn("ssh", args...)
 	t.cmd.Stderr = &stderr
 
 	if err := t.cmd.Start(); err != nil {

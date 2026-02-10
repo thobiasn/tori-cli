@@ -14,16 +14,33 @@ import (
 )
 
 // Tea message types dispatched by the reader goroutine.
-type MetricsMsg struct{ *protocol.MetricsUpdate }
-type LogMsg struct{ protocol.LogEntryMsg }
-type AlertEventMsg struct{ protocol.AlertEvent }
-type ContainerEventMsg struct{ protocol.ContainerEvent }
-type ConnErrMsg struct{ Err error }
+// Each carries a Server field identifying the originating session.
+type MetricsMsg struct {
+	*protocol.MetricsUpdate
+	Server string
+}
+type LogMsg struct {
+	protocol.LogEntryMsg
+	Server string
+}
+type AlertEventMsg struct {
+	protocol.AlertEvent
+	Server string
+}
+type ContainerEventMsg struct {
+	protocol.ContainerEvent
+	Server string
+}
+type ConnErrMsg struct {
+	Err    error
+	Server string
+}
 
 // Client wraps a protocol connection to the agent and dispatches
 // streaming messages as tea.Msg values.
 type Client struct {
 	conn     net.Conn
+	server   string // session name for message routing
 	mu       sync.Mutex // serializes writes
 	nextID   atomic.Uint32
 	pendMu   sync.Mutex
@@ -35,9 +52,15 @@ type Client struct {
 }
 
 // NewClient wraps an existing connection. Call SetProgram to start reading.
-func NewClient(conn net.Conn) *Client {
+// The server name tags dispatched streaming messages for routing.
+func NewClient(conn net.Conn, server ...string) *Client {
+	name := ""
+	if len(server) > 0 {
+		name = server[0]
+	}
 	return &Client{
 		conn:    conn,
+		server:  name,
 		pending: make(map[uint32]chan *protocol.Envelope),
 		done:    make(chan struct{}),
 	}
@@ -68,7 +91,7 @@ func (c *Client) readLoop() {
 		c.pendMu.Unlock()
 		// Only notify the TUI on unexpected disconnects, not deliberate Close().
 		if c.prog != nil && !c.closed.Load() {
-			c.prog.Send(ConnErrMsg{Err: errors.New("connection lost")})
+			c.prog.Send(ConnErrMsg{Err: errors.New("connection lost"), Server: c.server})
 		}
 	}()
 
@@ -96,22 +119,22 @@ func (c *Client) dispatchStreaming(env *protocol.Envelope) {
 	case protocol.TypeMetricsUpdate:
 		var m protocol.MetricsUpdate
 		if err := protocol.DecodeBody(env.Body, &m); err == nil {
-			c.prog.Send(MetricsMsg{&m})
+			c.prog.Send(MetricsMsg{&m, c.server})
 		}
 	case protocol.TypeLogEntry:
 		var m protocol.LogEntryMsg
 		if err := protocol.DecodeBody(env.Body, &m); err == nil {
-			c.prog.Send(LogMsg{m})
+			c.prog.Send(LogMsg{m, c.server})
 		}
 	case protocol.TypeAlertEvent:
 		var m protocol.AlertEvent
 		if err := protocol.DecodeBody(env.Body, &m); err == nil {
-			c.prog.Send(AlertEventMsg{m})
+			c.prog.Send(AlertEventMsg{m, c.server})
 		}
 	case protocol.TypeContainerEvent:
 		var m protocol.ContainerEvent
 		if err := protocol.DecodeBody(env.Body, &m); err == nil {
-			c.prog.Send(ContainerEventMsg{m})
+			c.prog.Send(ContainerEventMsg{m, c.server})
 		}
 	}
 }
@@ -264,4 +287,27 @@ func (c *Client) SilenceAlert(ctx context.Context, rule string, dur int64) error
 func (c *Client) RestartContainer(ctx context.Context, containerID string) error {
 	_, err := c.Request(ctx, protocol.TypeActionRestart, &protocol.RestartContainerReq{ContainerID: containerID})
 	return err
+}
+
+// SetTracking toggles tracking for a container name or compose project.
+func (c *Client) SetTracking(ctx context.Context, container, project string, tracked bool) error {
+	_, err := c.Request(ctx, protocol.TypeActionSetTracking, &protocol.SetTrackingReq{
+		Container: container,
+		Project:   project,
+		Tracked:   tracked,
+	})
+	return err
+}
+
+// QueryTracking returns the current untracked containers and projects.
+func (c *Client) QueryTracking(ctx context.Context) (*protocol.QueryTrackingResp, error) {
+	resp, err := c.Request(ctx, protocol.TypeQueryTracking, nil)
+	if err != nil {
+		return nil, err
+	}
+	var r protocol.QueryTrackingResp
+	if err := protocol.DecodeBody(resp.Body, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
 }

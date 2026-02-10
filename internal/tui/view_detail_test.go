@@ -44,28 +44,29 @@ func TestDetailStreamEntryFiltersByContainer(t *testing.T) {
 
 func TestDetailRestartConfirmationFlow(t *testing.T) {
 	a := newTestApp()
-	a.detail.containerID = "c1"
-	a.detail.reset()
+	s := a.session()
+	s.Detail.containerID = "c1"
+	s.Detail.reset()
 
 	// Press 'r' to initiate restart.
-	updateDetail(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
-	if !a.detail.confirmRestart {
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	if !s.Detail.confirmRestart {
 		t.Fatal("'r' should trigger confirm restart")
 	}
 
 	// Press 'n' to cancel.
-	updateDetail(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
-	if a.detail.confirmRestart {
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	if s.Detail.confirmRestart {
 		t.Error("'n' should cancel confirm restart")
 	}
 
 	// Press 'r' again, then 'y' to confirm.
-	updateDetail(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
-	if !a.detail.confirmRestart {
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	if !s.Detail.confirmRestart {
 		t.Fatal("'r' should trigger confirm restart")
 	}
-	cmd := updateDetail(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
-	if a.detail.confirmRestart {
+	cmd := updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
+	if s.Detail.confirmRestart {
 		t.Error("'y' should clear confirm restart")
 	}
 	if cmd == nil {
@@ -75,34 +76,36 @@ func TestDetailRestartConfirmationFlow(t *testing.T) {
 
 func TestDetailCursorBounded(t *testing.T) {
 	a := newTestApp()
-	a.detail.containerID = "c1"
-	a.detail.reset()
+	s := a.session()
+	s.Detail.containerID = "c1"
+	s.Detail.reset()
 
 	// Push 3 entries.
-	a.detail.logs.Push(protocol.LogEntryMsg{ContainerID: "c1", Message: "a"})
-	a.detail.logs.Push(protocol.LogEntryMsg{ContainerID: "c1", Message: "b"})
-	a.detail.logs.Push(protocol.LogEntryMsg{ContainerID: "c1", Message: "c"})
+	s.Detail.logs.Push(protocol.LogEntryMsg{ContainerID: "c1", Message: "a"})
+	s.Detail.logs.Push(protocol.LogEntryMsg{ContainerID: "c1", Message: "b"})
+	s.Detail.logs.Push(protocol.LogEntryMsg{ContainerID: "c1", Message: "c"})
 
 	// Move cursor up repeatedly — should not go negative or exceed bounds.
 	for i := 0; i < 10; i++ {
-		updateDetail(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+		updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
 	}
-	if a.detail.logCursor < 0 {
-		t.Errorf("logCursor = %d, should not be negative", a.detail.logCursor)
+	if s.Detail.logCursor < 0 {
+		t.Errorf("logCursor = %d, should not be negative", s.Detail.logCursor)
 	}
-	if a.detail.logScroll > a.detail.logs.Len() {
-		t.Errorf("logScroll = %d, exceeds data length %d", a.detail.logScroll, a.detail.logs.Len())
+	if s.Detail.logScroll > s.Detail.logs.Len() {
+		t.Errorf("logScroll = %d, exceeds data length %d", s.Detail.logScroll, s.Detail.logs.Len())
 	}
 }
 
 func TestDetailEscBackToDashboard(t *testing.T) {
 	a := newTestApp()
+	s := a.session()
 	a.active = viewDetail
-	a.detail.containerID = "c1"
-	a.detail.reset()
+	s.Detail.containerID = "c1"
+	s.Detail.reset()
 
 	// With no filters or cursor active, Esc goes directly to dashboard.
-	updateDetail(&a, tea.KeyMsg{Type: tea.KeyEscape})
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyEscape})
 	if a.active != viewDashboard {
 		t.Errorf("esc with no state should switch to dashboard, got %d", a.active)
 	}
@@ -140,90 +143,93 @@ func TestDetailReset(t *testing.T) {
 
 func TestDetailStreamFilter(t *testing.T) {
 	a := newTestApp()
-	a.detail.containerID = "c1"
-	a.detail.reset()
+	s := a.session()
+	s.Detail.containerID = "c1"
+	s.Detail.reset()
 
 	// Cycle: "" → stdout → stderr → ""
-	updateDetail(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
-	if a.detail.filterStream != "stdout" {
-		t.Errorf("first cycle = %q, want stdout", a.detail.filterStream)
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	if s.Detail.filterStream != "stdout" {
+		t.Errorf("first cycle = %q, want stdout", s.Detail.filterStream)
 	}
 
-	updateDetail(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
-	if a.detail.filterStream != "stderr" {
-		t.Errorf("second cycle = %q, want stderr", a.detail.filterStream)
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	if s.Detail.filterStream != "stderr" {
+		t.Errorf("second cycle = %q, want stderr", s.Detail.filterStream)
 	}
 
-	updateDetail(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
-	if a.detail.filterStream != "" {
-		t.Errorf("third cycle = %q, want empty", a.detail.filterStream)
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	if s.Detail.filterStream != "" {
+		t.Errorf("third cycle = %q, want empty", s.Detail.filterStream)
 	}
 }
 
 func TestDetailSearchMode(t *testing.T) {
 	a := newTestApp()
-	a.detail.containerID = "c1"
-	a.detail.reset()
+	s := a.session()
+	s.Detail.containerID = "c1"
+	s.Detail.reset()
 
 	// Enter search mode.
-	updateDetail(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
-	if !a.detail.searchMode {
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	if !s.Detail.searchMode {
 		t.Fatal("/ should enter search mode")
 	}
 
 	// Type characters.
-	updateDetail(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
-	updateDetail(&a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
-	if a.detail.searchText != "er" {
-		t.Errorf("searchText = %q, want er", a.detail.searchText)
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	if s.Detail.searchText != "er" {
+		t.Errorf("searchText = %q, want er", s.Detail.searchText)
 	}
 
 	// Backspace.
-	updateDetail(&a, tea.KeyMsg{Type: tea.KeyBackspace})
-	if a.detail.searchText != "e" {
-		t.Errorf("searchText after backspace = %q, want e", a.detail.searchText)
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyBackspace})
+	if s.Detail.searchText != "e" {
+		t.Errorf("searchText after backspace = %q, want e", s.Detail.searchText)
 	}
 
 	// Enter exits search mode.
-	updateDetail(&a, tea.KeyMsg{Type: tea.KeyEnter})
-	if a.detail.searchMode {
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyEnter})
+	if s.Detail.searchMode {
 		t.Error("enter should exit search mode")
 	}
-	if a.detail.searchText != "e" {
-		t.Errorf("searchText should persist after enter, got %q", a.detail.searchText)
+	if s.Detail.searchText != "e" {
+		t.Errorf("searchText should persist after enter, got %q", s.Detail.searchText)
 	}
 }
 
 func TestDetailEscPriorityChain(t *testing.T) {
 	a := newTestApp()
+	s := a.session()
 	a.active = viewDetail
-	a.detail.containerID = "c1"
-	a.detail.reset()
+	s.Detail.containerID = "c1"
+	s.Detail.reset()
 
 	// Set up all filter state.
-	a.detail.searchText = "hello"
-	a.detail.filterStream = "stdout"
+	s.Detail.searchText = "hello"
+	s.Detail.filterStream = "stdout"
 
 	// First Esc: clear search text.
-	updateDetail(&a, tea.KeyMsg{Type: tea.KeyEscape})
-	if a.detail.searchText != "" {
-		t.Errorf("first esc should clear searchText, got %q", a.detail.searchText)
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyEscape})
+	if s.Detail.searchText != "" {
+		t.Errorf("first esc should clear searchText, got %q", s.Detail.searchText)
 	}
 	if a.active != viewDetail {
 		t.Error("should still be on detail view")
 	}
 
 	// Second Esc: clear stream filter.
-	updateDetail(&a, tea.KeyMsg{Type: tea.KeyEscape})
-	if a.detail.filterStream != "" {
-		t.Errorf("second esc should clear filterStream, got %q", a.detail.filterStream)
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyEscape})
+	if s.Detail.filterStream != "" {
+		t.Errorf("second esc should clear filterStream, got %q", s.Detail.filterStream)
 	}
 	if a.active != viewDetail {
 		t.Error("should still be on detail view")
 	}
 
 	// Third Esc: back to dashboard.
-	updateDetail(&a, tea.KeyMsg{Type: tea.KeyEscape})
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyEscape})
 	if a.active != viewDashboard {
 		t.Errorf("third esc should go to dashboard, got %d", a.active)
 	}

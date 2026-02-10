@@ -44,9 +44,11 @@ func testEventWatcher(t *testing.T, include, exclude []string) (*EventWatcher, *
 	t.Helper()
 
 	dc := &DockerCollector{
-		include: include,
-		exclude: exclude,
-		prevCPU: make(map[string]cpuPrev),
+		include:           include,
+		exclude:           exclude,
+		prevCPU:           make(map[string]cpuPrev),
+		untracked:         make(map[string]bool),
+		untrackedProjects: make(map[string]bool),
 	}
 	hub := NewHub()
 	// Use a Docker client with a dummy socket so ContainerLogs fails

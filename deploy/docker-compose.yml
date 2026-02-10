@@ -1,0 +1,40 @@
+services:
+  rook:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    pid: host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro  # remove :ro if using self-healing actions
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /run/rook:/run/rook
+      - rook-data:/var/lib/rook
+    environment:
+      ROOK_CONFIG: |
+        [storage]
+        path = "/var/lib/rook/rook.db"
+        retention_days = 7
+
+        [socket]
+        path = "/run/rook/rook.sock"
+
+        [host]
+        proc = "/host/proc"
+        sys = "/host/sys"
+
+        [docker]
+        socket = "/var/run/docker.sock"
+
+        [collect]
+        interval = "10s"
+
+        [alerts.container_down]
+        condition = "container.state == 'exited'"
+        for = "30s"
+        severity = "critical"
+        actions = ["notify"]
+
+volumes:
+  rook-data:

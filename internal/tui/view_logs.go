@@ -151,11 +151,11 @@ func projectContainerIDs(project string, contInfo []protocol.ContainerInfo) map[
 }
 
 // renderLogView renders the full-screen log view.
-func renderLogView(a *App, width, height int) string {
+func renderLogView(a *App, s *Session, width, height int) string {
 	theme := &a.theme
-	s := &a.logv
+	lv := &s.Logv
 
-	filtered := s.filteredEntries(a.contInfo)
+	filtered := lv.filteredEntries(s.ContInfo)
 	innerH := height - 3 // box borders + footer
 	if innerH < 1 {
 		innerH = 1
@@ -166,11 +166,11 @@ func renderLogView(a *App, width, height int) string {
 	var visible []protocol.LogEntryMsg
 	if len(filtered) <= innerH {
 		visible = filtered
-	} else if s.scroll == 0 {
+	} else if lv.scroll == 0 {
 		// Live tail: show last innerH entries.
 		visible = filtered[len(filtered)-innerH:]
 	} else {
-		end := len(filtered) - s.scroll
+		end := len(filtered) - lv.scroll
 		if end < 0 {
 			end = 0
 		}
@@ -182,8 +182,8 @@ func renderLogView(a *App, width, height int) string {
 	}
 
 	// Calculate expansion lines so we can reduce visible entries if needed.
-	cursorIdx := s.cursor
-	expandIdx := s.expanded
+	cursorIdx := lv.cursor
+	expandIdx := lv.expanded
 	var expandLines int
 	if expandIdx >= 0 && expandIdx < len(visible) {
 		expandLines = len(wrapText(visible[expandIdx].Message, innerW-2))
@@ -217,18 +217,18 @@ func renderLogView(a *App, width, height int) string {
 
 	// Title.
 	title := "Logs"
-	if s.filterContainerID != "" {
-		name := containerNameByID(s.filterContainerID, a.contInfo)
+	if lv.filterContainerID != "" {
+		name := containerNameByID(lv.filterContainerID, s.ContInfo)
 		if name != "" {
 			title += " ── " + name
 		}
-	} else if s.filterProject != "" {
-		title += " ── " + s.filterProject
+	} else if lv.filterProject != "" {
+		title += " ── " + lv.filterProject
 	} else {
 		title += " ── all containers"
 	}
 	title += " ── " + FormatNumber(len(filtered)) + " lines"
-	if s.scroll == 0 {
+	if lv.scroll == 0 {
 		title += " ── LIVE"
 	} else {
 		title += " ── PAUSED"
@@ -239,7 +239,7 @@ func renderLogView(a *App, width, height int) string {
 	box := Box(title, content, width, boxH, theme)
 
 	// Filter footer.
-	footer := renderLogFooter(s, innerW, theme)
+	footer := renderLogFooter(lv, innerW, theme)
 
 	return box + "\n" + footer
 }
@@ -305,28 +305,28 @@ func wrapText(s string, width int) []string {
 }
 
 // updateLogView handles keys in the log view.
-func updateLogView(a *App, msg tea.KeyMsg) tea.Cmd {
-	s := &a.logv
+func updateLogView(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
+	lv := &s.Logv
 	key := msg.String()
 
 	// Search mode captures all keys.
-	if s.searchMode {
+	if lv.searchMode {
 		switch key {
 		case "enter", "esc":
-			s.searchMode = false
+			lv.searchMode = false
 		case "backspace":
-			if len(s.searchText) > 0 {
-				s.searchText = s.searchText[:len(s.searchText)-1]
+			if len(lv.searchText) > 0 {
+				lv.searchText = lv.searchText[:len(lv.searchText)-1]
 			}
 		default:
-			if len(key) == 1 && len(s.searchText) < 128 {
-				s.searchText += key
+			if len(key) == 1 && len(lv.searchText) < 128 {
+				lv.searchText += key
 			}
 		}
 		return nil
 	}
 
-	filtered := s.filteredEntries(a.contInfo)
+	filtered := lv.filteredEntries(s.ContInfo)
 	innerH := a.height - 4
 	if innerH < 1 {
 		innerH = 1
@@ -343,67 +343,67 @@ func updateLogView(a *App, msg tea.KeyMsg) tea.Cmd {
 
 	switch key {
 	case "j", "down":
-		if s.cursor == -1 {
+		if lv.cursor == -1 {
 			// Activate cursor at bottom, pause live tail.
-			s.cursor = visibleCount - 1
-			if s.cursor < 0 {
-				s.cursor = 0
+			lv.cursor = visibleCount - 1
+			if lv.cursor < 0 {
+				lv.cursor = 0
 			}
-			if s.scroll == 0 {
-				s.scroll = 0 // already at bottom, stay paused from cursor activation
+			if lv.scroll == 0 {
+				lv.scroll = 0 // already at bottom, stay paused from cursor activation
 			}
-		} else if s.cursor < visibleCount-1 {
-			s.cursor++
-		} else if s.scroll > 0 {
-			s.scroll--
+		} else if lv.cursor < visibleCount-1 {
+			lv.cursor++
+		} else if lv.scroll > 0 {
+			lv.scroll--
 		}
-		s.expanded = -1
+		lv.expanded = -1
 	case "k", "up":
-		if s.cursor == -1 {
-			s.cursor = visibleCount - 1
-			if s.cursor < 0 {
-				s.cursor = 0
+		if lv.cursor == -1 {
+			lv.cursor = visibleCount - 1
+			if lv.cursor < 0 {
+				lv.cursor = 0
 			}
-		} else if s.cursor > 0 {
-			s.cursor--
-		} else if s.scroll < maxScroll {
-			s.scroll++
+		} else if lv.cursor > 0 {
+			lv.cursor--
+		} else if lv.scroll < maxScroll {
+			lv.scroll++
 		}
-		s.expanded = -1
+		lv.expanded = -1
 	case "g":
-		s.cycleProjectFilter(a.contInfo)
+		lv.cycleProjectFilter(s.ContInfo)
 	case "c":
-		s.cycleContainerFilter(a.contInfo)
+		lv.cycleContainerFilter(s.ContInfo)
 	case "s":
-		switch s.filterStream {
+		switch lv.filterStream {
 		case "":
-			s.filterStream = "stdout"
+			lv.filterStream = "stdout"
 		case "stdout":
-			s.filterStream = "stderr"
+			lv.filterStream = "stderr"
 		default:
-			s.filterStream = ""
+			lv.filterStream = ""
 		}
 	case "/":
-		s.searchMode = true
+		lv.searchMode = true
 	case "enter":
-		if s.cursor >= 0 {
-			if s.expanded == s.cursor {
-				s.expanded = -1
+		if lv.cursor >= 0 {
+			if lv.expanded == lv.cursor {
+				lv.expanded = -1
 			} else {
-				s.expanded = s.cursor
+				lv.expanded = lv.cursor
 			}
 		}
 	case "esc":
-		if s.cursor >= 0 {
-			s.cursor = -1
-			s.expanded = -1
-			s.scroll = 0
-		} else if s.searchText != "" {
-			s.searchText = ""
-		} else if s.filterContainerID != "" || s.filterProject != "" || s.filterStream != "" {
-			s.filterContainerID = ""
-			s.filterProject = ""
-			s.filterStream = ""
+		if lv.cursor >= 0 {
+			lv.cursor = -1
+			lv.expanded = -1
+			lv.scroll = 0
+		} else if lv.searchText != "" {
+			lv.searchText = ""
+		} else if lv.filterContainerID != "" || lv.filterProject != "" || lv.filterStream != "" {
+			lv.filterContainerID = ""
+			lv.filterProject = ""
+			lv.filterStream = ""
 		}
 	}
 	return nil

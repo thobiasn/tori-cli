@@ -3,9 +3,11 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/thobiasn/rook/internal/protocol"
 )
@@ -21,51 +23,41 @@ const (
 
 // App is the root Bubbletea model.
 type App struct {
-	client *Client
-	width  int
-	height int
-	active view
-	theme  Theme
-	err    error
-
-	// Accumulated live data.
-	host       *protocol.HostMetrics
-	disks      []protocol.DiskMetrics
-	containers []protocol.ContainerMetrics
-	contInfo   []protocol.ContainerInfo
-	logs       *RingBuffer[protocol.LogEntryMsg]
-	alerts     map[int64]*protocol.AlertEvent
-
-	// History buffers.
-	rates          *RateCalc
-	cpuHistory     map[string]*RingBuffer[float64]
-	memHistory     map[string]*RingBuffer[float64]
-	hostCPUHistory *RingBuffer[float64]
-	hostMemHistory *RingBuffer[float64]
-
-	// Sub-view state.
-	dash     DashboardState
-	logv     LogViewState
-	alertv   AlertViewState
-	detail   DetailState
-	showHelp bool
+	sessions      map[string]*Session
+	sessionOrder  []string // sorted server names for deterministic iteration
+	activeSession string
+	width         int
+	height        int
+	active        view
+	theme         Theme
+	err           error
+	showHelp      bool
+	showServerPicker bool
 }
 
-// NewApp creates the root model.
-func NewApp(client *Client) App {
+// session returns the currently active session, or nil.
+func (a *App) session() *Session {
+	return a.sessions[a.activeSession]
+}
+
+// NewApp creates the root model with one or more sessions.
+func NewApp(sessions map[string]*Session) App {
+	order := make([]string, 0, len(sessions))
+	for name := range sessions {
+		order = append(order, name)
+	}
+	sort.Strings(order)
+
+	active := ""
+	if len(order) > 0 {
+		active = order[0]
+	}
+
 	return App{
-		client:         client,
-		theme:          DefaultTheme(),
-		logs:           NewRingBuffer[protocol.LogEntryMsg](500),
-		alerts:         make(map[int64]*protocol.AlertEvent),
-		rates:          NewRateCalc(),
-		cpuHistory:     make(map[string]*RingBuffer[float64]),
-		memHistory:     make(map[string]*RingBuffer[float64]),
-		hostCPUHistory: NewRingBuffer[float64](180),
-		hostMemHistory: NewRingBuffer[float64](180),
-		dash:           newDashboardState(),
-		logv:           newLogViewState(),
-		alertv:         newAlertViewState(),
+		sessions:      sessions,
+		sessionOrder:  order,
+		activeSession: active,
+		theme:         DefaultTheme(),
 	}
 }
 
@@ -73,31 +65,53 @@ func NewApp(client *Client) App {
 func subscribeAll(c *Client) tea.Cmd {
 	return func() tea.Msg {
 		if err := c.Subscribe(protocol.TypeSubscribeMetrics, nil); err != nil {
-			return ConnErrMsg{Err: fmt.Errorf("subscribe metrics: %w", err)}
+			return ConnErrMsg{Err: fmt.Errorf("subscribe metrics: %w", err), Server: c.server}
 		}
 		if err := c.Subscribe(protocol.TypeSubscribeLogs, nil); err != nil {
-			return ConnErrMsg{Err: fmt.Errorf("subscribe logs: %w", err)}
+			return ConnErrMsg{Err: fmt.Errorf("subscribe logs: %w", err), Server: c.server}
 		}
 		if err := c.Subscribe(protocol.TypeSubscribeAlerts, nil); err != nil {
-			return ConnErrMsg{Err: fmt.Errorf("subscribe alerts: %w", err)}
+			return ConnErrMsg{Err: fmt.Errorf("subscribe alerts: %w", err), Server: c.server}
 		}
 		if err := c.Subscribe(protocol.TypeSubscribeContainers, nil); err != nil {
-			return ConnErrMsg{Err: fmt.Errorf("subscribe containers: %w", err)}
+			return ConnErrMsg{Err: fmt.Errorf("subscribe containers: %w", err), Server: c.server}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		containers, err := c.QueryContainers(ctx)
 		if err != nil {
-			return ConnErrMsg{Err: fmt.Errorf("query containers: %w", err)}
+			return ConnErrMsg{Err: fmt.Errorf("query containers: %w", err), Server: c.server}
 		}
-		return containersMsg(containers)
+		return sessionContainersMsg{server: c.server, containers: containers}
 	}
 }
 
-type containersMsg []protocol.ContainerInfo
+type sessionContainersMsg struct {
+	server     string
+	containers []protocol.ContainerInfo
+}
+type trackingDoneMsg struct {
+	server string
+}
+
+func queryContainersCmd(c *Client) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		containers, err := c.QueryContainers(ctx)
+		if err != nil {
+			return nil
+		}
+		return sessionContainersMsg{server: c.server, containers: containers}
+	}
+}
 
 func (a App) Init() tea.Cmd {
-	return subscribeAll(a.client)
+	var cmds []tea.Cmd
+	for _, s := range a.sessions {
+		cmds = append(cmds, subscribeAll(s.Client))
+	}
+	return tea.Batch(cmds...)
 }
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -108,68 +122,99 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case ConnErrMsg:
-		a.err = msg.Err
-		return a, tea.Quit
+		// Only quit on error for single-server mode.
+		if len(a.sessions) == 1 {
+			a.err = msg.Err
+			return a, tea.Quit
+		}
+		if s := a.sessions[msg.Server]; s != nil {
+			s.Err = msg.Err
+		}
+		return a, nil
 
-	case containersMsg:
-		a.contInfo = []protocol.ContainerInfo(msg)
+	case sessionContainersMsg:
+		if s := a.sessions[msg.server]; s != nil {
+			s.ContInfo = msg.containers
+		}
 		return a, nil
 
 	case MetricsMsg:
-		return a, a.handleMetrics(msg.MetricsUpdate)
+		if s := a.sessions[msg.Server]; s != nil {
+			return a, a.handleSessionMetrics(s, msg.MetricsUpdate)
+		}
+		return a, nil
 
 	case LogMsg:
-		a.logs.Push(msg.LogEntryMsg)
-		a.logv.onStreamEntry(msg.LogEntryMsg)
-		a.detail.onStreamEntry(msg.LogEntryMsg)
+		if s := a.sessions[msg.Server]; s != nil {
+			s.Logs.Push(msg.LogEntryMsg)
+			s.Logv.onStreamEntry(msg.LogEntryMsg)
+			s.Detail.onStreamEntry(msg.LogEntryMsg)
+		}
 		return a, nil
 
 	case AlertEventMsg:
-		if msg.State == "resolved" {
-			delete(a.alerts, msg.ID)
-		} else {
-			if len(a.alerts) >= 1000 {
-				// Evict oldest to prevent unbounded growth.
-				var oldestID int64
-				var oldestTS int64
-				for id, e := range a.alerts {
-					if oldestTS == 0 || e.FiredAt < oldestTS {
-						oldestID = id
-						oldestTS = e.FiredAt
+		if s := a.sessions[msg.Server]; s != nil {
+			if msg.State == "resolved" {
+				delete(s.Alerts, msg.ID)
+			} else {
+				if len(s.Alerts) >= 1000 {
+					var oldestID int64
+					var oldestTS int64
+					for id, e := range s.Alerts {
+						if oldestTS == 0 || e.FiredAt < oldestTS {
+							oldestID = id
+							oldestTS = e.FiredAt
+						}
 					}
+					delete(s.Alerts, oldestID)
 				}
-				delete(a.alerts, oldestID)
+				e := msg.AlertEvent
+				s.Alerts[msg.ID] = &e
 			}
-			e := msg.AlertEvent
-			a.alerts[msg.ID] = &e
 		}
 		return a, nil
 
 	case ContainerEventMsg:
-		entry := containerEventToLog(msg.ContainerEvent)
-		a.logs.Push(entry)
-		a.logv.onStreamEntry(entry)
-		a.detail.onStreamEntry(entry)
+		if s := a.sessions[msg.Server]; s != nil {
+			entry := containerEventToLog(msg.ContainerEvent)
+			s.Logs.Push(entry)
+			s.Logv.onStreamEntry(entry)
+			s.Detail.onStreamEntry(entry)
+		}
 		return a, nil
 
 	case alertActionDoneMsg:
-		a.alertv.stale = true
+		if s := a.session(); s != nil {
+			s.Alertv.stale = true
+		}
 		return a, nil
 
 	case restartDoneMsg:
 		return a, nil
 
+	case trackingDoneMsg:
+		if s := a.sessions[msg.server]; s != nil {
+			return a, queryContainersCmd(s.Client)
+		}
+		return a, nil
+
 	case logQueryMsg:
-		a.logv.handleBackfill(msg)
+		if s := a.session(); s != nil {
+			s.Logv.handleBackfill(msg)
+		}
 		return a, nil
 
 	case alertQueryMsg:
-		a.alertv.alerts = msg.alerts
-		a.alertv.stale = false
+		if s := a.session(); s != nil {
+			s.Alertv.alerts = msg.alerts
+			s.Alertv.stale = false
+		}
 		return a, nil
 
 	case detailLogQueryMsg:
-		a.detail.handleBackfill(msg)
+		if s := a.session(); s != nil {
+			s.Detail.handleBackfill(msg)
+		}
 		return a, nil
 
 	case tea.KeyMsg:
@@ -178,39 +223,39 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
-func (a *App) handleMetrics(m *protocol.MetricsUpdate) tea.Cmd {
-	a.host = m.Host
-	a.disks = m.Disks
-	a.containers = m.Containers
-	a.rates.Update(m.Timestamp, m.Networks, m.Containers)
+func (a *App) handleSessionMetrics(s *Session, m *protocol.MetricsUpdate) tea.Cmd {
+	s.Host = m.Host
+	s.Disks = m.Disks
+	s.Containers = m.Containers
+	s.Rates.Update(m.Timestamp, m.Networks, m.Containers)
 
 	if m.Host != nil {
-		a.hostCPUHistory.Push(m.Host.CPUPercent)
-		a.hostMemHistory.Push(m.Host.MemPercent)
+		s.HostCPUHistory.Push(m.Host.CPUPercent)
+		s.HostMemHistory.Push(m.Host.MemPercent)
 	}
 
 	// Per-container history + stale cleanup.
 	current := make(map[string]bool, len(m.Containers))
 	for _, c := range m.Containers {
 		current[c.ID] = true
-		if _, ok := a.cpuHistory[c.ID]; !ok {
-			a.cpuHistory[c.ID] = NewRingBuffer[float64](180)
+		if _, ok := s.CPUHistory[c.ID]; !ok {
+			s.CPUHistory[c.ID] = NewRingBuffer[float64](180)
 		}
-		if _, ok := a.memHistory[c.ID]; !ok {
-			a.memHistory[c.ID] = NewRingBuffer[float64](180)
+		if _, ok := s.MemHistory[c.ID]; !ok {
+			s.MemHistory[c.ID] = NewRingBuffer[float64](180)
 		}
-		a.cpuHistory[c.ID].Push(c.CPUPercent)
-		a.memHistory[c.ID].Push(c.MemPercent)
+		s.CPUHistory[c.ID].Push(c.CPUPercent)
+		s.MemHistory[c.ID].Push(c.MemPercent)
 	}
-	for id := range a.cpuHistory {
+	for id := range s.CPUHistory {
 		if !current[id] {
-			delete(a.cpuHistory, id)
-			delete(a.memHistory, id)
+			delete(s.CPUHistory, id)
+			delete(s.MemHistory, id)
 		}
 	}
 
 	// Rebuild container groups for dashboard.
-	a.dash.groups = buildGroups(m.Containers, a.contInfo)
+	s.Dash.groups = buildGroups(m.Containers, s.ContInfo)
 	return nil
 }
 
@@ -228,8 +273,16 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 	if a.showHelp {
-		// Any key dismisses help.
 		a.showHelp = false
+		return a, nil
+	}
+
+	// Server picker.
+	if a.showServerPicker {
+		return a.handleServerPicker(key)
+	}
+	if key == "S" && len(a.sessions) > 1 {
+		a.showServerPicker = true
 		return a, nil
 	}
 
@@ -239,17 +292,38 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Delegate to active view.
+	s := a.session()
+	if s == nil {
+		return a, nil
+	}
 	switch a.active {
 	case viewDashboard:
-		return a, updateDashboard(&a, msg)
+		return a, updateDashboard(&a, s, msg)
 	case viewLogs:
-		return a, updateLogView(&a, msg)
+		return a, updateLogView(&a, s, msg)
 	case viewAlerts:
-		return a, updateAlertView(&a, msg)
+		return a, updateAlertView(&a, s, msg)
 	case viewDetail:
-		return a, updateDetail(&a, msg)
+		return a, updateDetail(&a, s, msg)
 	}
 	return a, nil
+}
+
+func (a *App) handleServerPicker(key string) (App, tea.Cmd) {
+	// Number keys 1-9 select a server.
+	if key >= "1" && key <= "9" {
+		idx := int(key[0]-'0') - 1
+		if idx < len(a.sessionOrder) {
+			prev := a.activeSession
+			a.activeSession = a.sessionOrder[idx]
+			if a.activeSession != prev {
+				a.showServerPicker = false
+				return *a, a.onViewSwitch()
+			}
+		}
+	}
+	a.showServerPicker = false
+	return *a, nil
 }
 
 func (a *App) handleViewSwitch(key string) (tea.Cmd, bool) {
@@ -275,13 +349,17 @@ func (a *App) handleViewSwitch(key string) (tea.Cmd, bool) {
 }
 
 func (a *App) onViewSwitch() tea.Cmd {
+	s := a.session()
+	if s == nil {
+		return nil
+	}
 	switch a.active {
 	case viewLogs:
-		return a.logv.onSwitch(a.client)
+		return s.Logv.onSwitch(s.Client)
 	case viewAlerts:
-		return a.alertv.onSwitch(a.client)
+		return s.Alertv.onSwitch(s.Client)
 	case viewDetail:
-		return a.detail.onSwitch(a.client)
+		return s.Detail.onSwitch(s.Client)
 	}
 	return nil
 }
@@ -294,6 +372,14 @@ func (a App) View() string {
 		return "Connecting..."
 	}
 
+	s := a.session()
+	if s == nil {
+		return "No sessions available"
+	}
+	if s.Err != nil {
+		return fmt.Sprintf("Error [%s]: %v\n", s.Name, s.Err)
+	}
+
 	// Reserve 1 line for footer.
 	contentH := a.height - 1
 	if contentH < 1 {
@@ -303,20 +389,52 @@ func (a App) View() string {
 	var content string
 	switch a.active {
 	case viewDashboard:
-		content = renderDashboard(&a, a.width, contentH)
+		content = renderDashboard(&a, s, a.width, contentH)
 	case viewLogs:
-		content = renderLogView(&a, a.width, contentH)
+		content = renderLogView(&a, s, a.width, contentH)
 	case viewAlerts:
-		content = renderAlertView(&a, a.width, contentH)
+		content = renderAlertView(&a, s, a.width, contentH)
 	case viewDetail:
-		content = renderDetail(&a, a.width, contentH)
+		content = renderDetail(&a, s, a.width, contentH)
 	}
 
 	if a.showHelp {
 		content = helpOverlay(a.active, a.width, contentH, &a.theme)
 	}
 
+	if a.showServerPicker {
+		content = a.renderServerPicker(a.width, contentH)
+	}
+
 	return content + "\n" + a.renderFooter()
+}
+
+func (a *App) renderServerPicker(width, height int) string {
+	var lines []string
+	for i, name := range a.sessionOrder {
+		marker := "  "
+		if name == a.activeSession {
+			marker = "> "
+		}
+		lines = append(lines, fmt.Sprintf(" %s%d  %s", marker, i+1, name))
+	}
+	content := ""
+	for i, l := range lines {
+		if i > 0 {
+			content += "\n"
+		}
+		content += l
+	}
+	pickerW := 30
+	if pickerW > width-4 {
+		pickerW = width - 4
+	}
+	pickerH := len(lines) + 2
+	if pickerH > height-2 {
+		pickerH = height - 2
+	}
+	picker := Box("Servers", content, pickerW, pickerH, &a.theme)
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, picker)
 }
 
 func (a *App) renderFooter() string {
@@ -338,6 +456,12 @@ func (a *App) renderFooter() string {
 			footer += fmt.Sprintf("  %s %s ", t.num, t.name)
 		}
 	}
+
+	// Show server name when multi-server.
+	if len(a.sessions) > 1 {
+		footer += fmt.Sprintf("  [%s]  S Switch", a.activeSession)
+	}
+
 	footer += "  ? Help  q Quit"
 	return Truncate(footer, a.width)
 }

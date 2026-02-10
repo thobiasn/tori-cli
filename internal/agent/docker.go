@@ -29,6 +29,10 @@ type DockerCollector struct {
 
 	// Cached inspect results for non-running containers to avoid redundant API calls.
 	inspectCache map[string]inspectResult
+
+	// Runtime tracking state: names/projects that are untracked.
+	untracked         map[string]bool // container names
+	untrackedProjects map[string]bool // compose project names
 }
 
 type inspectResult struct {
@@ -53,11 +57,13 @@ func NewDockerCollector(cfg *DockerConfig) (*DockerCollector, error) {
 		return nil, fmt.Errorf("docker client: %w", err)
 	}
 	return &DockerCollector{
-		client:       c,
-		include:      cfg.Include,
-		exclude:      cfg.Exclude,
-		prevCPU:      make(map[string]cpuPrev),
-		inspectCache: make(map[string]inspectResult),
+		client:            c,
+		include:           cfg.Include,
+		exclude:           cfg.Exclude,
+		prevCPU:           make(map[string]cpuPrev),
+		inspectCache:      make(map[string]inspectResult),
+		untracked:         make(map[string]bool),
+		untrackedProjects: make(map[string]bool),
 	}, nil
 }
 
@@ -84,6 +90,53 @@ func (d *DockerCollector) Containers() []Container {
 func (d *DockerCollector) RestartContainer(ctx context.Context, containerID string) error {
 	timeout := 10
 	return d.client.ContainerRestart(ctx, containerID, container.StopOptions{Timeout: &timeout})
+}
+
+// SetTracking updates the runtime tracking state for a container name or project.
+// Exactly one of name or project should be non-empty.
+func (d *DockerCollector) SetTracking(name, project string, tracked bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if name != "" {
+		if tracked {
+			delete(d.untracked, name)
+		} else {
+			d.untracked[name] = true
+		}
+	}
+	if project != "" {
+		if tracked {
+			delete(d.untrackedProjects, project)
+		} else {
+			d.untrackedProjects[project] = true
+		}
+	}
+}
+
+// IsTracked returns whether a container should be tracked (metrics, logs, alerts).
+func (d *DockerCollector) IsTracked(name, project string) bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.untracked[name] {
+		return false
+	}
+	if project != "" && d.untrackedProjects[project] {
+		return false
+	}
+	return true
+}
+
+// GetTrackingState returns the lists of untracked container names and project names.
+func (d *DockerCollector) GetTrackingState() (containers, projects []string) {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	for name := range d.untracked {
+		containers = append(containers, name)
+	}
+	for name := range d.untrackedProjects {
+		projects = append(projects, name)
+	}
+	return
 }
 
 // Container represents a discovered container with basic info.
@@ -140,6 +193,9 @@ func (d *DockerCollector) MatchFilter(name string) bool {
 }
 
 // Collect lists containers, gets stats for each, and returns metrics.
+// The returned containers slice contains only tracked containers (for log sync
+// and alert evaluation). All discovered containers (including untracked) are
+// cached and available via Containers() for TUI visibility.
 func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Container, error) {
 	containers, err := d.client.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
@@ -147,7 +203,8 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 	}
 
 	var metrics []ContainerMetrics
-	var discovered []Container
+	var all []Container     // for lastContainers (TUI visibility)
+	var tracked []Container // returned for log sync / alert eval
 
 	for _, c := range containers {
 		name := containerName(c.Names)
@@ -158,6 +215,7 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 		// Inspect for health, startedAt, restartCount, exitCode.
 		// Cache results for non-running containers; evict running ones for fresh data.
 		image := truncate(c.Image, maxImageLen)
+		project := c.Labels["com.docker.compose.project"]
 		var health string
 		var startedAt int64
 		var restartCount, exitCode int
@@ -176,17 +234,24 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 			health, startedAt, restartCount, exitCode = d.inspectContainer(ctx, c.ID)
 		}
 
-		discovered = append(discovered, Container{
+		ctr := Container{
 			ID:           c.ID,
 			Name:         name,
 			Image:        image,
 			State:        c.State,
-			Project:      c.Labels["com.docker.compose.project"],
+			Project:      project,
 			Health:       health,
 			StartedAt:    startedAt,
 			RestartCount: restartCount,
 			ExitCode:     exitCode,
-		})
+		}
+		all = append(all, ctr)
+
+		// Skip metrics collection for untracked containers.
+		if !d.IsTracked(name, project) {
+			continue
+		}
+		tracked = append(tracked, ctr)
 
 		// Only get stats for running containers.
 		if c.State != "running" {
@@ -226,12 +291,12 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 	}
 
 	d.mu.Lock()
-	d.lastContainers = discovered
+	d.lastContainers = all
 	d.mu.Unlock()
 
 	// Evict stale inspect cache entries for containers no longer present.
-	seen := make(map[string]bool, len(discovered))
-	for _, c := range discovered {
+	seen := make(map[string]bool, len(all))
+	for _, c := range all {
 		seen[c.ID] = true
 	}
 	for id := range d.inspectCache {
@@ -240,7 +305,7 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 		}
 	}
 
-	return metrics, discovered, nil
+	return metrics, tracked, nil
 }
 
 const maxHealthLen = 64

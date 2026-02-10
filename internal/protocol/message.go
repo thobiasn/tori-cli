@@ -24,8 +24,10 @@ const (
 	TypeQueryContainers    MsgType = "query:containers"
 	TypeActionAckAlert     MsgType = "action:ack_alert"
 	TypeActionSilence      MsgType = "action:silence_alert"
-	TypeActionRestart MsgType = "action:restart_container"
-	TypeResult        MsgType = "result"
+	TypeActionRestart      MsgType = "action:restart_container"
+	TypeActionSetTracking  MsgType = "action:set_tracking"
+	TypeQueryTracking      MsgType = "query:tracking"
+	TypeResult             MsgType = "result"
 	TypeError              MsgType = "error"
 )
 
@@ -165,6 +167,21 @@ type ContainerInfo struct {
 	StartedAt    int64  `msgpack:"started_at,omitempty"`
 	RestartCount int    `msgpack:"restart_count,omitempty"`
 	ExitCode     int    `msgpack:"exit_code,omitempty"`
+	Tracked      bool   `msgpack:"tracked"`
+}
+
+// SetTrackingReq is the body for TypeActionSetTracking.
+// Exactly one of Container or Project must be set.
+type SetTrackingReq struct {
+	Container string `msgpack:"container,omitempty"`
+	Project   string `msgpack:"project,omitempty"`
+	Tracked   bool   `msgpack:"tracked"`
+}
+
+// QueryTrackingResp is the response for TypeQueryTracking.
+type QueryTrackingResp struct {
+	UntrackedContainers []string `msgpack:"untracked_containers"`
+	UntrackedProjects   []string `msgpack:"untracked_projects"`
 }
 
 // AckAlertReq is the body for TypeActionAckAlert.

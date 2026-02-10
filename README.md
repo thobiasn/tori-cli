@@ -42,7 +42,7 @@ Existing tools either require a full monitoring stack (Grafana + Prometheus + Lo
 - Collects host metrics from `/proc` and `/sys` (CPU, memory, disk, network)
 - Monitors Docker containers via the Docker socket (status, stats, health, restarts)
 - Groups containers by Docker Compose project (`com.docker.compose.project` label)
-- Per-container and per-group tracking toggle (future) — untracked containers are fully ignored (no metrics, logs, or alerts)
+- Per-container and per-group tracking toggle — untracked containers are visible but dimmed (no metrics, logs, or alerts)
 - Tails container logs via the Docker log API
 - Evaluates alert rules defined in config and sends notifications (email/SMTP, webhook, Slack)
 - Executes self-healing actions (restart container, run command) on alert triggers
@@ -153,10 +153,14 @@ url = "https://hooks.slack.com/services/..."
 [servers.prod]
 host = "user@prod.example.com"
 socket = "/run/rook.sock"
+# port = 2222                          # custom SSH port (default: 22)
+# identity_file = "~/.ssh/prod_key"    # path to SSH private key
 
 [servers.staging]
 host = "user@staging.example.com"
 socket = "/run/rook.sock"
+# port = 22
+# identity_file = "~/.ssh/staging_key"
 ```
 
 ## Deploy — Binary
@@ -169,26 +173,57 @@ curl -fsSL https://get.rook.dev | sh
 rook agent --config /etc/rook/config.toml
 ```
 
-## Deploy — Docker Compose
+## Deploy — Docker
 
-```yaml
-services:
-  rook:
-    image: ghcr.io/yourname/rook:latest
-    command: agent --config /etc/rook/config.toml
-    restart: unless-stopped
-    pid: host
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro  # remove :ro if using self-healing actions
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /run/rook:/run/rook
-      - rook-data:/var/lib/rook
-      - ./config.toml:/etc/rook/config.toml:ro
+Build the image:
 
-volumes:
-  rook-data:
+```bash
+docker build -f deploy/Dockerfile -t rook .
 ```
+
+Run with a config file on the host:
+
+```bash
+docker run -d --name rook \
+  --restart unless-stopped \
+  --pid host \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v /proc:/host/proc:ro \
+  -v /sys:/host/sys:ro \
+  -v /run/rook:/run/rook \
+  -v rook-data:/var/lib/rook \
+  -v ./config.toml:/etc/rook/config.toml:ro \
+  rook
+```
+
+Or inject the entire config via the `ROOK_CONFIG` environment variable (useful for PaaS platforms like Dokploy or Coolify where you don't have easy access to the host filesystem):
+
+```bash
+docker run -d --name rook \
+  --restart unless-stopped \
+  --pid host \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v /proc:/host/proc:ro \
+  -v /sys:/host/sys:ro \
+  -v /run/rook:/run/rook \
+  -v rook-data:/var/lib/rook \
+  -e ROOK_CONFIG='[storage]
+path = "/var/lib/rook/rook.db"
+[socket]
+path = "/run/rook/rook.sock"
+[host]
+proc = "/host/proc"
+sys = "/host/sys"
+[docker]
+socket = "/var/run/docker.sock"
+[collect]
+interval = "10s"' \
+  rook
+```
+
+Remove `:ro` from the Docker socket mount if using self-healing actions (container restart).
+
+A ready-to-use Docker Compose file is provided at `deploy/docker-compose.yml` with `ROOK_CONFIG` pre-filled with sensible defaults.
 
 When running via Docker, set the host paths in your config to the mounted locations:
 
@@ -203,12 +238,20 @@ The socket is mounted to `/run/rook` on the host so `rook connect` can find it o
 ## Connect
 
 ```bash
-# Connect to a configured server
+# Connect to all configured servers
+rook connect
+
+# Connect to a specific configured server
 rook connect prod
 
-# Or connect directly
+# Or connect directly via SSH
 rook connect user@myserver.com
+
+# Direct socket (local development)
+rook connect --socket /run/rook.sock
 ```
+
+When connected to multiple servers, press `S` to open the server picker and switch between them. Each server has isolated data — switching is instant since all sessions receive data concurrently.
 
 ## Security
 
@@ -244,7 +287,7 @@ The TUI client communicates with the agent over a Unix socket using msgpack-enco
 - `action:ack_alert` — acknowledge an alert
 - `action:silence_alert` — silence an alert rule for a duration
 - `action:restart_container` — manually restart a container
-- `action:set_tracking` — (future) enable/disable metric collection, log tailing, and alerting for a container or compose group
+- `action:set_tracking` — enable/disable metric collection, log tailing, and alerting for a container or compose group
 
 ## Milestone Plan
 
@@ -260,11 +303,14 @@ Unix socket server, msgpack protocol, streaming and request-response handlers.
 **M4 — TUI client** (done):
 SSH tunnel management, dashboard view (containers + host metrics), log viewer with filtering, alert history view, Docker events watcher for real-time container state.
 
-**M5 — Multi-server:**
-Client-side server config, server switcher in TUI, concurrent connections.
+**M5 — Multi-server + tracking toggle** (done):
+Client-side server config, server switcher in TUI, concurrent connections. Per-container and per-group runtime tracking toggle via `t` key.
 
 **M6 — Polish:**
-Webhook/Slack notifications, per-container and per-group tracking toggle, config reload without restart, install script.
+Webhook/Slack notifications, config reload without restart, install script.
 
 **Future:**
 Custom TUI themes via `~/.config/rook/theme.toml`, built-in theme presets (monokai, nord, solarized).
+Filter logs by date from/to
+Log based alerts for matching keywords
+Which log message triggered an alert display/log entry highlight

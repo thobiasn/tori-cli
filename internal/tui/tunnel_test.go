@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -38,7 +39,7 @@ func TestTunnelStartFailsOnBadHost(t *testing.T) {
 
 	// Create a fake cmd that exits immediately.
 	tun.cmd = tun.execFn("false")
-	err = tun.start("badhost", "/run/rook.sock")
+	err = tun.start("badhost", "/run/rook.sock", SSHOptions{})
 
 	if err == nil {
 		t.Fatal("expected error for bad host")
@@ -49,6 +50,51 @@ func TestTunnelRejectsHostStartingWithDash(t *testing.T) {
 	_, err := NewTunnel("-oProxyCommand=evil", "/run/rook.sock")
 	if err == nil {
 		t.Fatal("should reject host starting with -")
+	}
+}
+
+func TestTunnelSSHOptions(t *testing.T) {
+	var gotArgs []string
+	tun := &Tunnel{
+		done: make(chan error, 1),
+		execFn: func(name string, args ...string) *exec.Cmd {
+			gotArgs = append([]string{name}, args...)
+			return exec.Command("false")
+		},
+	}
+	tun.cmd = tun.execFn("false")
+	_ = tun.start("user@host", "/run/rook.sock", SSHOptions{
+		Port:         2222,
+		IdentityFile: "/home/user/.ssh/mykey",
+	})
+
+	joined := strings.Join(gotArgs, " ")
+	if !strings.Contains(joined, "-p 2222") {
+		t.Errorf("expected -p 2222 in args, got: %s", joined)
+	}
+	if !strings.Contains(joined, "-i /home/user/.ssh/mykey") {
+		t.Errorf("expected -i flag in args, got: %s", joined)
+	}
+}
+
+func TestTunnelSSHOptionsDefaults(t *testing.T) {
+	var gotArgs []string
+	tun := &Tunnel{
+		done: make(chan error, 1),
+		execFn: func(name string, args ...string) *exec.Cmd {
+			gotArgs = append([]string{name}, args...)
+			return exec.Command("false")
+		},
+	}
+	tun.cmd = tun.execFn("false")
+	_ = tun.start("user@host", "/run/rook.sock", SSHOptions{})
+
+	joined := strings.Join(gotArgs, " ")
+	if strings.Contains(joined, "-p") {
+		t.Errorf("should not include -p when port=0, got: %s", joined)
+	}
+	if strings.Contains(joined, "-i") {
+		t.Errorf("should not include -i when identity_file empty, got: %s", joined)
 	}
 }
 

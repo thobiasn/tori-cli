@@ -286,6 +286,77 @@ func TestInspectCacheStaleEviction(t *testing.T) {
 	}
 }
 
+func TestSetTrackingContainer(t *testing.T) {
+	d := &DockerCollector{
+		prevCPU:           make(map[string]cpuPrev),
+		untracked:         make(map[string]bool),
+		untrackedProjects: make(map[string]bool),
+	}
+
+	// Initially tracked.
+	if !d.IsTracked("web", "myapp") {
+		t.Error("should be tracked by default")
+	}
+
+	// Untrack by name.
+	d.SetTracking("web", "", false)
+	if d.IsTracked("web", "myapp") {
+		t.Error("web should be untracked after SetTracking(false)")
+	}
+
+	// Other containers still tracked.
+	if !d.IsTracked("api", "myapp") {
+		t.Error("api should still be tracked")
+	}
+
+	// Re-track.
+	d.SetTracking("web", "", true)
+	if !d.IsTracked("web", "myapp") {
+		t.Error("web should be tracked again")
+	}
+}
+
+func TestSetTrackingProject(t *testing.T) {
+	d := &DockerCollector{
+		prevCPU:           make(map[string]cpuPrev),
+		untracked:         make(map[string]bool),
+		untrackedProjects: make(map[string]bool),
+	}
+
+	d.SetTracking("", "myapp", false)
+	if d.IsTracked("web", "myapp") {
+		t.Error("web in myapp should be untracked")
+	}
+	if !d.IsTracked("cache", "other") {
+		t.Error("cache in other project should still be tracked")
+	}
+
+	d.SetTracking("", "myapp", true)
+	if !d.IsTracked("web", "myapp") {
+		t.Error("web in myapp should be tracked again")
+	}
+}
+
+func TestGetTrackingState(t *testing.T) {
+	d := &DockerCollector{
+		prevCPU:           make(map[string]cpuPrev),
+		untracked:         make(map[string]bool),
+		untrackedProjects: make(map[string]bool),
+	}
+
+	d.SetTracking("web", "", false)
+	d.SetTracking("api", "", false)
+	d.SetTracking("", "myapp", false)
+
+	containers, projects := d.GetTrackingState()
+	if len(containers) != 2 {
+		t.Errorf("untracked containers = %d, want 2", len(containers))
+	}
+	if len(projects) != 1 {
+		t.Errorf("untracked projects = %d, want 1", len(projects))
+	}
+}
+
 func TestMatchFilterExported(t *testing.T) {
 	d := &DockerCollector{include: []string{"web-*"}, exclude: []string{"web-test"}}
 	if !d.MatchFilter("web-prod") {
