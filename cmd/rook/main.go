@@ -5,11 +5,15 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/thobiasn/rook/internal/agent"
+	"github.com/thobiasn/rook/internal/tui"
 )
 
 func main() {
@@ -22,8 +26,7 @@ func main() {
 	case "agent":
 		runAgent(os.Args[2:])
 	case "connect":
-		fmt.Fprintf(os.Stderr, "connect: not implemented\n")
-		os.Exit(1)
+		runConnect(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\nusage: rook <agent|connect> [flags]\n", os.Args[1])
 		os.Exit(1)
@@ -52,6 +55,30 @@ func runAgent(args []string) {
 
 	if err := a.Run(ctx); err != nil {
 		slog.Error("agent stopped with error", "error", err)
+		os.Exit(1)
+	}
+}
+
+func runConnect(args []string) {
+	fs := flag.NewFlagSet("connect", flag.ExitOnError)
+	socketPath := fs.String("socket", "/run/rook.sock", "path to agent socket")
+	fs.Parse(args)
+
+	conn, err := net.Dial("unix", *socketPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "connect: %v\n", err)
+		os.Exit(1)
+	}
+
+	client := tui.NewClient(conn)
+	defer client.Close()
+
+	app := tui.NewApp(client)
+	p := tea.NewProgram(app, tea.WithAltScreen())
+	client.SetProgram(p)
+
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
 		os.Exit(1)
 	}
 }

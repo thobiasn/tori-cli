@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Rook is a lightweight server monitoring tool for Docker environments. A persistent agent collects metrics, watches containers, tails logs, and fires alerts. A TUI client connects over SSH to view everything in the terminal.
 
-**Status:** M1 (agent foundation) and M2 (alerting) are complete. M3 (protocol + socket) is next. The README.md contains the full specification.
+**Status:** M1–M3 complete. M4 (TUI client) is in progress. The README.md contains the full specification.
 
 ## Build & Development Commands
 
@@ -39,6 +39,8 @@ docker.go      — DockerCollector: container list, stats, CPU/mem/net/block cal
 logs.go        — LogTailer: per-container goroutines, Docker log demux via stdcopy, batched insert
 alert.go       — Condition parser, Alerter state machine (inactive→pending→firing→resolved), Evaluate()
 notify.go      — Notifier: email (net/smtp with timeout) + webhook (dedicated http.Client)
+hub.go         — Hub: pub/sub message fan-out to connected clients, topic-based subscriptions
+socket.go      — SocketServer: Unix socket listener, per-client connection handling, request dispatch
 ```
 
 **Critical import rule:** `internal/protocol` is the contract between agent and client. Both `agent` and `tui` import `protocol` but never import each other. This enables splitting into separate binaries later.
@@ -143,6 +145,22 @@ agent.collect(ctx):
 ```
 The alerter receives the same data already collected — no additional I/O.
 
+### Protocol & Socket
+- Wire format: 4-byte big-endian length prefix + msgpack-encoded `Envelope{Type, ID, Body}`.
+- Two patterns: streaming (ID=0, agent pushes) and request-response (ID>0, client initiates).
+- `protocol.WriteMsg`/`ReadMsg` handle framing. `EncodeBody`/`DecodeBody` for the body field.
+- `MaxMessageSize` = 4MB. Both sides enforce this.
+- Hub fans out streaming messages by topic (`metrics`, `logs`, `alerts`). Clients subscribe/unsubscribe.
+- Socket server limits concurrent connections (configurable). Each client gets its own read/write goroutines.
+- Validation: all string fields (container ID, rule name) are length-bounded and sanitized server-side.
+
+### TUI
+- Charm ecosystem: Bubbletea (framework), Lipgloss (styling), Bubbles (components).
+- All colors in a single `Theme` struct in `internal/tui/theme.go`. Views reference `theme.Foo`, never raw color values.
+- `internal/tui/` is a flat package. `tui` imports `protocol` but never `agent`.
+- Client has one reader goroutine dispatching streaming msgs via `prog.Send()` and request-response via per-ID channels.
+- Reader goroutine starts in `SetProgram()`, not `NewClient()`, to avoid nil prog race.
+
 ## Milestone Order
 
-~~M1 Agent foundation~~ → ~~M2 Alerting~~ → M3 Protocol + socket → M4 TUI client → M5 Multi-server → M6 Polish
+~~M1 Agent foundation~~ → ~~M2 Alerting~~ → ~~M3 Protocol + socket~~ → M4 TUI client → M5 Multi-server → M6 Polish
