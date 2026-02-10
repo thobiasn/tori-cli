@@ -98,6 +98,13 @@ func (lt *LogTailer) tail(ctx context.Context, containerID, containerName string
 	stdoutR, stdoutW := io.Pipe()
 	stderrR, stderrW := io.Pipe()
 
+	// Close the log stream when context is cancelled so the demux goroutine
+	// unblocks even if the Docker client doesn't propagate cancellation.
+	go func() {
+		<-ctx.Done()
+		logs.Close()
+	}()
+
 	// Demux in a goroutine since it blocks until the stream ends.
 	go func() {
 		defer stdoutW.Close()

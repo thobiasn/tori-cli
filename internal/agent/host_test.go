@@ -52,6 +52,20 @@ func TestReadCPUDelta(t *testing.T) {
 	if math.Abs(m2.CPUPercent-15.0) > 0.1 {
 		t.Errorf("second reading cpu = %f, want ~15.0", m2.CPUPercent)
 	}
+
+	// Third reading: counters reset (simulating a wraparound scenario).
+	// Values smaller than previous — should return 0, not overflow.
+	writeFakeProc(t, dir, map[string]string{
+		"stat": "cpu  50 0 25 425 0 0 0 0 0 0\n",
+	})
+
+	m3 := &HostMetrics{}
+	if err := h.readCPU(m3); err != nil {
+		t.Fatal(err)
+	}
+	if m3.CPUPercent != 0 {
+		t.Errorf("counter reset cpu = %f, want 0", m3.CPUPercent)
+	}
 }
 
 func TestReadMemory(t *testing.T) {

@@ -174,7 +174,14 @@ func (d *DockerCollector) calcCPUPercent(id string, stats *container.StatsRespon
 }
 
 // CalcCPUPercentDelta computes CPU percent from counter deltas.
+// Returns 0 if counters have reset (e.g. container restart).
 func CalcCPUPercentDelta(prevContainer, curContainer, prevSystem, curSystem uint64, onlineCPUs uint32) float64 {
+	// Guard against counter resets (container restart, system reboot).
+	// Unsigned subtraction would wrap to a huge value.
+	if curContainer < prevContainer || curSystem < prevSystem {
+		return 0
+	}
+
 	containerDelta := float64(curContainer - prevContainer)
 	systemDelta := float64(curSystem - prevSystem)
 

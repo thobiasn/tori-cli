@@ -93,7 +93,7 @@ func (h *HostCollector) readCPU(m *HostMetrics) error {
 	idle := vals[3] + vals[4] // idle + iowait
 	busy := total - idle
 
-	if h.hasPrev {
+	if h.hasPrev && total >= h.prevTotal && busy >= h.prevBusy {
 		dTotal := total - h.prevTotal
 		dBusy := busy - h.prevBusy
 		if dTotal > 0 {

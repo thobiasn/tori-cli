@@ -53,6 +53,24 @@ func TestCalcCPUPercentDelta(t *testing.T) {
 			cpus:      1,
 			wantApprx: 0,
 		},
+		{
+			name:      "container counter reset",
+			prevC:     500_000_000,
+			curC:      100_000,
+			prevS:     1_000_000_000,
+			curS:      2_000_000_000,
+			cpus:      2,
+			wantApprx: 0,
+		},
+		{
+			name:      "system counter reset",
+			prevC:     100_000,
+			curC:      500_000_000,
+			prevS:     2_000_000_000,
+			curS:      100_000,
+			cpus:      1,
+			wantApprx: 0,
+		},
 	}
 
 	for _, tt := range tests {
