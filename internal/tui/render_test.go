@@ -327,6 +327,115 @@ func TestStripANSI(t *testing.T) {
 	}
 }
 
+func TestGraph(t *testing.T) {
+	theme := DefaultTheme()
+
+	t.Run("basic", func(t *testing.T) {
+		data := []float64{0, 25, 50, 75, 100, 75, 50, 25}
+		got := Graph(data, 4, 3, 100, &theme)
+		lines := strings.Split(stripANSI(got), "\n")
+		if len(lines) != 3 {
+			t.Fatalf("expected 3 rows, got %d", len(lines))
+		}
+		for i, line := range lines {
+			runes := []rune(line)
+			if len(runes) != 4 {
+				t.Errorf("row %d: expected 4 chars, got %d", i, len(runes))
+			}
+			for j, r := range runes {
+				if r < 0x2800 || r > 0x28FF {
+					t.Errorf("row %d char %d not braille: %U", i, j, r)
+				}
+			}
+		}
+	})
+
+	t.Run("empty data", func(t *testing.T) {
+		got := Graph(nil, 5, 2, 100, &theme)
+		if got != "" {
+			t.Errorf("expected empty for nil data, got %q", got)
+		}
+	})
+
+	t.Run("auto scale", func(t *testing.T) {
+		data := []float64{10, 20, 30}
+		got := Graph(data, 2, 1, 0, &theme)
+		if got == "" {
+			t.Error("expected non-empty graph with auto-scale")
+		}
+	})
+
+	t.Run("single row", func(t *testing.T) {
+		data := []float64{50, 50}
+		got := Graph(data, 1, 1, 100, &theme)
+		lines := strings.Split(stripANSI(got), "\n")
+		if len(lines) != 1 {
+			t.Fatalf("expected 1 row, got %d", len(lines))
+		}
+	})
+}
+
+func TestHealthIndicator(t *testing.T) {
+	theme := DefaultTheme()
+	tests := []struct {
+		health string
+		symbol string
+	}{
+		{"healthy", "✓"},
+		{"unhealthy", "✗"},
+		{"starting", "!"},
+		{"none", "–"},
+		{"", "–"},
+	}
+	for _, tt := range tests {
+		got := stripANSI(theme.HealthIndicator(tt.health))
+		if got != tt.symbol {
+			t.Errorf("HealthIndicator(%q) = %q, want %q", tt.health, got, tt.symbol)
+		}
+	}
+}
+
+func TestRestartColor(t *testing.T) {
+	theme := DefaultTheme()
+	if theme.RestartColor(0) != theme.Muted {
+		t.Error("0 restarts should be Muted")
+	}
+	if theme.RestartColor(1) != theme.Warning {
+		t.Error("1 restart should be Warning")
+	}
+	if theme.RestartColor(3) != theme.Critical {
+		t.Error("3+ restarts should be Critical")
+	}
+}
+
+func TestFormatContainerUptime(t *testing.T) {
+	tests := []struct {
+		state     string
+		startedAt int64
+		exitCode  int
+		contains  string
+	}{
+		{"running", 0, 0, "—"},
+		{"exited", 0, 137, "exit(137)"},
+		{"exited", 0, 0, "exited"},
+	}
+	for _, tt := range tests {
+		got := formatContainerUptime(tt.state, tt.startedAt, tt.exitCode)
+		if !strings.Contains(got, tt.contains) {
+			t.Errorf("formatContainerUptime(%q, %d, %d) = %q, want contains %q",
+				tt.state, tt.startedAt, tt.exitCode, got, tt.contains)
+		}
+	}
+}
+
+func TestFormatRestarts(t *testing.T) {
+	theme := DefaultTheme()
+	got := stripANSI(formatRestarts(5, &theme))
+	if got != "5↻" {
+		t.Errorf("formatRestarts(5) = %q, want 5↻", got)
+	}
+}
+
 func TestContainerNameColor(t *testing.T) {
 	theme := DefaultTheme()
 

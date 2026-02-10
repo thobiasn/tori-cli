@@ -6,16 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Rook is a lightweight server monitoring tool for Docker environments. A persistent agent collects metrics, watches containers, tails logs, and fires alerts. A TUI client connects over SSH to view everything in the terminal.
 
-**Status:** M1–M3 complete. M4 (TUI client) is in progress. The README.md contains the full specification.
+**Status:** M1–M4 complete. M5 (multi-server) is next. The README.md contains the full specification.
 
 ## Build & Development Commands
 
 ```bash
-go build -o rook ./cmd/rook           # build the binary
-go test ./...                          # run all tests
+make build                             # build the binary (or: go build -o rook ./cmd/rook)
+make test                              # run all tests with -race (or: go test -race ./...)
+make vet                               # static analysis (or: go vet ./...)
 go test ./internal/agent/...           # run tests for a specific package
 go test -run TestFunctionName ./...    # run a single test
-go vet ./...                           # static analysis
 ```
 
 ## Architecture
@@ -35,10 +35,11 @@ agent.go       — Agent struct, Run() loop, collect() orchestration, shutdown
 config.go      — Config types (storage, host, docker, collect, alerts, notify), TOML loading, validation
 store.go       — SQLite schema, Store struct, all Insert/Query/Prune methods, metric+alert types
 host.go        — HostCollector: reads /proc (cpu, memory, loadavg, uptime, disk, network)
-docker.go      — DockerCollector: container list, stats, CPU/mem/net/block calc, RestartContainer
+docker.go      — DockerCollector: container list, stats, CPU/mem/net/block calc, RestartContainer, UpdateContainerState
 logs.go        — LogTailer: per-container goroutines, Docker log demux via stdcopy, batched insert
-alert.go       — Condition parser, Alerter state machine (inactive→pending→firing→resolved), Evaluate()
+alert.go       — Condition parser, Alerter state machine (inactive→pending→firing→resolved), Evaluate(), EvaluateContainerEvent()
 notify.go      — Notifier: email (net/smtp with timeout) + webhook (dedicated http.Client)
+events.go      — EventWatcher: Docker Events API listener, real-time container state updates
 hub.go         — Hub: pub/sub message fan-out to connected clients, topic-based subscriptions
 socket.go      — SocketServer: Unix socket listener, per-client connection handling, request dispatch
 ```
@@ -122,6 +123,8 @@ Code is a liability, not an asset. Every line we write is a line we have to main
 - Inactive unseen instances are GC'd from the map to prevent unbounded growth with ephemeral containers.
 - When collection fails (nil snapshot field), existing instances are marked as `seen` to avoid false resolution.
 - `restartFn` field allows test injection. Production path uses `docker.RestartContainer`.
+- `Alerter.mu` protects `instances` and `deferred` — held during `Evaluate()` and `EvaluateContainerEvent()`. Slow side effects (notify, restart) are collected into `deferred` under the lock, then executed after release.
+- `EvaluateContainerEvent()` evaluates only container-scoped rules for a single container. It does NOT do stale cleanup — that stays in the regular `Evaluate()` cycle.
 
 ### Config
 - TOML parsed by `github.com/BurntSushi/toml`. `Duration` type wraps `time.Duration` with `UnmarshalText`.
@@ -150,9 +153,17 @@ The alerter receives the same data already collected — no additional I/O.
 - Two patterns: streaming (ID=0, agent pushes) and request-response (ID>0, client initiates).
 - `protocol.WriteMsg`/`ReadMsg` handle framing. `EncodeBody`/`DecodeBody` for the body field.
 - `MaxMessageSize` = 4MB. Both sides enforce this.
-- Hub fans out streaming messages by topic (`metrics`, `logs`, `alerts`). Clients subscribe/unsubscribe.
+- Hub fans out streaming messages by topic (`metrics`, `logs`, `alerts`, `containers`). Clients subscribe/unsubscribe.
 - Socket server limits concurrent connections (configurable). Each client gets its own read/write goroutines.
 - Validation: all string fields (container ID, rule name) are length-bounded and sanitized server-side.
+
+### EventWatcher
+- Listens to Docker Events API for real-time container lifecycle changes (start, die, stop, destroy, pause, etc.).
+- Optimization for latency — the regular collect loop remains the consistency reconciliation point.
+- Reconnects with exponential backoff (1s → 30s cap), resets after a healthy long-lived connection.
+- Injectable `eventsFn` for testing without a real Docker daemon.
+- `done` channel + `Wait()` for clean shutdown ordering — agent waits for event watcher before closing store/docker.
+- Length-bounds all Docker event attributes (`truncate()` helper) for defense-in-depth.
 
 ### TUI
 - Charm ecosystem: Bubbletea (framework), Lipgloss (styling), Bubbles (components).
@@ -163,4 +174,4 @@ The alerter receives the same data already collected — no additional I/O.
 
 ## Milestone Order
 
-~~M1 Agent foundation~~ → ~~M2 Alerting~~ → ~~M3 Protocol + socket~~ → M4 TUI client → M5 Multi-server → M6 Polish
+~~M1 Agent foundation~~ → ~~M2 Alerting~~ → ~~M3 Protocol + socket~~ → ~~M4 TUI client~~ → M5 Multi-server → M6 Polish

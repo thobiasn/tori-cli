@@ -233,6 +233,7 @@ The TUI client communicates with the agent over a Unix socket using msgpack-enco
 - `subscribe:metrics` — live host + container metrics
 - `subscribe:logs` — live log stream, supports filters (container, compose group, stream, text search)
 - `subscribe:alerts` — live alert events
+- `subscribe:containers` — real-time container lifecycle events (start, die, destroy, etc.)
 
 **Request-response** (client asks, agent replies):
 
@@ -247,23 +248,23 @@ The TUI client communicates with the agent over a Unix socket using msgpack-enco
 
 ## Milestone Plan
 
-**M1 — Agent foundation:**
-Host metric collection, Docker container discovery and stats, SQLite storage, config loading, systemd service file.
+**M1 — Agent foundation** (done):
+Host metric collection, Docker container discovery and stats, SQLite storage, config loading.
 
-**M2 — Alerting:**
+**M2 — Alerting** (done):
 Alert rule evaluation, email/SMTP notifications, self-healing actions (container restart), alert persistence.
 
-**M3 — Protocol + socket:**
+**M3 — Protocol + socket** (done):
 Unix socket server, msgpack protocol, streaming and request-response handlers.
 
-**M4 — TUI client:**
-SSH tunnel management, dashboard view (containers + host metrics), log viewer with filtering, alert history view.
+**M4 — TUI client** (done):
+SSH tunnel management, dashboard view (containers + host metrics), log viewer with filtering, alert history view, Docker events watcher for real-time container state.
 
 **M5 — Multi-server:**
 Client-side server config, server switcher in TUI, concurrent connections.
 
 **M6 — Polish:**
-Webhook/Slack notifications, alert silencing/acknowledgement, per-container and per-group tracking toggle, config reload without restart, install script.
+Webhook/Slack notifications, per-container and per-group tracking toggle, config reload without restart, install script.
 
 **Future:**
 Custom TUI themes via `~/.config/rook/theme.toml`, built-in theme presets (monokai, nord, solarized).

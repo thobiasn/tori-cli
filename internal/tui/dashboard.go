@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -78,73 +79,79 @@ func buildGroups(containers []protocol.ContainerMetrics, contInfo []protocol.Con
 	return groups
 }
 
-// renderDashboard assembles the dashboard layout.
+// renderDashboard assembles the 4-quadrant dashboard layout.
 func renderDashboard(a *App, width, height int) string {
 	theme := &a.theme
 
-	// Alert panel: dynamic height.
+	// Minimum size checks.
+	if width < 80 {
+		return fmt.Sprintf("\n  Terminal too narrow (need 80+ columns, have %d)", width)
+	}
+	if height < 24 {
+		return fmt.Sprintf("\n  Terminal too short (need 24+ rows, have %d)", height)
+	}
+
+	// Height calculations.
 	alertH := 3
 	if len(a.alerts) > 0 {
 		alertH = len(a.alerts) + 2
-	}
-	maxAlertH := height / 3
-	if maxAlertH < 3 {
-		maxAlertH = 3
-	}
-	if alertH > maxAlertH {
-		alertH = maxAlertH
-	}
-	alertPanel := renderAlertPanel(a.alerts, width, theme)
-
-	remaining := height - alertH
-	if remaining < 10 {
-		remaining = 10
+		maxAlertH := height / 4
+		if maxAlertH < 3 {
+			maxAlertH = 3
+		}
+		if alertH > maxAlertH {
+			alertH = maxAlertH
+		}
 	}
 
-	// Log panel: minimum 5 lines, takes remaining space.
-	logH := remaining / 4
+	cpuH := height * 20 / 100
+	if cpuH < 6 {
+		cpuH = 6
+	}
+
+	logH := (height - cpuH - alertH) * 25 / 100
 	if logH < 5 {
 		logH = 5
 	}
-	maxLogH := remaining - 5
-	if maxLogH < 5 {
-		maxLogH = 5
-	}
-	if logH > maxLogH {
-		logH = maxLogH
-	}
 
-	middleH := remaining - logH
-	if middleH < 5 {
-		middleH = 5
-	}
-
-	// Layout: narrow = stacked, wide = side-by-side.
-	var middlePanel string
-	if width < 100 {
-		// Stacked: containers on top, host below.
-		hostH := 10
-		contH := middleH - hostH
-		if contH < 5 {
-			contH = 5
-			hostH = middleH - contH
+	middleH := height - cpuH - alertH - logH
+	if middleH < 8 {
+		middleH = 8
+		// Reclaim from logs if needed.
+		logH = height - cpuH - alertH - middleH
+		if logH < 5 {
+			logH = 5
 		}
-		contPanel := renderContainerPanel(a.dash.groups, a.dash.collapsed, a.dash.cursor, width, contH, theme)
-		hostPanel := renderHostPanel(a.host, a.disks, a.rates, width, hostH, theme)
-		middlePanel = lipgloss.JoinVertical(lipgloss.Left, contPanel, hostPanel)
-	} else {
-		// Side-by-side: containers 65%, host 35%.
-		contW := width * 65 / 100
-		hostW := width - contW
-		contPanel := renderContainerPanel(a.dash.groups, a.dash.collapsed, a.dash.cursor, contW, middleH, theme)
-		hostPanel := renderHostPanel(a.host, a.disks, a.rates, hostW, middleH, theme)
-		middlePanel = lipgloss.JoinHorizontal(lipgloss.Top, contPanel, hostPanel)
 	}
 
+	cpuHistory := a.hostCPUHistory.Data()
+
+	alertPanel := renderAlertPanel(a.alerts, width, theme)
 	logPanel := renderLogPanel(a.logs, width, logH, theme)
 
-	parts := []string{alertPanel, middlePanel, logPanel}
-	return strings.Join(parts, "\n")
+	if width >= 100 {
+		// Wide: 4-quadrant layout (side-by-side top and middle).
+		halfW := width / 2
+		rightW := width - halfW
+
+		cpuPanel := renderCPUPanel(cpuHistory, a.host, halfW, cpuH, theme)
+		memPanel := renderMemPanel(a.host, rightW, cpuH, theme)
+		topRow := lipgloss.JoinHorizontal(lipgloss.Top, cpuPanel, memPanel)
+
+		contPanel := renderContainerPanel(a.dash.groups, a.dash.collapsed, a.dash.cursor, halfW, middleH, theme)
+		selPanel := renderSelectedPanel(a, rightW, middleH, theme)
+		midRow := lipgloss.JoinHorizontal(lipgloss.Top, contPanel, selPanel)
+
+		return strings.Join([]string{topRow, midRow, alertPanel, logPanel}, "\n")
+	}
+
+	// Narrow (80-99): stacked layout.
+	cpuPanel := renderCPUPanel(cpuHistory, a.host, width, cpuH, theme)
+	memPanel := renderMemPanel(a.host, width, 6, theme)
+	contPanel := renderContainerPanel(a.dash.groups, a.dash.collapsed, a.dash.cursor, width, middleH-6, theme)
+	selPanel := renderSelectedPanel(a, width, 8, theme)
+
+	return strings.Join([]string{cpuPanel, memPanel, contPanel, selPanel, alertPanel, logPanel}, "\n")
 }
 
 // updateDashboard handles keys for the dashboard view.

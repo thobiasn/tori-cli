@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
@@ -76,11 +77,15 @@ func (d *DockerCollector) RestartContainer(ctx context.Context, containerID stri
 
 // Container represents a discovered container with basic info.
 type Container struct {
-	ID      string
-	Name    string
-	Image   string
-	State   string
-	Project string // compose project from label
+	ID           string
+	Name         string
+	Image        string
+	State        string
+	Project      string // compose project from label
+	Health       string
+	StartedAt    int64
+	RestartCount int
+	ExitCode     int
 }
 
 // UpdateContainerState updates a single container's state in the cached list.
@@ -139,21 +144,32 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 			continue
 		}
 
+		// Inspect for health, startedAt, restartCount, exitCode.
+		health, startedAt, restartCount, exitCode := d.inspectContainer(ctx, c.ID)
+
 		discovered = append(discovered, Container{
-			ID:      c.ID,
-			Name:    name,
-			Image:   c.Image,
-			State:   c.State,
-			Project: c.Labels["com.docker.compose.project"],
+			ID:           c.ID,
+			Name:         name,
+			Image:        c.Image,
+			State:        c.State,
+			Project:      c.Labels["com.docker.compose.project"],
+			Health:       health,
+			StartedAt:    startedAt,
+			RestartCount: restartCount,
+			ExitCode:     exitCode,
 		})
 
 		// Only get stats for running containers.
 		if c.State != "running" {
 			metrics = append(metrics, ContainerMetrics{
-				ID:    c.ID,
-				Name:  name,
-				Image: c.Image,
-				State: c.State,
+				ID:           c.ID,
+				Name:         name,
+				Image:        c.Image,
+				State:        c.State,
+				Health:       health,
+				StartedAt:    startedAt,
+				RestartCount: restartCount,
+				ExitCode:     exitCode,
 			})
 			continue
 		}
@@ -162,13 +178,21 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 		if err != nil {
 			slog.Warn("failed to get container stats", "container", name, "error", err)
 			metrics = append(metrics, ContainerMetrics{
-				ID:    c.ID,
-				Name:  name,
-				Image: c.Image,
-				State: c.State,
+				ID:           c.ID,
+				Name:         name,
+				Image:        c.Image,
+				State:        c.State,
+				Health:       health,
+				StartedAt:    startedAt,
+				RestartCount: restartCount,
+				ExitCode:     exitCode,
 			})
 			continue
 		}
+		m.Health = health
+		m.StartedAt = startedAt
+		m.RestartCount = restartCount
+		m.ExitCode = exitCode
 		metrics = append(metrics, *m)
 	}
 
@@ -177,6 +201,26 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 	d.mu.Unlock()
 
 	return metrics, discovered, nil
+}
+
+// inspectContainer calls ContainerInspect and extracts health, startedAt, restartCount, exitCode.
+func (d *DockerCollector) inspectContainer(ctx context.Context, id string) (health string, startedAt int64, restartCount int, exitCode int) {
+	health = "none"
+	inspect, err := d.client.ContainerInspect(ctx, id)
+	if err != nil {
+		return
+	}
+	if inspect.State != nil {
+		if inspect.State.Health != nil {
+			health = inspect.State.Health.Status
+		}
+		if t, err := time.Parse(time.RFC3339Nano, inspect.State.StartedAt); err == nil {
+			startedAt = t.Unix()
+		}
+		exitCode = inspect.State.ExitCode
+	}
+	restartCount = inspect.RestartCount
+	return
 }
 
 func (d *DockerCollector) containerStats(ctx context.Context, id, name, image, state string) (*ContainerMetrics, error) {

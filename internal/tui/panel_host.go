@@ -8,7 +8,82 @@ import (
 	"github.com/thobiasn/rook/internal/protocol"
 )
 
-// renderHostPanel renders the host metrics panel for the dashboard.
+// renderCPUPanel renders the CPU panel with a multi-row braille graph.
+func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, height int, theme *Theme) string {
+	if host == nil {
+		return Box("CPU", "  waiting for data...", width, height, theme)
+	}
+
+	innerW := width - 2
+	graphRows := height - 4 // borders (2) + info line (1) + cpu% line (1)
+	if graphRows < 1 {
+		graphRows = 1
+	}
+
+	var lines []string
+
+	// CPU percentage line.
+	cpuPct := fmt.Sprintf(" CPU %5.1f%%", host.CPUPercent)
+	lines = append(lines, cpuPct)
+
+	// Braille graph.
+	if len(cpuHistory) > 0 {
+		graph := Graph(cpuHistory, innerW, graphRows, 100, theme)
+		lines = append(lines, graph)
+	}
+
+	// Bottom info: load + uptime.
+	loadStr := fmt.Sprintf(" Load: %.2f %.2f %.2f", host.Load1, host.Load5, host.Load15)
+	uptimeStr := fmt.Sprintf("Uptime: %s ", FormatUptime(host.Uptime))
+	gap := innerW - lipgloss.Width(loadStr) - lipgloss.Width(uptimeStr)
+	if gap < 1 {
+		gap = 1
+	}
+	infoLine := loadStr + strings.Repeat(" ", gap) + uptimeStr
+	lines = append(lines, infoLine)
+
+	return Box("CPU", strings.Join(lines, "\n"), width, height, theme)
+}
+
+// renderMemPanel renders the memory panel with usage details.
+func renderMemPanel(host *protocol.HostMetrics, width, height int, theme *Theme) string {
+	if host == nil {
+		return Box("Memory", "  waiting for data...", width, height, theme)
+	}
+
+	innerW := width - 2
+	barW := innerW - 2
+	if barW < 10 {
+		barW = 10
+	}
+
+	var lines []string
+
+	// Memory progress bar.
+	memLine := fmt.Sprintf(" %s", ProgressBar(host.MemPercent, barW, theme))
+	lines = append(lines, memLine)
+
+	// Used / Total.
+	usedLine := fmt.Sprintf(" Used: %s / %s", FormatBytes(host.MemUsed), FormatBytes(host.MemTotal))
+	lines = append(lines, usedLine)
+
+	// Cached + Free.
+	cachedLine := fmt.Sprintf(" Cached: %s  Free: %s", FormatBytes(host.MemCached), FormatBytes(host.MemFree))
+	lines = append(lines, cachedLine)
+
+	// Swap.
+	if host.SwapTotal > 0 {
+		swapLine := fmt.Sprintf(" Swap: %s / %s", FormatBytes(host.SwapUsed), FormatBytes(host.SwapTotal))
+		lines = append(lines, swapLine)
+	} else {
+		lines = append(lines, " Swap: none")
+	}
+
+	return Box("Memory", strings.Join(lines, "\n"), width, height, theme)
+}
+
+// renderHostPanel is kept for backward compatibility — used by tests.
+// It renders the old combined host panel format.
 func renderHostPanel(host *protocol.HostMetrics, disks []protocol.DiskMetrics, rates *RateCalc, width, height int, theme *Theme) string {
 	if host == nil {
 		return Box("Host", "  waiting for data...", width, height, theme)

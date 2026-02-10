@@ -598,3 +598,89 @@ func TestSchemaCreation(t *testing.T) {
 		}
 	}
 }
+
+func TestHostMetricsNewFields(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	ts := time.Now()
+
+	m := &HostMetrics{
+		CPUPercent: 45.5,
+		MemTotal:   16e9,
+		MemUsed:    8e9,
+		MemPercent: 50.0,
+		MemCached:  2e9,
+		MemFree:    6e9,
+	}
+	if err := s.InsertHostMetrics(ctx, ts, m); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := s.QueryHostMetrics(ctx, ts.Unix(), ts.Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	if results[0].MemCached != 2e9 {
+		t.Errorf("mem_cached = %d, want %d", results[0].MemCached, uint64(2e9))
+	}
+	if results[0].MemFree != 6e9 {
+		t.Errorf("mem_free = %d, want %d", results[0].MemFree, uint64(6e9))
+	}
+}
+
+func TestContainerMetricsNewFields(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	ts := time.Now()
+
+	containers := []ContainerMetrics{
+		{
+			ID: "abc123", Name: "web", Image: "nginx:latest", State: "running",
+			Health: "healthy", StartedAt: 1700000000, RestartCount: 3, ExitCode: 0,
+			CPUPercent: 5.0, MemUsage: 100e6, MemLimit: 512e6, MemPercent: 19.5,
+			NetRx: 1000, NetTx: 500, BlockRead: 200, BlockWrite: 100, PIDs: 5,
+		},
+	}
+
+	if err := s.InsertContainerMetrics(ctx, ts, containers); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := s.QueryContainerMetrics(ctx, ts.Unix(), ts.Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	r := results[0]
+	if r.Health != "healthy" {
+		t.Errorf("health = %q, want healthy", r.Health)
+	}
+	if r.StartedAt != 1700000000 {
+		t.Errorf("started_at = %d, want 1700000000", r.StartedAt)
+	}
+	if r.RestartCount != 3 {
+		t.Errorf("restart_count = %d, want 3", r.RestartCount)
+	}
+	if r.ExitCode != 0 {
+		t.Errorf("exit_code = %d, want 0", r.ExitCode)
+	}
+}
+
+func TestEnsureColumnsIdempotent(t *testing.T) {
+	s := testStore(t)
+	// Call ensureColumns again — should not error.
+	s.ensureColumns()
+
+	// Verify columns still work.
+	ctx := context.Background()
+	ts := time.Now()
+	m := &HostMetrics{MemCached: 1024, MemFree: 2048}
+	if err := s.InsertHostMetrics(ctx, ts, m); err != nil {
+		t.Fatal(err)
+	}
+}

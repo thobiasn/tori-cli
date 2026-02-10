@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -17,6 +18,8 @@ CREATE TABLE IF NOT EXISTS host_metrics (
 	mem_total    INTEGER NOT NULL,
 	mem_used     INTEGER NOT NULL,
 	mem_percent  REAL    NOT NULL,
+	mem_cached   INTEGER NOT NULL DEFAULT 0,
+	mem_free     INTEGER NOT NULL DEFAULT 0,
 	swap_total   INTEGER NOT NULL,
 	swap_used    INTEGER NOT NULL,
 	load1        REAL    NOT NULL,
@@ -52,10 +55,14 @@ CREATE INDEX IF NOT EXISTS idx_net_metrics_ts ON net_metrics(timestamp);
 CREATE TABLE IF NOT EXISTS container_metrics (
 	timestamp  INTEGER NOT NULL,
 	id         TEXT    NOT NULL,
-	name       TEXT    NOT NULL,
-	image      TEXT    NOT NULL,
-	state      TEXT    NOT NULL,
-	cpu_percent REAL   NOT NULL,
+	name          TEXT    NOT NULL,
+	image         TEXT    NOT NULL,
+	state         TEXT    NOT NULL,
+	health        TEXT    NOT NULL DEFAULT '',
+	started_at    INTEGER NOT NULL DEFAULT 0,
+	restart_count INTEGER NOT NULL DEFAULT 0,
+	exit_code     INTEGER NOT NULL DEFAULT 0,
+	cpu_percent   REAL    NOT NULL,
 	mem_usage  INTEGER NOT NULL,
 	mem_limit  INTEGER NOT NULL,
 	mem_percent REAL   NOT NULL,
@@ -115,12 +122,33 @@ func OpenStore(path string) (*Store, error) {
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
 
-	return &Store{db: db}, nil
+	s := &Store{db: db}
+	s.ensureColumns()
+	return s, nil
 }
 
 // Close closes the database connection.
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+// ensureColumns adds columns that may be missing from older databases.
+// Silently ignores "duplicate column name" errors (column already exists).
+func (s *Store) ensureColumns() {
+	migrations := []string{
+		"ALTER TABLE host_metrics ADD COLUMN mem_cached INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE host_metrics ADD COLUMN mem_free INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE container_metrics ADD COLUMN health TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE container_metrics ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE container_metrics ADD COLUMN restart_count INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE container_metrics ADD COLUMN exit_code INTEGER NOT NULL DEFAULT 0",
+	}
+	for _, stmt := range migrations {
+		_, err := s.db.Exec(stmt)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			slog.Warn("migration", "stmt", stmt, "error", err)
+		}
+	}
 }
 
 // HostMetrics represents a single host metrics snapshot.
@@ -129,6 +157,8 @@ type HostMetrics struct {
 	MemTotal   uint64
 	MemUsed    uint64
 	MemPercent float64
+	MemCached  uint64
+	MemFree    uint64
 	SwapTotal  uint64
 	SwapUsed   uint64
 	Load1      float64
@@ -160,19 +190,23 @@ type NetMetrics struct {
 
 // ContainerMetrics represents stats for a single Docker container.
 type ContainerMetrics struct {
-	ID         string
-	Name       string
-	Image      string
-	State      string
-	CPUPercent float64
-	MemUsage   uint64
-	MemLimit   uint64
-	MemPercent float64
-	NetRx      uint64
-	NetTx      uint64
-	BlockRead  uint64
-	BlockWrite uint64
-	PIDs       uint64
+	ID           string
+	Name         string
+	Image        string
+	State        string
+	Health       string
+	StartedAt    int64
+	RestartCount int
+	ExitCode     int
+	CPUPercent   float64
+	MemUsage     uint64
+	MemLimit     uint64
+	MemPercent   float64
+	NetRx        uint64
+	NetTx        uint64
+	BlockRead    uint64
+	BlockWrite   uint64
+	PIDs         uint64
 }
 
 // Alert represents a fired alert stored in the database.
@@ -199,9 +233,10 @@ type LogEntry struct {
 
 func (s *Store) InsertHostMetrics(ctx context.Context, ts time.Time, m *HostMetrics) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO host_metrics (timestamp, cpu_percent, mem_total, mem_used, mem_percent, swap_total, swap_used, load1, load5, load15, uptime)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO host_metrics (timestamp, cpu_percent, mem_total, mem_used, mem_percent, mem_cached, mem_free, swap_total, swap_used, load1, load5, load15, uptime)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ts.Unix(), m.CPUPercent, m.MemTotal, m.MemUsed, m.MemPercent,
+		m.MemCached, m.MemFree,
 		m.SwapTotal, m.SwapUsed, m.Load1, m.Load5, m.Load15, m.Uptime,
 	)
 	return err
@@ -263,8 +298,8 @@ func (s *Store) InsertContainerMetrics(ctx context.Context, ts time.Time, contai
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO container_metrics (timestamp, id, name, image, state, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		`INSERT INTO container_metrics (timestamp, id, name, image, state, health, started_at, restart_count, exit_code, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -273,6 +308,7 @@ func (s *Store) InsertContainerMetrics(ctx context.Context, ts time.Time, contai
 	unix := ts.Unix()
 	for _, c := range containers {
 		if _, err := stmt.ExecContext(ctx, unix, c.ID, c.Name, c.Image, c.State,
+			c.Health, c.StartedAt, c.RestartCount, c.ExitCode,
 			c.CPUPercent, c.MemUsage, c.MemLimit, c.MemPercent,
 			c.NetRx, c.NetTx, c.BlockRead, c.BlockWrite, c.PIDs); err != nil {
 			return err
@@ -366,7 +402,7 @@ type LogFilter struct {
 
 func (s *Store) QueryHostMetrics(ctx context.Context, start, end int64) ([]TimedHostMetrics, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT timestamp, cpu_percent, mem_total, mem_used, mem_percent, swap_total, swap_used, load1, load5, load15, uptime
+		`SELECT timestamp, cpu_percent, mem_total, mem_used, mem_percent, mem_cached, mem_free, swap_total, swap_used, load1, load5, load15, uptime
 		 FROM host_metrics WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp`, start, end)
 	if err != nil {
 		return nil, err
@@ -378,6 +414,7 @@ func (s *Store) QueryHostMetrics(ctx context.Context, start, end int64) ([]Timed
 		var t TimedHostMetrics
 		var ts int64
 		if err := rows.Scan(&ts, &t.CPUPercent, &t.MemTotal, &t.MemUsed, &t.MemPercent,
+			&t.MemCached, &t.MemFree,
 			&t.SwapTotal, &t.SwapUsed, &t.Load1, &t.Load5, &t.Load15, &t.Uptime); err != nil {
 			return nil, err
 		}
@@ -433,7 +470,7 @@ func (s *Store) QueryNetMetrics(ctx context.Context, start, end int64) ([]TimedN
 
 func (s *Store) QueryContainerMetrics(ctx context.Context, start, end int64) ([]TimedContainerMetrics, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT timestamp, id, name, image, state, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids
+		`SELECT timestamp, id, name, image, state, health, started_at, restart_count, exit_code, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids
 		 FROM container_metrics WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp`, start, end)
 	if err != nil {
 		return nil, err
@@ -445,6 +482,7 @@ func (s *Store) QueryContainerMetrics(ctx context.Context, start, end int64) ([]
 		var t TimedContainerMetrics
 		var ts int64
 		if err := rows.Scan(&ts, &t.ID, &t.Name, &t.Image, &t.State,
+			&t.Health, &t.StartedAt, &t.RestartCount, &t.ExitCode,
 			&t.CPUPercent, &t.MemUsage, &t.MemLimit, &t.MemPercent,
 			&t.NetRx, &t.NetTx, &t.BlockRead, &t.BlockWrite, &t.PIDs); err != nil {
 			return nil, err

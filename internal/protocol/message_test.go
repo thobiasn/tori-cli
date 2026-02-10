@@ -336,6 +336,78 @@ func TestContainerEventOmitEmptyProject(t *testing.T) {
 	}
 }
 
+func TestNewFieldsRoundtrip(t *testing.T) {
+	orig := MetricsUpdate{
+		Timestamp: 1700000000,
+		Host: &HostMetrics{
+			CPUPercent: 45.5, MemTotal: 16e9, MemUsed: 8e9, MemPercent: 50,
+			MemCached: 2e9, MemFree: 6e9,
+			SwapTotal: 4e9, SwapUsed: 1e9,
+		},
+		Containers: []ContainerMetrics{
+			{
+				ID: "abc123", Name: "web", Image: "nginx", State: "running",
+				Health: "healthy", StartedAt: 1700000000, RestartCount: 3, ExitCode: 0,
+				CPUPercent: 5, MemUsage: 100e6, MemLimit: 512e6, MemPercent: 19.5,
+			},
+		},
+	}
+
+	raw, err := msgpack.Marshal(&orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded MetricsUpdate
+	if err := msgpack.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Host.MemCached != 2e9 {
+		t.Errorf("host mem_cached = %d, want %d", decoded.Host.MemCached, uint64(2e9))
+	}
+	if decoded.Host.MemFree != 6e9 {
+		t.Errorf("host mem_free = %d, want %d", decoded.Host.MemFree, uint64(6e9))
+	}
+	c := decoded.Containers[0]
+	if c.Health != "healthy" {
+		t.Errorf("health = %q, want healthy", c.Health)
+	}
+	if c.StartedAt != 1700000000 {
+		t.Errorf("started_at = %d, want 1700000000", c.StartedAt)
+	}
+	if c.RestartCount != 3 {
+		t.Errorf("restart_count = %d, want 3", c.RestartCount)
+	}
+}
+
+func TestContainerInfoNewFields(t *testing.T) {
+	orig := QueryContainersResp{
+		Containers: []ContainerInfo{
+			{
+				ID: "abc", Name: "web", Image: "nginx", State: "running", Project: "myapp",
+				Health: "unhealthy", StartedAt: 1700000000, RestartCount: 2, ExitCode: 1,
+			},
+		},
+	}
+
+	raw, err := msgpack.Marshal(&orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded QueryContainersResp
+	if err := msgpack.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	c := decoded.Containers[0]
+	if c.Health != "unhealthy" {
+		t.Errorf("health = %q, want unhealthy", c.Health)
+	}
+	if c.RestartCount != 2 {
+		t.Errorf("restart_count = %d, want 2", c.RestartCount)
+	}
+}
+
 func TestTimedMetricsRoundtrip(t *testing.T) {
 	orig := QueryMetricsResp{
 		Host: []TimedHostMetrics{

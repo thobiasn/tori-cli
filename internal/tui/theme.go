@@ -62,6 +62,32 @@ func (t Theme) StateColor(state string) lipgloss.Color {
 	}
 }
 
+// HealthIndicator returns a colored symbol for container health status.
+func (t Theme) HealthIndicator(health string) string {
+	switch health {
+	case "healthy":
+		return lipgloss.NewStyle().Foreground(t.Healthy).Render("✓")
+	case "unhealthy":
+		return lipgloss.NewStyle().Foreground(t.Critical).Render("✗")
+	case "starting":
+		return lipgloss.NewStyle().Foreground(t.Warning).Render("!")
+	default:
+		return lipgloss.NewStyle().Foreground(t.Muted).Render("–")
+	}
+}
+
+// RestartColor returns a color based on restart count severity.
+func (t Theme) RestartColor(count int) lipgloss.Color {
+	switch {
+	case count >= 3:
+		return t.Critical
+	case count >= 1:
+		return t.Warning
+	default:
+		return t.Muted
+	}
+}
+
 // StateIndicator returns a colored circle indicator for a container state.
 // Active states use ● (filled), inactive use ○ (empty).
 func (t Theme) StateIndicator(state string) string {

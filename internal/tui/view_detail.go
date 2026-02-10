@@ -135,9 +135,13 @@ func renderDetail(a *App, width, height int) string {
 		title = cm.Name + " -- " + cm.State
 	}
 
-	// Top section: metrics.
-	metricsH := 9
+	// Top section: metrics. Enough room for graph rows + info lines.
+	metricsH := 14
 	logH := height - metricsH - 1
+	if logH < 5 {
+		metricsH = height - 6
+		logH = 5
+	}
 
 	metricsContent := renderDetailMetrics(a, s, cm, width, metricsH, theme)
 	metricsBox := Box(title, metricsContent, width, metricsH, theme)
@@ -161,24 +165,33 @@ func renderDetailMetrics(a *App, s *DetailState, cm *protocol.ContainerMetrics, 
 		return "  Waiting for metrics..."
 	}
 	innerW := width - 2
-	sparkW := innerW / 3
-	if sparkW < 10 {
-		sparkW = 10
+	graphW := innerW - 10
+	if graphW < 10 {
+		graphW = 10
 	}
+	graphRows := 2
 
 	var lines []string
 
-	// CPU sparkline + percent.
+	// CPU graph + percent.
 	cpuData := historyData(a.cpuHistory, s.containerID)
-	cpuSpark := Sparkline(cpuData, sparkW, theme)
-	cpuLine := fmt.Sprintf(" CPU %s %5.1f%%", cpuSpark, cm.CPUPercent)
-	lines = append(lines, cpuLine)
+	if len(cpuData) > 0 {
+		cpuGraph := Graph(cpuData, graphW, graphRows, 100, theme)
+		for _, gl := range strings.Split(cpuGraph, "\n") {
+			lines = append(lines, " CPU "+gl)
+		}
+	}
+	lines = append(lines, fmt.Sprintf(" CPU %5.1f%%", cm.CPUPercent))
 
-	// MEM sparkline + usage.
+	// MEM graph + usage.
 	memData := historyData(a.memHistory, s.containerID)
-	memSpark := Sparkline(memData, sparkW, theme)
-	memLine := fmt.Sprintf(" MEM %s %s / %s", memSpark, FormatBytes(cm.MemUsage), FormatBytes(cm.MemLimit))
-	lines = append(lines, memLine)
+	if len(memData) > 0 {
+		memGraph := Graph(memData, graphW, graphRows, 100, theme)
+		for _, gl := range strings.Split(memGraph, "\n") {
+			lines = append(lines, " MEM "+gl)
+		}
+	}
+	lines = append(lines, fmt.Sprintf(" MEM %s / %s", FormatBytes(cm.MemUsage), FormatBytes(cm.MemLimit)))
 
 	// NET rates.
 	rates := a.rates.ContainerRates[s.containerID]
@@ -191,13 +204,14 @@ func renderDetailMetrics(a *App, s *DetailState, cm *protocol.ContainerMetrics, 
 
 	// BLK rates.
 	blkLine := fmt.Sprintf(" BLK %s %s  %s %s",
-		rxStyle.Render("▼"), FormatBytesRate(rates.BlockReadRate),
-		txStyle.Render("▲"), FormatBytesRate(rates.BlockWriteRate))
+		rxStyle.Render("R"), FormatBytesRate(rates.BlockReadRate),
+		txStyle.Render("W"), FormatBytesRate(rates.BlockWriteRate))
 	lines = append(lines, blkLine)
 
-	// PIDs.
-	pidLine := fmt.Sprintf(" PID %d", cm.PIDs)
-	lines = append(lines, pidLine)
+	// PIDs + health + restarts.
+	healthStr := theme.HealthIndicator(cm.Health)
+	uptime := formatContainerUptime(cm.State, cm.StartedAt, cm.ExitCode)
+	lines = append(lines, fmt.Sprintf(" PIDs: %d  %s  %s  %s", cm.PIDs, healthStr, uptime, formatRestarts(cm.RestartCount, theme)))
 
 	return strings.Join(lines, "\n")
 }

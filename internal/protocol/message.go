@@ -156,11 +156,15 @@ type QueryContainersResp struct {
 
 // ContainerInfo describes a running container.
 type ContainerInfo struct {
-	ID      string `msgpack:"id"`
-	Name    string `msgpack:"name"`
-	Image   string `msgpack:"image"`
-	State   string `msgpack:"state"`
-	Project string `msgpack:"project,omitempty"`
+	ID           string `msgpack:"id"`
+	Name         string `msgpack:"name"`
+	Image        string `msgpack:"image"`
+	State        string `msgpack:"state"`
+	Project      string `msgpack:"project,omitempty"`
+	Health       string `msgpack:"health,omitempty"`
+	StartedAt    int64  `msgpack:"started_at,omitempty"`
+	RestartCount int    `msgpack:"restart_count,omitempty"`
+	ExitCode     int    `msgpack:"exit_code,omitempty"`
 }
 
 // AckAlertReq is the body for TypeActionAckAlert.
@@ -197,6 +201,8 @@ type HostMetrics struct {
 	MemTotal   uint64  `msgpack:"mem_total"`
 	MemUsed    uint64  `msgpack:"mem_used"`
 	MemPercent float64 `msgpack:"mem_percent"`
+	MemCached  uint64  `msgpack:"mem_cached,omitempty"`
+	MemFree    uint64  `msgpack:"mem_free,omitempty"`
 	SwapTotal  uint64  `msgpack:"swap_total"`
 	SwapUsed   uint64  `msgpack:"swap_used"`
 	Load1      float64 `msgpack:"load1"`
@@ -225,19 +231,23 @@ type NetMetrics struct {
 }
 
 type ContainerMetrics struct {
-	ID         string  `msgpack:"id"`
-	Name       string  `msgpack:"name"`
-	Image      string  `msgpack:"image"`
-	State      string  `msgpack:"state"`
-	CPUPercent float64 `msgpack:"cpu_percent"`
-	MemUsage   uint64  `msgpack:"mem_usage"`
-	MemLimit   uint64  `msgpack:"mem_limit"`
-	MemPercent float64 `msgpack:"mem_percent"`
-	NetRx      uint64  `msgpack:"net_rx"`
-	NetTx      uint64  `msgpack:"net_tx"`
-	BlockRead  uint64  `msgpack:"block_read"`
-	BlockWrite uint64  `msgpack:"block_write"`
-	PIDs       uint64  `msgpack:"pids"`
+	ID           string  `msgpack:"id"`
+	Name         string  `msgpack:"name"`
+	Image        string  `msgpack:"image"`
+	State        string  `msgpack:"state"`
+	Health       string  `msgpack:"health,omitempty"`
+	StartedAt    int64   `msgpack:"started_at,omitempty"`
+	RestartCount int     `msgpack:"restart_count,omitempty"`
+	ExitCode     int     `msgpack:"exit_code,omitempty"`
+	CPUPercent   float64 `msgpack:"cpu_percent"`
+	MemUsage     uint64  `msgpack:"mem_usage"`
+	MemLimit     uint64  `msgpack:"mem_limit"`
+	MemPercent   float64 `msgpack:"mem_percent"`
+	NetRx        uint64  `msgpack:"net_rx"`
+	NetTx        uint64  `msgpack:"net_tx"`
+	BlockRead    uint64  `msgpack:"block_read"`
+	BlockWrite   uint64  `msgpack:"block_write"`
+	PIDs         uint64  `msgpack:"pids"`
 }
 
 type TimedHostMetrics struct {

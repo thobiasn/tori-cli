@@ -525,11 +525,15 @@ func (c *connState) queryContainers(id uint32) {
 	}
 	for i, ctr := range containers {
 		resp.Containers[i] = protocol.ContainerInfo{
-			ID:      ctr.ID,
-			Name:    ctr.Name,
-			Image:   ctr.Image,
-			State:   ctr.State,
-			Project: ctr.Project,
+			ID:           ctr.ID,
+			Name:         ctr.Name,
+			Image:        ctr.Image,
+			State:        ctr.State,
+			Project:      ctr.Project,
+			Health:       ctr.Health,
+			StartedAt:    ctr.StartedAt,
+			RestartCount: ctr.RestartCount,
+			ExitCode:     ctr.ExitCode,
 		}
 	}
 	c.sendResponse(id, &resp)
@@ -609,6 +613,7 @@ func convertTimedHost(src []TimedHostMetrics) []protocol.TimedHostMetrics {
 			Timestamp: s.Timestamp.Unix(),
 			HostMetrics: protocol.HostMetrics{
 				CPUPercent: s.CPUPercent, MemTotal: s.MemTotal, MemUsed: s.MemUsed, MemPercent: s.MemPercent,
+				MemCached: s.MemCached, MemFree: s.MemFree,
 				SwapTotal: s.SwapTotal, SwapUsed: s.SwapUsed,
 				Load1: s.Load1, Load5: s.Load5, Load15: s.Load15, Uptime: s.Uptime,
 			},
@@ -653,6 +658,7 @@ func convertTimedContainer(src []TimedContainerMetrics) []protocol.TimedContaine
 			Timestamp: s.Timestamp.Unix(),
 			ContainerMetrics: protocol.ContainerMetrics{
 				ID: s.ID, Name: s.Name, Image: s.Image, State: s.State,
+				Health: s.Health, StartedAt: s.StartedAt, RestartCount: s.RestartCount, ExitCode: s.ExitCode,
 				CPUPercent: s.CPUPercent, MemUsage: s.MemUsage, MemLimit: s.MemLimit, MemPercent: s.MemPercent,
 				NetRx: s.NetRx, NetTx: s.NetTx, BlockRead: s.BlockRead, BlockWrite: s.BlockWrite, PIDs: s.PIDs,
 			},

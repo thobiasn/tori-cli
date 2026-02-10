@@ -140,6 +140,8 @@ func (h *HostCollector) readMemory(m *HostMetrics) error {
 	if m.MemTotal > 0 {
 		m.MemPercent = float64(m.MemUsed) / float64(m.MemTotal) * 100
 	}
+	m.MemCached = vals["Cached"] * 1024
+	m.MemFree = vals["MemFree"] * 1024
 	m.SwapTotal = vals["SwapTotal"] * 1024
 	swapFree := vals["SwapFree"] * 1024
 	m.SwapUsed = m.SwapTotal - swapFree

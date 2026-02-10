@@ -166,6 +166,7 @@ func (a *Agent) collect(ctx context.Context) {
 		update.Host = &protocol.HostMetrics{
 			CPUPercent: hostMetrics.CPUPercent, MemTotal: hostMetrics.MemTotal,
 			MemUsed: hostMetrics.MemUsed, MemPercent: hostMetrics.MemPercent,
+			MemCached: hostMetrics.MemCached, MemFree: hostMetrics.MemFree,
 			SwapTotal: hostMetrics.SwapTotal, SwapUsed: hostMetrics.SwapUsed,
 			Load1: hostMetrics.Load1, Load5: hostMetrics.Load5, Load15: hostMetrics.Load15,
 			Uptime: hostMetrics.Uptime,
@@ -187,6 +188,7 @@ func (a *Agent) collect(ctx context.Context) {
 	for _, c := range containerMetrics {
 		update.Containers = append(update.Containers, protocol.ContainerMetrics{
 			ID: c.ID, Name: c.Name, Image: c.Image, State: c.State,
+			Health: c.Health, StartedAt: c.StartedAt, RestartCount: c.RestartCount, ExitCode: c.ExitCode,
 			CPUPercent: c.CPUPercent, MemUsage: c.MemUsage, MemLimit: c.MemLimit, MemPercent: c.MemPercent,
 			NetRx: c.NetRx, NetTx: c.NetTx, BlockRead: c.BlockRead, BlockWrite: c.BlockWrite, PIDs: c.PIDs,
 		})

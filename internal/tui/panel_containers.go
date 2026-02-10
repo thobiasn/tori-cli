@@ -15,19 +15,25 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 	}
 	innerW := width - 2
 
+	// Fixed-width columns: state(1) + space(1) + health(1) + space(1) + cpu(5) + space(1) + mem(5) + space(1) + uptime(7) + space(1) + restart(3) = ~27
+	fixedCols := 27
+	nameW := innerW - fixedCols - 2 // 2 for leading/trailing space
+	if nameW < 8 {
+		nameW = 8
+	}
+
 	var lines []string
 	pos := 0
 	for _, g := range groups {
-		// Group header.
-		headerLabel := g.name
-		runLabel := fmt.Sprintf(" %d running", g.running)
-		fillW := innerW - lipgloss.Width(headerLabel) - lipgloss.Width(runLabel) - 4
+		// Group header: "myapp ────── 4/4 running"
+		runLabel := fmt.Sprintf(" %d/%d running", g.running, len(g.containers))
+		fillW := innerW - lipgloss.Width(g.name) - lipgloss.Width(runLabel) - 4
 		if fillW < 1 {
 			fillW = 1
 		}
 		fill := strings.Repeat("─", fillW)
 		headerLine := fmt.Sprintf(" %s %s %s",
-			lipgloss.NewStyle().Foreground(theme.Accent).Bold(true).Render(headerLabel),
+			lipgloss.NewStyle().Foreground(theme.Accent).Bold(true).Render(g.name),
 			lipgloss.NewStyle().Foreground(theme.Muted).Render(fill),
 			lipgloss.NewStyle().Foreground(theme.Muted).Render(runLabel))
 
@@ -44,16 +50,19 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 		// Container rows.
 		for _, c := range g.containers {
 			indicator := theme.StateIndicator(c.State)
-			name := Truncate(c.Name, 18)
+			name := Truncate(c.Name, nameW)
+			health := theme.HealthIndicator(c.Health)
+			uptime := formatContainerUptime(c.State, c.StartedAt, c.ExitCode)
+			restarts := formatRestarts(c.RestartCount, theme)
 
 			var stats string
 			if c.State == "running" {
-				stats = fmt.Sprintf("%-9s %5.1f%%  %6s", c.State, c.CPUPercent, FormatBytes(c.MemUsage))
+				stats = fmt.Sprintf("%5.1f%% %5s %-7s", c.CPUPercent, FormatBytes(c.MemUsage), Truncate(uptime, 7))
 			} else {
-				stats = fmt.Sprintf("%-9s    —       —", c.State)
+				stats = fmt.Sprintf("   —      — %-7s", Truncate(uptime, 7))
 			}
 
-			row := fmt.Sprintf(" %s %-18s %s", indicator, name, stats)
+			row := fmt.Sprintf(" %s %-*s %s %s %s", indicator, nameW, name, health, stats, restarts)
 			if pos == cursor {
 				row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
 			}
@@ -97,6 +106,28 @@ func cursorContainerID(groups []containerGroup, collapsed map[string]bool, curso
 		}
 	}
 	return ""
+}
+
+// cursorContainerMetrics resolves the cursor to a container's metrics.
+// Returns nil and the group name if cursor is on a group header.
+func cursorContainerMetrics(groups []containerGroup, collapsed map[string]bool, cursor int) (*containerGroup, int) {
+	pos := 0
+	for i, g := range groups {
+		if pos == cursor {
+			return &groups[i], -1
+		}
+		pos++
+		if collapsed[g.name] {
+			continue
+		}
+		for j := range g.containers {
+			if pos == cursor {
+				return &groups[i], j
+			}
+			pos++
+		}
+	}
+	return nil, -1
 }
 
 // maxCursorPos returns the maximum valid cursor position.
