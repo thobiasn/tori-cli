@@ -5,12 +5,26 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/smtp"
 	"strings"
 	"time"
 )
+
+// webhookClient is a dedicated HTTP client for webhook notifications.
+// Separate from http.DefaultClient to avoid shared state and configure timeouts.
+var webhookClient = &http.Client{
+	Timeout: 10 * time.Second,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 3 {
+			return fmt.Errorf("too many redirects")
+		}
+		return nil
+	},
+}
 
 // Notifier sends alert notifications via email and/or webhook.
 type Notifier struct {
@@ -47,13 +61,60 @@ func (n *Notifier) Send(ctx context.Context, subject, body string) {
 }
 
 func (n *Notifier) sendEmail(subject, body string) error {
-	addr := fmt.Sprintf("%s:%d", n.email.SMTPHost, n.email.SMTPPort)
-	to := strings.Join(n.email.To, ", ")
+	addr := net.JoinHostPort(n.email.SMTPHost, fmt.Sprintf("%d", n.email.SMTPPort))
 
+	// Sanitize header values to prevent SMTP header injection.
+	from := sanitizeHeader(n.email.From)
+	to := make([]string, len(n.email.To))
+	for i, t := range n.email.To {
+		to[i] = sanitizeHeader(t)
+	}
+	subject = sanitizeHeader(subject)
+
+	toHeader := strings.Join(to, ", ")
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\n\r\n%s",
-		n.email.From, to, subject, time.Now().Format(time.RFC1123Z), body)
+		from, toHeader, subject, time.Now().Format(time.RFC1123Z), body)
 
-	return smtp.SendMail(addr, nil, n.email.From, n.email.To, []byte(msg))
+	// Use a dialer with timeout so SMTP doesn't block the collect loop indefinitely.
+	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	if err != nil {
+		return fmt.Errorf("smtp connect: %w", err)
+	}
+	conn.SetDeadline(time.Now().Add(30 * time.Second))
+
+	c, err := smtp.NewClient(conn, n.email.SMTPHost)
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("smtp client: %w", err)
+	}
+	defer c.Close()
+
+	if err := c.Mail(from); err != nil {
+		return err
+	}
+	for _, t := range to {
+		if err := c.Rcpt(t); err != nil {
+			return err
+		}
+	}
+	w, err := c.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte(msg)); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return c.Quit()
+}
+
+// sanitizeHeader strips CR and LF characters to prevent SMTP header injection.
+func sanitizeHeader(s string) string {
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
+	return s
 }
 
 func (n *Notifier) sendWebhook(ctx context.Context, subject, body string) error {
@@ -73,10 +134,11 @@ func (n *Notifier) sendWebhook(ctx context.Context, subject, body string) error 
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := webhookClient.Do(req)
 	if err != nil {
 		return err
 	}
+	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
 	if resp.StatusCode >= 300 {

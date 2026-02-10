@@ -234,6 +234,38 @@ actions = []
 	}
 }
 
+func TestLoadConfigAlertUnknownField(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[alerts.bad]
+condition = "host.load1 > 2"
+severity = "warning"
+actions = ["notify"]
+`), 0644)
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for unknown field")
+	}
+}
+
+func TestLoadConfigAlertStringOpOnState(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[alerts.bad]
+condition = "container.state > 'exited'"
+severity = "warning"
+actions = ["notify"]
+`), 0644)
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for > operator on string field")
+	}
+}
+
 func TestDurationUnmarshal(t *testing.T) {
 	tests := []struct {
 		input string

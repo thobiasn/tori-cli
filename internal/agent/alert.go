@@ -4,10 +4,30 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// Known fields per scope, used for validation.
+var validFields = map[string]map[string]bool{
+	"host": {
+		"cpu_percent":    true,
+		"memory_percent": true,
+		"disk_percent":   true,
+	},
+	"container": {
+		"cpu_percent":    true,
+		"memory_percent": true,
+		"state":          true,
+	},
+}
+
+// String-only fields that only support == and != operators.
+var stringFields = map[string]bool{
+	"state": true,
+}
 
 // Condition represents a parsed alert condition like "host.cpu_percent > 90".
 type Condition struct {
@@ -42,6 +62,11 @@ func parseCondition(s string) (Condition, error) {
 		return Condition{}, fmt.Errorf("unknown scope %q (must be host or container)", c.Scope)
 	}
 
+	fields, ok := validFields[c.Scope]
+	if !ok || !fields[c.Field] {
+		return Condition{}, fmt.Errorf("unknown field %q for scope %q", c.Field, c.Scope)
+	}
+
 	switch c.Op {
 	case ">", "<", ">=", "<=", "==", "!=":
 	default:
@@ -58,6 +83,11 @@ func parseCondition(s string) (Condition, error) {
 			return Condition{}, fmt.Errorf("invalid numeric value %q: %w", val, err)
 		}
 		c.NumVal = v
+	}
+
+	// String fields only support == and !=.
+	if stringFields[c.Field] && c.Op != "==" && c.Op != "!=" {
+		return Condition{}, fmt.Errorf("field %q only supports == and != operators, got %q", c.Field, c.Op)
 	}
 
 	return c, nil
@@ -115,12 +145,12 @@ type alertInstance struct {
 }
 
 type alertRule struct {
-	name      string
-	condition Condition
-	forDur    time.Duration
-	severity  string
-	actions   []string
-	maxRstrt  int
+	name        string
+	condition   Condition
+	forDur      time.Duration
+	severity    string
+	actions     []string
+	maxRestarts int
 }
 
 // Alerter evaluates alert rules against metric snapshots.
@@ -131,6 +161,7 @@ type Alerter struct {
 	notifier  *Notifier
 	docker    *DockerCollector
 	now       func() time.Time
+	restartFn func(ctx context.Context, containerID string) error // injectable for tests
 }
 
 // NewAlerter creates an Alerter from the config's alert rules.
@@ -142,18 +173,27 @@ func NewAlerter(alerts map[string]AlertConfig, store *Store, notifier *Notifier,
 		docker:    docker,
 		now:       time.Now,
 	}
-	for name, ac := range alerts {
+
+	// Sort rule names for deterministic evaluation order.
+	names := make([]string, 0, len(alerts))
+	for name := range alerts {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		ac := alerts[name]
 		cond, err := parseCondition(ac.Condition)
 		if err != nil {
 			return nil, fmt.Errorf("alert %q: %w", name, err)
 		}
 		a.rules = append(a.rules, alertRule{
-			name:      name,
-			condition: cond,
-			forDur:    ac.For.Duration,
-			severity:  ac.Severity,
-			actions:   ac.Actions,
-			maxRstrt:  ac.MaxRestarts,
+			name:        name,
+			condition:   cond,
+			forDur:      ac.For.Duration,
+			severity:    ac.Severity,
+			actions:     ac.Actions,
+			maxRestarts: ac.MaxRestarts,
 		})
 	}
 	return a, nil
@@ -177,15 +217,28 @@ func (a *Alerter) Evaluate(ctx context.Context, snap *MetricSnapshot) {
 	}
 
 	// Resolve stale instances (disappeared containers/disks).
+	// Also clean up inactive instances to prevent unbounded map growth.
 	for key, inst := range a.instances {
-		if !seen[key] && inst.state == stateFiring {
+		if seen[key] {
+			continue
+		}
+		switch inst.state {
+		case stateFiring:
 			a.resolve(ctx, key, inst, now)
+		case statePending:
+			inst.state = stateInactive
+		}
+		if inst.state == stateInactive {
+			delete(a.instances, key)
 		}
 	}
 }
 
 func (a *Alerter) evalHostRule(ctx context.Context, r *alertRule, snap *MetricSnapshot, now time.Time, seen map[string]bool) {
 	if snap.Host == nil {
+		// Mark key as seen so stale cleanup doesn't falsely resolve
+		// an active alert when collection transiently fails.
+		seen[r.name] = true
 		return
 	}
 
@@ -197,6 +250,17 @@ func (a *Alerter) evalHostRule(ctx context.Context, r *alertRule, snap *MetricSn
 }
 
 func (a *Alerter) evalDiskRule(ctx context.Context, r *alertRule, snap *MetricSnapshot, now time.Time, seen map[string]bool) {
+	if snap.Disks == nil {
+		// Mark all existing instances for this rule as seen to avoid
+		// false resolution on transient collection failure.
+		for key := range a.instances {
+			if strings.HasPrefix(key, r.name+":") {
+				seen[key] = true
+			}
+		}
+		return
+	}
+
 	for _, d := range snap.Disks {
 		key := r.name + ":" + d.Mountpoint
 		seen[key] = true
@@ -206,6 +270,17 @@ func (a *Alerter) evalDiskRule(ctx context.Context, r *alertRule, snap *MetricSn
 }
 
 func (a *Alerter) evalContainerRule(ctx context.Context, r *alertRule, snap *MetricSnapshot, now time.Time, seen map[string]bool) {
+	if snap.Containers == nil {
+		// Mark all existing instances for this rule as seen to avoid
+		// false resolution on transient collection failure.
+		for key := range a.instances {
+			if strings.HasPrefix(key, r.name+":") {
+				seen[key] = true
+			}
+		}
+		return
+	}
+
 	for _, c := range snap.Containers {
 		key := r.name + ":" + c.ID
 		seen[key] = true
@@ -294,20 +369,29 @@ func (a *Alerter) resolve(ctx context.Context, key string, inst *alertInstance, 
 		}
 	}
 
-	// Reset restarts counter on resolution.
 	inst.restarts = 0
 	inst.dbID = 0
 }
 
 func (a *Alerter) doRestart(ctx context.Context, r *alertRule, inst *alertInstance, containerID string) {
-	if containerID == "" || a.docker == nil {
+	if containerID == "" {
 		return
 	}
-	if inst.restarts >= r.maxRstrt {
+	if a.restartFn == nil && a.docker == nil {
+		return
+	}
+	if inst.restarts >= r.maxRestarts {
 		slog.Warn("restart limit reached", "rule", r.name, "container", containerID, "restarts", inst.restarts)
 		return
 	}
-	if err := a.docker.RestartContainer(ctx, containerID); err != nil {
+
+	var err error
+	if a.restartFn != nil {
+		err = a.restartFn(ctx, containerID)
+	} else {
+		err = a.docker.RestartContainer(ctx, containerID)
+	}
+	if err != nil {
 		slog.Error("restart container", "container", containerID, "error", err)
 		return
 	}
