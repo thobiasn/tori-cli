@@ -39,9 +39,9 @@ The agent is the source of truth. It collects, stores, evaluates, and alerts ind
 - **Protocol:** msgpack over Unix socket. Two patterns: streaming subscriptions (agent pushes) and request-response (client asks).
 - **Storage:** SQLite in WAL mode at `/var/lib/rook/rook.db` with configurable retention. One database file. If you're writing JOINs across more than 2 tables, rethink the data model.
 - **Config:** TOML format. Agent config at `/etc/rook/config.toml`, client config at `~/.config/rook/config.toml`. Paths in config are absolute. Defaults are sane for bare metal (`/proc`, `/sys`). Docker deployment overrides them (`/host/proc`, `/host/sys`). No detection logic.
-- **TUI:** Bubbletea + Lipgloss + Bubbles (Charm ecosystem).
+- **TUI:** Bubbletea + Lipgloss + Bubbles (Charm ecosystem). See `.claude/tui-design.md` for the complete visual design language (layout, colors, graphs, responsive rules). All colors must be defined in a single `Theme` struct in `internal/tui/theme.go` — views reference theme fields, never raw color values.
 - **Host metrics:** Read directly from `/proc` and `/sys` (no cgo, no external deps).
-- **Docker:** Monitor via Docker socket (`/var/run/docker.sock`). Needs write access only for self-healing (container restart).
+- **Docker:** Monitor via Docker socket (`/var/run/docker.sock`). Containers are grouped by compose project via `com.docker.compose.project` label. Tracking (metrics, logs, alerts) can be toggled per-container or per-group at runtime. Needs write access only for self-healing (container restart).
 
 ## Development Philosophy
 

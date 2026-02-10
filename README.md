@@ -31,7 +31,7 @@ Existing tools either require a full monitoring stack (Grafana + Prometheus + Lo
 │  └───────────────────────────────────────┘  │
 │       │                │                    │
 │       ▼                ▼                    │
-│  Docker socket    /proc, /sys               │
+│  Docker socket    /proc, /sys              │
 └─────────────────────────────────────────────┘
 ```
 
@@ -41,6 +41,8 @@ Existing tools either require a full monitoring stack (Grafana + Prometheus + Lo
 
 - Collects host metrics from `/proc` and `/sys` (CPU, memory, disk, network)
 - Monitors Docker containers via the Docker socket (status, stats, health, restarts)
+- Groups containers by Docker Compose project (`com.docker.compose.project` label)
+- Per-container and per-group tracking toggle (future) — untracked containers are fully ignored (no metrics, logs, or alerts)
 - Tails container logs via the Docker log API
 - Evaluates alert rules defined in config and sends notifications (email/SMTP, webhook, Slack)
 - Executes self-healing actions (restart container, run command) on alert triggers
@@ -52,7 +54,7 @@ Existing tools either require a full monitoring stack (Grafana + Prometheus + Lo
 
 - Connects to the agent via SSH-forwarded Unix socket
 - Dashboard view: container status, host metrics, resource usage
-- Log viewer: tail and filter logs per container or across all containers
+- Log viewer: tail and filter logs by container, compose group, stream (stdout/stderr), text search, and time range
 - Alert history: view past alerts, acknowledge, silence
 - Multi-server: switch between multiple configured servers
 
@@ -98,8 +100,9 @@ sys = "/sys"
 
 [docker]
 socket = "/var/run/docker.sock"
-# monitor all containers by default, or filter:
-# include = ["compose-project-*"]
+# track all containers by default
+# can be toggled per-container or per-group at runtime via the TUI
+# these filters set the initial state:
 # exclude = ["rook-*"]
 
 [collect]
@@ -228,18 +231,19 @@ The TUI client communicates with the agent over a Unix socket using msgpack-enco
 **Streaming subscriptions** (agent pushes to client):
 
 - `subscribe:metrics` — live host + container metrics
-- `subscribe:logs` — live log stream, supports container filter
+- `subscribe:logs` — live log stream, supports filters (container, compose group, stream, text search)
 - `subscribe:alerts` — live alert events
 
 **Request-response** (client asks, agent replies):
 
 - `query:metrics` — historical metrics for a time range
-- `query:logs` — historical logs with filter/search
+- `query:logs` — historical logs with filters (container, compose group, stream, text search, time range)
 - `query:alerts` — alert history
-- `query:containers` — current container list and status
+- `query:containers` — current container list and status, grouped by compose project
 - `action:ack_alert` — acknowledge an alert
 - `action:silence_alert` — silence an alert rule for a duration
 - `action:restart_container` — manually restart a container
+- `action:set_tracking` — (future) enable/disable metric collection, log tailing, and alerting for a container or compose group
 
 ## Milestone Plan
 
@@ -259,4 +263,7 @@ SSH tunnel management, dashboard view (containers + host metrics), log viewer wi
 Client-side server config, server switcher in TUI, concurrent connections.
 
 **M6 — Polish:**
-Webhook/Slack notifications, alert silencing/acknowledgement, config reload without restart, install script.
+Webhook/Slack notifications, alert silencing/acknowledgement, per-container and per-group tracking toggle, config reload without restart, install script.
+
+**Future:**
+Custom TUI themes via `~/.config/rook/theme.toml`, built-in theme presets (monokai, nord, solarized).
