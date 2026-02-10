@@ -1,0 +1,295 @@
+package agent
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+const schema = `
+CREATE TABLE IF NOT EXISTS host_metrics (
+	timestamp    INTEGER NOT NULL,
+	cpu_percent  REAL    NOT NULL,
+	mem_total    INTEGER NOT NULL,
+	mem_used     INTEGER NOT NULL,
+	mem_percent  REAL    NOT NULL,
+	swap_total   INTEGER NOT NULL,
+	swap_used    INTEGER NOT NULL,
+	load1        REAL    NOT NULL,
+	load5        REAL    NOT NULL,
+	load15       REAL    NOT NULL,
+	uptime       REAL    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_host_metrics_ts ON host_metrics(timestamp);
+
+CREATE TABLE IF NOT EXISTS disk_metrics (
+	timestamp  INTEGER NOT NULL,
+	mountpoint TEXT    NOT NULL,
+	device     TEXT    NOT NULL,
+	total      INTEGER NOT NULL,
+	used       INTEGER NOT NULL,
+	free       INTEGER NOT NULL,
+	percent    REAL    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_disk_metrics_ts ON disk_metrics(timestamp);
+
+CREATE TABLE IF NOT EXISTS net_metrics (
+	timestamp  INTEGER NOT NULL,
+	iface      TEXT    NOT NULL,
+	rx_bytes   INTEGER NOT NULL,
+	tx_bytes   INTEGER NOT NULL,
+	rx_packets INTEGER NOT NULL,
+	tx_packets INTEGER NOT NULL,
+	rx_errors  INTEGER NOT NULL,
+	tx_errors  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_net_metrics_ts ON net_metrics(timestamp);
+
+CREATE TABLE IF NOT EXISTS container_metrics (
+	timestamp  INTEGER NOT NULL,
+	id         TEXT    NOT NULL,
+	name       TEXT    NOT NULL,
+	image      TEXT    NOT NULL,
+	state      TEXT    NOT NULL,
+	cpu_percent REAL   NOT NULL,
+	mem_usage  INTEGER NOT NULL,
+	mem_limit  INTEGER NOT NULL,
+	mem_percent REAL   NOT NULL,
+	net_rx     INTEGER NOT NULL,
+	net_tx     INTEGER NOT NULL,
+	block_read INTEGER NOT NULL,
+	block_write INTEGER NOT NULL,
+	pids       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_container_metrics_ts ON container_metrics(timestamp);
+
+CREATE TABLE IF NOT EXISTS logs (
+	timestamp      INTEGER NOT NULL,
+	container_id   TEXT    NOT NULL,
+	container_name TEXT    NOT NULL,
+	stream         TEXT    NOT NULL,
+	message        TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(timestamp);
+CREATE INDEX IF NOT EXISTS idx_logs_container_ts ON logs(container_id, timestamp);
+`
+
+// Store manages SQLite persistence for metrics and logs.
+type Store struct {
+	db *sql.DB
+}
+
+// OpenStore opens or creates a SQLite database at the given path with WAL mode.
+func OpenStore(path string) (*Store, error) {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+
+	db.SetMaxOpenConns(1)
+
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set WAL mode: %w", err)
+	}
+
+	if _, err := db.ExecContext(context.Background(), schema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create schema: %w", err)
+	}
+
+	return &Store{db: db}, nil
+}
+
+// Close closes the database connection.
+func (s *Store) Close() error {
+	return s.db.Close()
+}
+
+// HostMetrics represents a single host metrics snapshot.
+type HostMetrics struct {
+	CPUPercent float64
+	MemTotal   uint64
+	MemUsed    uint64
+	MemPercent float64
+	SwapTotal  uint64
+	SwapUsed   uint64
+	Load1      float64
+	Load5      float64
+	Load15     float64
+	Uptime     float64
+}
+
+// DiskMetrics represents disk usage for a single mountpoint.
+type DiskMetrics struct {
+	Mountpoint string
+	Device     string
+	Total      uint64
+	Used       uint64
+	Free       uint64
+	Percent    float64
+}
+
+// NetMetrics represents network counters for a single interface.
+type NetMetrics struct {
+	Iface     string
+	RxBytes   uint64
+	TxBytes   uint64
+	RxPackets uint64
+	TxPackets uint64
+	RxErrors  uint64
+	TxErrors  uint64
+}
+
+// ContainerMetrics represents stats for a single Docker container.
+type ContainerMetrics struct {
+	ID         string
+	Name       string
+	Image      string
+	State      string
+	CPUPercent float64
+	MemUsage   uint64
+	MemLimit   uint64
+	MemPercent float64
+	NetRx      uint64
+	NetTx      uint64
+	BlockRead  uint64
+	BlockWrite uint64
+	PIDs       uint64
+}
+
+// LogEntry represents a single log line from a container.
+type LogEntry struct {
+	Timestamp     time.Time
+	ContainerID   string
+	ContainerName string
+	Stream        string
+	Message       string
+}
+
+func (s *Store) InsertHostMetrics(ctx context.Context, ts time.Time, m *HostMetrics) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO host_metrics (timestamp, cpu_percent, mem_total, mem_used, mem_percent, swap_total, swap_used, load1, load5, load15, uptime)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ts.Unix(), m.CPUPercent, m.MemTotal, m.MemUsed, m.MemPercent,
+		m.SwapTotal, m.SwapUsed, m.Load1, m.Load5, m.Load15, m.Uptime,
+	)
+	return err
+}
+
+func (s *Store) InsertDiskMetrics(ctx context.Context, ts time.Time, disks []DiskMetrics) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO disk_metrics (timestamp, mountpoint, device, total, used, free, percent)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	unix := ts.Unix()
+	for _, d := range disks {
+		if _, err := stmt.ExecContext(ctx, unix, d.Mountpoint, d.Device, d.Total, d.Used, d.Free, d.Percent); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) InsertNetMetrics(ctx context.Context, ts time.Time, nets []NetMetrics) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO net_metrics (timestamp, iface, rx_bytes, tx_bytes, rx_packets, tx_packets, rx_errors, tx_errors)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	unix := ts.Unix()
+	for _, n := range nets {
+		if _, err := stmt.ExecContext(ctx, unix, n.Iface, n.RxBytes, n.TxBytes, n.RxPackets, n.TxPackets, n.RxErrors, n.TxErrors); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) InsertContainerMetrics(ctx context.Context, ts time.Time, containers []ContainerMetrics) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO container_metrics (timestamp, id, name, image, state, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	unix := ts.Unix()
+	for _, c := range containers {
+		if _, err := stmt.ExecContext(ctx, unix, c.ID, c.Name, c.Image, c.State,
+			c.CPUPercent, c.MemUsage, c.MemLimit, c.MemPercent,
+			c.NetRx, c.NetTx, c.BlockRead, c.BlockWrite, c.PIDs); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) InsertLogs(ctx context.Context, entries []LogEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO logs (timestamp, container_id, container_name, stream, message)
+		 VALUES (?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, e := range entries {
+		if _, err := stmt.ExecContext(ctx, e.Timestamp.Unix(), e.ContainerID, e.ContainerName, e.Stream, e.Message); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// Prune deletes data older than the retention period.
+func (s *Store) Prune(ctx context.Context, retentionDays int) error {
+	cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour).Unix()
+
+	tables := []string{"host_metrics", "disk_metrics", "net_metrics", "container_metrics", "logs"}
+	for _, table := range tables {
+		if _, err := s.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE timestamp < ?", table), cutoff); err != nil {
+			return fmt.Errorf("prune %s: %w", table, err)
+		}
+	}
+	return nil
+}
