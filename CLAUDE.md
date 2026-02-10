@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Rook is a lightweight server monitoring tool for Docker environments. A persistent agent collects metrics, watches containers, tails logs, and fires alerts. A TUI client connects over SSH to view everything in the terminal.
 
-**Status:** Early stage — the README.md contains the full specification. Refer to it for detailed requirements.
+**Status:** M1 (agent foundation) and M2 (alerting) are complete. M3 (protocol + socket) is next. The README.md contains the full specification.
 
 ## Build & Development Commands
 
@@ -24,9 +24,21 @@ Single Go binary with two modes: `rook agent` (server daemon) and `rook connect`
 
 ```
 cmd/rook/main.go          — single entry point, subcommands for agent/connect
-internal/agent/            — collector, alerter, storage, socket server
+internal/agent/            — collector, alerter, storage, socket server (flat package — no sub-packages)
 internal/tui/              — bubbletea views and components
 internal/protocol/         — shared message types, msgpack encoding
+```
+
+**Actual file layout (internal/agent/):**
+```
+agent.go       — Agent struct, Run() loop, collect() orchestration, shutdown
+config.go      — Config types (storage, host, docker, collect, alerts, notify), TOML loading, validation
+store.go       — SQLite schema, Store struct, all Insert/Query/Prune methods, metric+alert types
+host.go        — HostCollector: reads /proc (cpu, memory, loadavg, uptime, disk, network)
+docker.go      — DockerCollector: container list, stats, CPU/mem/net/block calc, RestartContainer
+logs.go        — LogTailer: per-container goroutines, Docker log demux via stdcopy, batched insert
+alert.go       — Condition parser, Alerter state machine (inactive→pending→firing→resolved), Evaluate()
+notify.go      — Notifier: email (net/smtp with timeout) + webhook (dedicated http.Client)
 ```
 
 **Critical import rule:** `internal/protocol` is the contract between agent and client. Both `agent` and `tui` import `protocol` but never import each other. This enables splitting into separate binaries later.
@@ -63,7 +75,7 @@ Code is a liability, not an asset. Every line we write is a line we have to main
 
 - Follow standard Go conventions. `gofmt`, `go vet`, no linter warnings.
 - Naming: short variable names in small scopes, descriptive names for exported types and functions. `ctx` not `context`, `db` not `database`, `cfg` not `configuration`.
-- Package names are short, single words, lowercase. `agent`, `tui`, `protocol`, `collect`, `alert`, `notify`, `store`.
+- Package names are short, single words, lowercase. `agent`, `tui`, `protocol`. The agent is a flat package — no sub-packages for collect/alert/notify/store. Files within the package serve that purpose.
 - Comments explain why, not what. Don't comment obvious code. Do comment non-obvious design decisions.
 - Structs over maps for anything with a known shape. Maps only for truly dynamic data.
 - Context propagation: pass `context.Context` as the first parameter for anything that does I/O or could be cancelled.
@@ -76,6 +88,61 @@ Code is a liability, not an asset. Every line we write is a line we have to main
 - The protocol package must have thorough tests — it's the contract.
 - Don't mock the Docker API or SQLite in unit tests unless absolutely necessary. Prefer integration tests that talk to real instances where practical.
 
+### Established test patterns
+
+- **`testStore(t)`** helper in `store_test.go` — creates a temp SQLite DB, registers cleanup. Reuse for any test needing a store.
+- **Injectable time** — Alerter has a `now func() time.Time` field. Set it in tests for deterministic time-based assertions. Never use `time.Sleep` in tests.
+- **Injectable functions** — Alerter has `restartFn` for testing restart without a real Docker client. Use this pattern for any external I/O that needs test isolation.
+- **Real SQLite, no mocks** — all store tests use real SQLite via temp dirs. Query the DB directly to verify state (e.g., `SELECT COUNT(*) FROM alerts`).
+- **Always check `err` from Scan** — `s.db.QueryRow(...).Scan(&val)` errors must be checked in tests, not ignored.
+
+## Established Patterns & Gotchas
+
+### SQLite
+- Driver is `modernc.org/sqlite` (pure Go, no cgo). Open with `sql.Open("sqlite", path)`.
+- Schema lives in a `const schema` string in `store.go`. All tables created with `IF NOT EXISTS`.
+- `db.SetMaxOpenConns(1)` — SQLite doesn't handle concurrent writers. Single-writer is enforced.
+- Prune runs hourly in the collect loop, deletes by timestamp. The `alerts` table prunes on `fired_at`.
+
+### Docker API
+- Client created with `client.NewClientWithOpts(client.WithHost("unix://"+socket), client.WithAPIVersionNegotiation())`.
+- `ContainerStatsOneShot` for one-shot stats (not streaming). Response is JSON decoded into `container.StatsResponse`.
+- CPU percent uses delta calculation between readings, same formula as `docker stats`.
+- `ContainerRestart` takes `container.StopOptions{Timeout: &timeout}` — timeout is `*int`, not `int`.
+- Container names from the API are prefixed with `/` — strip it.
+- Non-running containers still get a `ContainerMetrics` entry (with zero stats) so alerting can see state changes.
+
+### Alert system
+- Conditions are 3-token strings: `scope.field op value` (e.g., `host.cpu_percent > 90`, `container.state == 'exited'`).
+- Field names are validated against a whitelist in `parseCondition`. String fields only allow `==`/`!=`.
+- Alerter instances are keyed: `rulename` for host, `rulename:containerID` for container, `rulename:mountpoint` for disk.
+- State machine: inactive → pending (if `for > 0`) → firing → resolved → inactive. `for = 0` skips pending.
+- Inactive unseen instances are GC'd from the map to prevent unbounded growth with ephemeral containers.
+- When collection fails (nil snapshot field), existing instances are marked as `seen` to avoid false resolution.
+- `restartFn` field allows test injection. Production path uses `docker.RestartContainer`.
+
+### Config
+- TOML parsed by `github.com/BurntSushi/toml`. `Duration` type wraps `time.Duration` with `UnmarshalText`.
+- Validation happens in `validate()` which calls `validateAlert()` per rule. `validateAlert` calls `parseCondition` to verify the condition string is valid.
+- Empty `Alerts` map is valid (no alerting configured). Agent skips alerter construction when `len(cfg.Alerts) == 0`.
+
+### Networking gotchas
+- `go vet` rejects `fmt.Sprintf("%s:%d", host, port)` for IPv6. Always use `net.JoinHostPort`.
+- SMTP headers must be sanitized (strip `\r\n`) to prevent header injection.
+- Use a dedicated `http.Client` with explicit timeouts, not `http.DefaultClient`.
+- Always drain response bodies (`io.Copy(io.Discard, resp.Body)`) before closing for connection reuse.
+
+### Collect loop flow
+```
+agent.collect(ctx):
+  1. Host metrics (CPU, mem, disk, net from /proc)
+  2. Docker metrics (container list + stats)
+  3. Log tailer sync (start/stop per-container goroutines)
+  4. Alert evaluation (pass MetricSnapshot to alerter)
+  5. Prune (hourly, deletes old data from all tables)
+```
+The alerter receives the same data already collected — no additional I/O.
+
 ## Milestone Order
 
-M1 Agent foundation → M2 Alerting → M3 Protocol + socket → M4 TUI client → M5 Multi-server → M6 Polish
+~~M1 Agent foundation~~ → ~~M2 Alerting~~ → M3 Protocol + socket → M4 TUI client → M5 Multi-server → M6 Polish
