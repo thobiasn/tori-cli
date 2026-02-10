@@ -10,6 +10,9 @@ type Theme struct {
 	Healthy  lipgloss.Color // green
 	Accent   lipgloss.Color // cyan
 	Muted    lipgloss.Color // gray
+
+	// ContainerPalette is a set of distinct colors for per-container name coloring.
+	ContainerPalette []lipgloss.Color
 }
 
 // DefaultTheme returns the default color theme using standard terminal colors.
@@ -20,6 +23,16 @@ func DefaultTheme() Theme {
 		Healthy:  lipgloss.Color("10"),
 		Accent:   lipgloss.Color("14"),
 		Muted:    lipgloss.Color("8"),
+		ContainerPalette: []lipgloss.Color{
+			lipgloss.Color("14"), // cyan
+			lipgloss.Color("13"), // magenta
+			lipgloss.Color("12"), // blue
+			lipgloss.Color("11"), // yellow
+			lipgloss.Color("10"), // green
+			lipgloss.Color("9"),  // red
+			lipgloss.Color("3"),  // dark yellow
+			lipgloss.Color("6"),  // dark cyan
+		},
 	}
 }
 

@@ -31,11 +31,13 @@ func Box(title, content string, width, height int, theme *Theme) string {
 			titleLen = lipgloss.Width(titleStr)
 		}
 		styled := lipgloss.NewStyle().Foreground(theme.Accent).Bold(true).Render(titleStr)
-		remaining := innerW - titleLen
-		if remaining < 0 {
-			remaining = 0
+		// Budget: "╭" + leading "─" + title + trailing "─"s + "╮"
+		// The leading "─" costs 1 char, so trailing fill = innerW - 1 - titleLen
+		trailing := innerW - 1 - titleLen
+		if trailing < 0 {
+			trailing = 0
 		}
-		top = "╭─" + styled + strings.Repeat("─", remaining-1) + "╮"
+		top = "╭─" + styled + strings.Repeat("─", trailing) + "╮"
 	} else {
 		top = "╭" + strings.Repeat("─", innerW) + "╮"
 	}
@@ -239,23 +241,11 @@ func Truncate(s string, maxLen int) string {
 	return string(runes[:maxLen-1]) + "…"
 }
 
-// containerPalette is a small set of distinct colors for container names.
-var containerPalette = []lipgloss.Color{
-	lipgloss.Color("14"), // cyan
-	lipgloss.Color("13"), // magenta
-	lipgloss.Color("12"), // blue
-	lipgloss.Color("11"), // yellow
-	lipgloss.Color("10"), // green
-	lipgloss.Color("9"),  // red
-	lipgloss.Color("3"),  // dark yellow
-	lipgloss.Color("6"),  // dark cyan
-}
-
 // ContainerNameColor returns a deterministic color for a container name
-// using FNV-32a hash.
+// using FNV-32a hash into the theme's container palette.
 func ContainerNameColor(name string, theme *Theme) lipgloss.Color {
-	_ = theme // reserved for future theme-aware palette
 	h := fnv.New32a()
 	h.Write([]byte(name))
-	return containerPalette[h.Sum32()%uint32(len(containerPalette))]
+	palette := theme.ContainerPalette
+	return palette[h.Sum32()%uint32(len(palette))]
 }

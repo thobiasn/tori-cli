@@ -78,7 +78,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.height = msg.Height
 
 	case tea.KeyMsg:
-		if msg.String() == "q" || msg.String() == "ctrl+c" {
+		switch msg.String() {
+		case "q", "ctrl+c":
 			return a, tea.Quit
 		}
 

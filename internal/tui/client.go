@@ -22,13 +22,15 @@ type ConnErrMsg struct{ Err error }
 // Client wraps a protocol connection to the agent and dispatches
 // streaming messages as tea.Msg values.
 type Client struct {
-	conn   net.Conn
-	mu     sync.Mutex // serializes writes
-	nextID atomic.Uint32
-	pendMu sync.Mutex
-	pending map[uint32]chan *protocol.Envelope
-	prog   *tea.Program
-	done   chan struct{} // closed when readLoop exits
+	conn     net.Conn
+	mu       sync.Mutex // serializes writes
+	nextID   atomic.Uint32
+	pendMu   sync.Mutex
+	pending  map[uint32]chan *protocol.Envelope
+	prog     *tea.Program
+	done     chan struct{} // closed when readLoop exits
+	started  sync.Once    // ensures readLoop starts exactly once
+	closed   atomic.Bool  // set by Close to suppress spurious ConnErrMsg
 }
 
 // NewClient wraps an existing connection. Call SetProgram to start reading.
@@ -41,13 +43,16 @@ func NewClient(conn net.Conn) *Client {
 }
 
 // SetProgram sets the tea.Program for streaming dispatch and starts readLoop.
+// Safe to call multiple times; only the first call starts the reader goroutine.
 func (c *Client) SetProgram(p *tea.Program) {
 	c.prog = p
-	go c.readLoop()
+	c.started.Do(func() { go c.readLoop() })
 }
 
-// Close closes the underlying connection.
+// Close closes the underlying connection. The readLoop will exit without
+// sending a ConnErrMsg.
 func (c *Client) Close() error {
+	c.closed.Store(true)
 	return c.conn.Close()
 }
 
@@ -60,8 +65,9 @@ func (c *Client) readLoop() {
 			delete(c.pending, id)
 		}
 		c.pendMu.Unlock()
-		if c.prog != nil {
-			c.prog.Send(ConnErrMsg{Err: errors.New("connection closed")})
+		// Only notify the TUI on unexpected disconnects, not deliberate Close().
+		if c.prog != nil && !c.closed.Load() {
+			c.prog.Send(ConnErrMsg{Err: errors.New("connection lost")})
 		}
 	}()
 
@@ -115,7 +121,6 @@ func (c *Client) Request(ctx context.Context, typ protocol.MsgType, body any) (*
 		env, err = protocol.NewEnvelope(typ, id, body)
 	} else {
 		env = protocol.NewEnvelopeNoBody(typ, id)
-		err = nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("encode request: %w", err)
@@ -147,7 +152,11 @@ func (c *Client) Request(ctx context.Context, typ protocol.MsgType, body any) (*
 		if resp.Type == protocol.TypeError {
 			var e protocol.ErrorResult
 			if err := protocol.DecodeBody(resp.Body, &e); err == nil {
-				return nil, errors.New(e.Error)
+				msg := e.Error
+				if len(msg) > 256 {
+					msg = msg[:256]
+				}
+				return nil, errors.New(msg)
 			}
 			return nil, errors.New("unknown error from agent")
 		}
@@ -167,7 +176,6 @@ func (c *Client) Subscribe(typ protocol.MsgType, body any) error {
 		env, err = protocol.NewEnvelope(typ, 0, body)
 	} else {
 		env = protocol.NewEnvelopeNoBody(typ, 0)
-		err = nil
 	}
 	if err != nil {
 		return err

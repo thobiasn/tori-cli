@@ -233,12 +233,20 @@ func TestConnectionCloseUnblocksPending(t *testing.T) {
 
 	c := NewClient(clientConn)
 
-	coll := newCollector(1) // expect ConnErrMsg
+	coll := newCollector(0)
 	p := tea.NewProgram(coll, tea.WithoutRenderer(), tea.WithInput(nil))
 	c.SetProgram(p)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+
+	// Server reads the request (proves it was sent), then closes.
+	serverReady := make(chan struct{})
+	go func() {
+		protocol.ReadMsg(serverConn) // wait for the request to arrive
+		close(serverReady)
+		serverConn.Close()
+	}()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -246,11 +254,8 @@ func TestConnectionCloseUnblocksPending(t *testing.T) {
 		errCh <- err
 	}()
 
-	// Give the request time to be sent and registered.
-	time.Sleep(50 * time.Millisecond)
-
-	// Close server side — readLoop will exit, pending channels closed.
-	serverConn.Close()
+	// Wait for server to receive the request before closing.
+	<-serverReady
 
 	select {
 	case err := <-errCh:
@@ -304,12 +309,16 @@ func TestRequestOnDeadConnection(t *testing.T) {
 	c := NewClient(clientConn)
 	defer c.Close()
 
-	coll := newCollector(1)
+	coll := newCollector(0)
 	p := tea.NewProgram(coll, tea.WithoutRenderer(), tea.WithInput(nil))
 	c.SetProgram(p)
 
-	// Wait for readLoop to detect the closed connection.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for readLoop to detect the closed connection via done channel.
+	select {
+	case <-c.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("readLoop did not exit")
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
