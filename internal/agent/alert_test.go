@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 )
@@ -856,6 +857,315 @@ func TestAlertResolveCallbackFields(t *testing.T) {
 	if resolved.ResolvedAt == nil {
 		t.Error("resolved.ResolvedAt should be set")
 	}
+}
+
+func TestEvaluateContainerEventStateFires(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"exited": {
+			Condition: "container.state == 'exited'",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Container dies — should fire immediately via event-driven path.
+	a.EvaluateContainerEvent(ctx, ContainerMetrics{
+		ID:    "aaa",
+		Name:  "web",
+		State: "exited",
+	})
+
+	a.mu.Lock()
+	inst := a.instances["exited:aaa"]
+	a.mu.Unlock()
+
+	if inst == nil || inst.state != stateFiring {
+		t.Fatal("expected exited:aaa to be firing")
+	}
+
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts WHERE rule_name = 'exited'").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("alert rows = %d, want 1", count)
+	}
+}
+
+func TestEvaluateContainerEventCPUAlertResolvedByZeroStats(t *testing.T) {
+	// EvaluateContainerEvent passes zero-stat ContainerMetrics (events don't
+	// carry CPU/mem data). A firing cpu_percent alert will see 0 > 80 = false
+	// and resolve. This is correct — the event watcher only calls this on
+	// start/die/stop/kill, and the regular collect cycle will re-fire if needed.
+	alerts := map[string]AlertConfig{
+		"high_cpu": {
+			Condition: "container.cpu_percent > 80",
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Fire high_cpu via regular Evaluate with real CPU data.
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "running", CPUPercent: 95}},
+	})
+	if a.instances["high_cpu:aaa"].state != stateFiring {
+		t.Fatal("expected high_cpu:aaa firing")
+	}
+
+	// Event evaluation with zero CPU resolves the alert.
+	now = now.Add(10 * time.Second)
+	a.EvaluateContainerEvent(ctx, ContainerMetrics{
+		ID:    "aaa",
+		Name:  "web",
+		State: "running",
+	})
+
+	if a.instances["high_cpu:aaa"] != nil && a.instances["high_cpu:aaa"].state == stateFiring {
+		t.Error("expected high_cpu:aaa to be resolved (zero CPU from event)")
+	}
+
+	// Verify the alert was created and resolved.
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts WHERE rule_name = 'high_cpu'").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("alert rows = %d, want 1", count)
+	}
+}
+
+func TestEvaluateContainerEventSkipsHostRules(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"high_cpu": {
+			Condition: "host.cpu_percent > 90",
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+		"exited": {
+			Condition: "container.state == 'exited'",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+	a.now = func() time.Time { return time.Now() }
+
+	// Only the container rule should be evaluated.
+	a.EvaluateContainerEvent(ctx, ContainerMetrics{
+		ID:    "aaa",
+		Name:  "web",
+		State: "exited",
+	})
+
+	a.mu.Lock()
+	_, hasHostInst := a.instances["high_cpu"]
+	inst := a.instances["exited:aaa"]
+	a.mu.Unlock()
+
+	if hasHostInst {
+		t.Error("host rule should not be evaluated by EvaluateContainerEvent")
+	}
+	if inst == nil || inst.state != stateFiring {
+		t.Error("container rule should fire")
+	}
+
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("alert rows = %d, want 1 (only container rule)", count)
+	}
+}
+
+func TestEvaluateContainerEventForDurationPending(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"exited": {
+			Condition: "container.state == 'exited'",
+			For:       Duration{30 * time.Second},
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, _ := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// First event — should go to pending (for > 0).
+	a.EvaluateContainerEvent(ctx, ContainerMetrics{
+		ID: "aaa", Name: "web", State: "exited",
+	})
+
+	a.mu.Lock()
+	inst := a.instances["exited:aaa"]
+	a.mu.Unlock()
+
+	if inst == nil || inst.state != statePending {
+		t.Fatal("expected pending state with for-duration")
+	}
+
+	// Second event before for elapsed — still pending.
+	now = now.Add(15 * time.Second)
+	a.EvaluateContainerEvent(ctx, ContainerMetrics{
+		ID: "aaa", Name: "web", State: "exited",
+	})
+
+	a.mu.Lock()
+	if a.instances["exited:aaa"].state != statePending {
+		t.Fatal("expected still pending at 15s")
+	}
+	a.mu.Unlock()
+
+	// Third event after for elapsed — should fire.
+	now = now.Add(15 * time.Second)
+	a.EvaluateContainerEvent(ctx, ContainerMetrics{
+		ID: "aaa", Name: "web", State: "exited",
+	})
+
+	a.mu.Lock()
+	if a.instances["exited:aaa"].state != stateFiring {
+		t.Fatal("expected firing after for-duration elapsed")
+	}
+	a.mu.Unlock()
+}
+
+func TestEvaluateContainerEventResolution(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"exited": {
+			Condition: "container.state == 'exited'",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Fire.
+	a.EvaluateContainerEvent(ctx, ContainerMetrics{
+		ID: "aaa", Name: "web", State: "exited",
+	})
+
+	a.mu.Lock()
+	if a.instances["exited:aaa"].state != stateFiring {
+		t.Fatal("expected firing")
+	}
+	a.mu.Unlock()
+
+	// Container starts — condition no longer matches, should resolve.
+	now = now.Add(10 * time.Second)
+	a.EvaluateContainerEvent(ctx, ContainerMetrics{
+		ID: "aaa", Name: "web", State: "running",
+	})
+
+	a.mu.Lock()
+	inst := a.instances["exited:aaa"]
+	a.mu.Unlock()
+
+	if inst != nil && inst.state != stateInactive {
+		t.Errorf("expected inactive after resolution, got %d", inst.state)
+	}
+
+	// Verify resolved_at is set in DB.
+	var resolvedAt *int64
+	if err := s.db.QueryRow("SELECT resolved_at FROM alerts WHERE rule_name = 'exited'").Scan(&resolvedAt); err != nil {
+		t.Fatal(err)
+	}
+	if resolvedAt == nil {
+		t.Error("resolved_at should be set")
+	}
+}
+
+func TestEvaluateContainerEventNoStaleCleanup(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"exited": {
+			Condition: "container.state == 'exited'",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, _ := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Fire for container aaa via regular Evaluate.
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
+	})
+	if a.instances["exited:aaa"].state != stateFiring {
+		t.Fatal("expected firing")
+	}
+
+	// EvaluateContainerEvent for a different container should NOT clean up aaa.
+	now = now.Add(10 * time.Second)
+	a.EvaluateContainerEvent(ctx, ContainerMetrics{
+		ID: "bbb", Name: "api", State: "running",
+	})
+
+	a.mu.Lock()
+	inst := a.instances["exited:aaa"]
+	a.mu.Unlock()
+
+	if inst == nil || inst.state != stateFiring {
+		t.Error("exited:aaa should still be firing — EvaluateContainerEvent must not do stale cleanup")
+	}
+}
+
+func TestEvaluateContainerEventConcurrent(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"exited": {
+			Condition: "container.state == 'exited'",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, _ := testAlerter(t, alerts)
+	a.now = func() time.Time { return time.Now() }
+	ctx := context.Background()
+
+	// Run Evaluate and EvaluateContainerEvent concurrently to detect races.
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			a.Evaluate(ctx, &MetricSnapshot{
+				Host:       &HostMetrics{CPUPercent: 50},
+				Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "running"}},
+			})
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			a.EvaluateContainerEvent(ctx, ContainerMetrics{
+				ID: "aaa", Name: "web", State: "exited",
+			})
+		}
+	}()
+
+	wg.Wait()
+	// No assertions beyond "no race/panic" — run with -race to verify.
 }
 
 func TestNilDiskSnapshotDoesNotFalseResolve(t *testing.T) {

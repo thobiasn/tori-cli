@@ -7,13 +7,15 @@ type MsgType string
 
 const (
 	// Streaming: client subscribes, agent pushes.
-	TypeSubscribeMetrics MsgType = "subscribe:metrics"
-	TypeSubscribeLogs    MsgType = "subscribe:logs"
-	TypeSubscribeAlerts  MsgType = "subscribe:alerts"
-	TypeUnsubscribe      MsgType = "unsubscribe"
-	TypeMetricsUpdate    MsgType = "metrics:update"
-	TypeLogEntry         MsgType = "log:entry"
-	TypeAlertEvent       MsgType = "alert:event"
+	TypeSubscribeMetrics    MsgType = "subscribe:metrics"
+	TypeSubscribeLogs       MsgType = "subscribe:logs"
+	TypeSubscribeAlerts     MsgType = "subscribe:alerts"
+	TypeSubscribeContainers MsgType = "subscribe:containers"
+	TypeUnsubscribe         MsgType = "unsubscribe"
+	TypeMetricsUpdate       MsgType = "metrics:update"
+	TypeLogEntry            MsgType = "log:entry"
+	TypeAlertEvent          MsgType = "alert:event"
+	TypeContainerEvent      MsgType = "container:event"
 
 	// Request-response.
 	TypeQueryMetrics       MsgType = "query:metrics"
@@ -79,6 +81,17 @@ type AlertEvent struct {
 	ResolvedAt  int64  `msgpack:"resolved_at,omitempty"`
 	Message     string `msgpack:"message"`
 	State       string `msgpack:"state"` // "firing" or "resolved"
+}
+
+// ContainerEvent is pushed on container lifecycle changes (start, die, etc.).
+type ContainerEvent struct {
+	Timestamp   int64  `msgpack:"timestamp"`
+	ContainerID string `msgpack:"container_id"`
+	Name        string `msgpack:"name"`
+	Image       string `msgpack:"image"`
+	State       string `msgpack:"state"`
+	Action      string `msgpack:"action"`
+	Project     string `msgpack:"project,omitempty"`
 }
 
 // --- Request-response messages ---

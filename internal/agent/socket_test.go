@@ -937,6 +937,59 @@ func TestSocketConnectionLimit(t *testing.T) {
 	}
 }
 
+func TestSocketStreamContainers(t *testing.T) {
+	s := testStore(t)
+	_, hub, path := testSocketServer(t, s)
+	conn := dial(t, path)
+
+	// Subscribe to containers.
+	env := protocol.NewEnvelopeNoBody(protocol.TypeSubscribeContainers, 1)
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// Publish a container event.
+	hub.Publish(TopicContainers, &protocol.ContainerEvent{
+		Timestamp:   1700000000,
+		ContainerID: "abc123",
+		Name:        "web",
+		Image:       "nginx",
+		State:       "running",
+		Action:      "start",
+		Project:     "myapp",
+	})
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	msg, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Type != protocol.TypeContainerEvent {
+		t.Fatalf("type = %q, want container:event", msg.Type)
+	}
+	if msg.ID != 0 {
+		t.Errorf("streaming message should have ID=0, got %d", msg.ID)
+	}
+
+	var event protocol.ContainerEvent
+	if err := protocol.DecodeBody(msg.Body, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.ContainerID != "abc123" {
+		t.Errorf("container_id = %q, want abc123", event.ContainerID)
+	}
+	if event.State != "running" {
+		t.Errorf("state = %q, want running", event.State)
+	}
+	if event.Action != "start" {
+		t.Errorf("action = %q, want start", event.Action)
+	}
+	if event.Project != "myapp" {
+		t.Errorf("project = %q, want myapp", event.Project)
+	}
+}
+
 func TestSocketFileCleanedUpOnStop(t *testing.T) {
 	s := testStore(t)
 	hub := NewHub()

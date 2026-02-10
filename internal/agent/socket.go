@@ -206,6 +206,8 @@ func (c *connState) dispatch(env *protocol.Envelope) {
 		c.subscribeLogs(env)
 	case protocol.TypeSubscribeAlerts:
 		c.subscribeAlerts()
+	case protocol.TypeSubscribeContainers:
+		c.subscribeContainers()
 	case protocol.TypeUnsubscribe:
 		c.unsubscribe(env)
 
@@ -355,6 +357,38 @@ func (c *connState) subscribeAlerts() {
 					continue
 				}
 				env, err := protocol.NewEnvelope(protocol.TypeAlertEvent, 0, event)
+				if err != nil {
+					continue
+				}
+				c.writeMsg(env)
+			}
+		}
+	}()
+}
+
+func (c *connState) subscribeContainers() {
+	if _, exists := c.subs[TopicContainers]; exists {
+		return
+	}
+
+	sub, ch := c.ss.hub.Subscribe(TopicContainers)
+	ctx, cancel := context.WithCancel(context.Background())
+	c.subs[TopicContainers] = &subscription{sub: sub, topic: TopicContainers, cancel: cancel}
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-ch:
+				if !ok {
+					return
+				}
+				event, ok := msg.(*protocol.ContainerEvent)
+				if !ok {
+					continue
+				}
+				env, err := protocol.NewEnvelope(protocol.TypeContainerEvent, 0, event)
 				if err != nil {
 					continue
 				}

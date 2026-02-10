@@ -156,8 +156,10 @@ type alertRule struct {
 
 // Alerter evaluates alert rules against metric snapshots.
 type Alerter struct {
+	mu        sync.Mutex // protects instances and deferred; held during Evaluate and EvaluateContainerEvent
 	rules     []alertRule
 	instances map[string]*alertInstance
+	deferred  []func()   // slow side effects collected under mu, executed after release
 	store     *Store
 	notifier  *Notifier
 	docker    *DockerCollector
@@ -174,6 +176,7 @@ type Alerter struct {
 func NewAlerter(alerts map[string]AlertConfig, store *Store, notifier *Notifier, docker *DockerCollector) (*Alerter, error) {
 	a := &Alerter{
 		instances: make(map[string]*alertInstance),
+		deferred:  make([]func(), 0, 8),
 		store:     store,
 		notifier:  notifier,
 		docker:    docker,
@@ -208,6 +211,9 @@ func NewAlerter(alerts map[string]AlertConfig, store *Store, notifier *Notifier,
 
 // Evaluate checks all rules against the current snapshot and transitions state.
 func (a *Alerter) Evaluate(ctx context.Context, snap *MetricSnapshot) {
+	a.mu.Lock()
+	a.deferred = a.deferred[:0]
+
 	now := a.now()
 	seen := make(map[string]bool)
 
@@ -238,6 +244,46 @@ func (a *Alerter) Evaluate(ctx context.Context, snap *MetricSnapshot) {
 		if inst.state == stateInactive {
 			delete(a.instances, key)
 		}
+	}
+
+	pending := make([]func(), len(a.deferred))
+	copy(pending, a.deferred)
+	a.mu.Unlock()
+
+	for _, fn := range pending {
+		fn()
+	}
+}
+
+// EvaluateContainerEvent evaluates container-scoped rules against a single
+// container that just changed state. Unlike Evaluate(), this does NOT do stale
+// cleanup — that remains the responsibility of the regular collect-loop Evaluate.
+func (a *Alerter) EvaluateContainerEvent(ctx context.Context, cm ContainerMetrics) {
+	a.mu.Lock()
+	a.deferred = a.deferred[:0]
+
+	now := a.now()
+	for i := range a.rules {
+		r := &a.rules[i]
+		if r.condition.Scope != "container" {
+			continue
+		}
+		key := r.name + ":" + cm.ID
+		var matched bool
+		if r.condition.IsStr {
+			matched = compareStr(containerFieldStr(&cm, r.condition.Field), r.condition.Op, r.condition.StrVal)
+		} else {
+			matched = compareNum(containerFieldNum(&cm, r.condition.Field), r.condition.Op, r.condition.NumVal)
+		}
+		a.transition(ctx, r, key, matched, now, cm.ID, cm.Name)
+	}
+
+	pending := make([]func(), len(a.deferred))
+	copy(pending, a.deferred)
+	a.mu.Unlock()
+
+	for _, fn := range pending {
+		fn()
 	}
 }
 
@@ -363,15 +409,22 @@ func (a *Alerter) fire(ctx context.Context, r *alertRule, key string, inst *aler
 		a.onStateChange(alert, "firing")
 	}
 
+	// Defer slow side effects (notify, restart) to execute after mutex release.
 	silenced := a.isSilenced(r.name)
 	for _, action := range r.actions {
 		switch action {
 		case "notify":
 			if !silenced {
-				a.notifier.Send(ctx, "Alert: "+r.name, msg)
+				ruleName := r.name
+				a.deferred = append(a.deferred, func() {
+					a.notifier.Send(ctx, "Alert: "+ruleName, msg)
+				})
 			}
 		case "restart":
-			a.doRestart(ctx, r, inst, containerID)
+			rule := r
+			a.deferred = append(a.deferred, func() {
+				a.doRestart(ctx, rule, inst, containerID)
+			})
 		}
 	}
 }

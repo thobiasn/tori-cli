@@ -17,6 +17,7 @@ type Agent struct {
 	docker  *DockerCollector
 	logs    *LogTailer
 	alerter *Alerter
+	events  *EventWatcher
 	hub     *Hub
 	socket  *SocketServer
 
@@ -84,6 +85,7 @@ func New(cfg *Config) (*Agent, error) {
 		a.alerter = alerter
 	}
 
+	a.events = NewEventWatcher(docker, lt, a.alerter, hub)
 	a.socket = NewSocketServer(hub, store, docker, a.alerter)
 	return a, nil
 }
@@ -99,6 +101,8 @@ func (a *Agent) Run(ctx context.Context) error {
 	if err := a.socket.Start(a.cfg.Socket.Path); err != nil {
 		return fmt.Errorf("start socket: %w", err)
 	}
+
+	go a.events.Run(ctx)
 
 	// Collect immediately on startup.
 	a.collect(ctx)
@@ -201,13 +205,15 @@ func (a *Agent) collect(ctx context.Context) {
 }
 
 // shutdown stops all components in the correct order:
-// 1. Socket server closes
-// 2. Log tailers flush remaining batches
-// 3. Store closes
-// 4. Docker client closes
+// 1. Event watcher exits (context already cancelled)
+// 2. Socket server closes
+// 3. Log tailers flush remaining batches
+// 4. Store closes
+// 5. Docker client closes
 func (a *Agent) shutdown() error {
 	slog.Info("agent shutting down")
 
+	a.events.Wait()
 	a.socket.Stop()
 	a.logs.Stop()
 

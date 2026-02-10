@@ -195,6 +195,50 @@ func TestContainerName(t *testing.T) {
 	}
 }
 
+func TestUpdateContainerState(t *testing.T) {
+	d := &DockerCollector{prevCPU: make(map[string]cpuPrev)}
+
+	// Add new container via event before first collect.
+	d.UpdateContainerState("abc", "running", "web", "nginx", "proj")
+	containers := d.Containers()
+	if len(containers) != 1 || containers[0].State != "running" {
+		t.Fatalf("expected 1 running container, got %v", containers)
+	}
+
+	// Update existing container state.
+	d.UpdateContainerState("abc", "exited", "web", "nginx", "proj")
+	containers = d.Containers()
+	if len(containers) != 1 || containers[0].State != "exited" {
+		t.Fatalf("expected exited state, got %v", containers)
+	}
+
+	// Destroy removes from list.
+	d.UpdateContainerState("abc", "", "web", "nginx", "proj")
+	containers = d.Containers()
+	if len(containers) != 0 {
+		t.Fatalf("expected empty list after destroy, got %v", containers)
+	}
+
+	// Destroy on non-existent container is a no-op.
+	d.UpdateContainerState("nonexistent", "", "", "", "")
+	if len(d.Containers()) != 0 {
+		t.Fatal("destroy of nonexistent should be no-op")
+	}
+}
+
+func TestMatchFilterExported(t *testing.T) {
+	d := &DockerCollector{include: []string{"web-*"}, exclude: []string{"web-test"}}
+	if !d.MatchFilter("web-prod") {
+		t.Error("web-prod should match")
+	}
+	if d.MatchFilter("web-test") {
+		t.Error("web-test should be excluded")
+	}
+	if d.MatchFilter("api") {
+		t.Error("api should not match include")
+	}
+}
+
 func TestMatchFilter(t *testing.T) {
 	tests := []struct {
 		name    string

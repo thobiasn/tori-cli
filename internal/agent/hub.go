@@ -4,9 +4,10 @@ import "sync"
 
 // Hub topics.
 const (
-	TopicMetrics = "metrics"
-	TopicLogs    = "logs"
-	TopicAlerts  = "alerts"
+	TopicMetrics    = "metrics"
+	TopicLogs       = "logs"
+	TopicAlerts     = "alerts"
+	TopicContainers = "containers"
 )
 
 const subscriberBufSize = 64
@@ -25,9 +26,10 @@ type subscriber struct {
 func NewHub() *Hub {
 	return &Hub{
 		subs: map[string]map[*subscriber]struct{}{
-			TopicMetrics: {},
-			TopicLogs:    {},
-			TopicAlerts:  {},
+			TopicMetrics:    {},
+			TopicLogs:       {},
+			TopicAlerts:     {},
+			TopicContainers: {},
 		},
 	}
 }

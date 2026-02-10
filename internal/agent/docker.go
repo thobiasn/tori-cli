@@ -83,6 +83,46 @@ type Container struct {
 	Project string // compose project from label
 }
 
+// UpdateContainerState updates a single container's state in the cached list.
+// If state is empty (destroy), the container is removed. If the container
+// isn't in the list yet (event before first collect), it is appended.
+func (d *DockerCollector) UpdateContainerState(id, state, name, image, project string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if state == "" {
+		// Destroy: remove from list.
+		for i, c := range d.lastContainers {
+			if c.ID == id {
+				d.lastContainers = append(d.lastContainers[:i], d.lastContainers[i+1:]...)
+				return
+			}
+		}
+		return
+	}
+
+	for i, c := range d.lastContainers {
+		if c.ID == id {
+			d.lastContainers[i].State = state
+			return
+		}
+	}
+
+	// Not found — event arrived before first collect.
+	d.lastContainers = append(d.lastContainers, Container{
+		ID:      id,
+		Name:    name,
+		Image:   image,
+		State:   state,
+		Project: project,
+	})
+}
+
+// MatchFilter checks if a container name passes the include/exclude filters.
+func (d *DockerCollector) MatchFilter(name string) bool {
+	return d.matchFilter(name)
+}
+
 // Collect lists containers, gets stats for each, and returns metrics.
 func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Container, error) {
 	containers, err := d.client.ContainerList(ctx, container.ListOptions{All: true})

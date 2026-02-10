@@ -271,6 +271,71 @@ func TestNewEnvelopeNoBody(t *testing.T) {
 	}
 }
 
+func TestContainerEventRoundtrip(t *testing.T) {
+	orig := ContainerEvent{
+		Timestamp:   1700000000,
+		ContainerID: "abc123def456",
+		Name:        "web",
+		Image:       "nginx:latest",
+		State:       "running",
+		Action:      "start",
+		Project:     "myapp",
+	}
+
+	env, err := NewEnvelope(TypeContainerEvent, 0, &orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := WriteMsg(&buf, env); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadMsg(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != TypeContainerEvent {
+		t.Fatalf("type = %q, want %q", got.Type, TypeContainerEvent)
+	}
+
+	var decoded ContainerEvent
+	if err := DecodeBody(got.Body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded != orig {
+		t.Errorf("got %+v, want %+v", decoded, orig)
+	}
+}
+
+func TestContainerEventOmitEmptyProject(t *testing.T) {
+	orig := ContainerEvent{
+		Timestamp:   1700000000,
+		ContainerID: "abc123",
+		Name:        "web",
+		Image:       "nginx",
+		State:       "exited",
+		Action:      "die",
+	}
+
+	raw, err := msgpack.Marshal(&orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded ContainerEvent
+	if err := msgpack.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Project != "" {
+		t.Errorf("project = %q, want empty (omitempty)", decoded.Project)
+	}
+	if decoded != orig {
+		t.Errorf("got %+v, want %+v", decoded, orig)
+	}
+}
+
 func TestTimedMetricsRoundtrip(t *testing.T) {
 	orig := QueryMetricsResp{
 		Host: []TimedHostMetrics{
