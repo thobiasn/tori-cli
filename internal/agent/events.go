@@ -155,22 +155,16 @@ func (ew *EventWatcher) handleEvent(ctx context.Context, msg events.Message) {
 		return
 	}
 
-	// Skip untracked containers for log sync, alerts, and event publishing.
-	if !ew.docker.IsTracked(name, project) {
-		// Still update container list so TUI sees state changes.
-		if isDestroy {
-			ew.docker.UpdateContainerState(id, "", name, image, project)
-		} else {
-			ew.docker.UpdateContainerState(id, state, name, image, project)
-		}
-		return
-	}
-
-	// Update container list.
+	// Update container list so TUI sees state changes (tracked or not).
 	if isDestroy {
 		ew.docker.UpdateContainerState(id, "", name, image, project)
 	} else {
 		ew.docker.UpdateContainerState(id, state, name, image, project)
+	}
+
+	// Skip untracked containers for log sync, alerts, and event publishing.
+	if !ew.docker.IsTracked(name, project) {
+		return
 	}
 
 	// Sync log tailers on state transitions that affect running state.

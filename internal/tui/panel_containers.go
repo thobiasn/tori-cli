@@ -94,31 +94,19 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 			restarts := formatRestarts(c.RestartCount, theme)
 
 			var stats string
-			if !tracked {
-				// Untracked: show dashes for stats in muted color.
-				stats = fmt.Sprintf("   —       — %-7s", Truncate(uptime, 7))
-				row := fmt.Sprintf(" %s %s%-*s %s %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
-				if pos == cursor {
-					row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
-				} else {
-					row = muted.Render(stripANSI(row))
-				}
-				lines = append(lines, TruncateStyled(row, innerW))
-			} else if c.State == "running" {
+			isMuted := !tracked
+			if tracked && c.State == "running" {
 				stats = fmt.Sprintf("%5.1f%% %6s %-7s", c.CPUPercent, FormatBytes(c.MemUsage), Truncate(uptime, 7))
-				row := fmt.Sprintf(" %s %s%-*s %s %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
-				if pos == cursor {
-					row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
-				}
-				lines = append(lines, TruncateStyled(row, innerW))
 			} else {
 				stats = fmt.Sprintf("   —       — %-7s", Truncate(uptime, 7))
-				row := fmt.Sprintf(" %s %s%-*s %s %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
-				if pos == cursor {
-					row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
-				}
-				lines = append(lines, TruncateStyled(row, innerW))
 			}
+			row := fmt.Sprintf(" %s %s%-*s %s %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
+			if pos == cursor {
+				row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
+			} else if isMuted {
+				row = muted.Render(stripANSI(row))
+			}
+			lines = append(lines, TruncateStyled(row, innerW))
 			pos++
 		}
 	}

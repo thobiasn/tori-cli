@@ -34,43 +34,63 @@ func TestRenderAlertPanelWithAlerts(t *testing.T) {
 	}
 }
 
-func TestRenderHostPanel(t *testing.T) {
+func TestRenderCPUPanel(t *testing.T) {
 	theme := DefaultTheme()
 	host := &protocol.HostMetrics{
 		CPUPercent: 42.5,
-		MemTotal:   8 * 1024 * 1024 * 1024,
-		MemUsed:    4 * 1024 * 1024 * 1024,
-		MemPercent: 50.0,
 		Load1:      1.5, Load5: 1.2, Load15: 0.8,
 		Uptime: 86400 * 14,
 	}
-	disks := []protocol.DiskMetrics{
-		{Mountpoint: "/", Total: 100 * 1e9, Used: 60 * 1e9, Percent: 60.0},
-	}
-	rates := NewRateCalc()
 
-	got := renderHostPanel(host, disks, rates, 35, 12, &theme)
+	got := renderCPUPanel([]float64{10, 20, 42.5}, host, 50, 8, &theme)
 	plain := stripANSI(got)
-	if !strings.Contains(plain, "CPU") {
-		t.Error("should contain CPU label")
+	if !strings.Contains(plain, "42.5%") {
+		t.Error("should contain CPU percentage")
 	}
-	if !strings.Contains(plain, "MEM") {
-		t.Error("should contain MEM label")
-	}
-	if !strings.Contains(plain, "DISK") {
-		t.Error("should contain DISK label")
-	}
-	if !strings.Contains(plain, "LOAD") {
-		t.Error("should contain LOAD label")
+	if !strings.Contains(plain, "Load") {
+		t.Error("should contain Load label")
 	}
 	if !strings.Contains(plain, "14d") {
 		t.Error("should contain uptime 14d")
 	}
 }
 
-func TestRenderHostPanelNilHost(t *testing.T) {
+func TestRenderCPUPanelNilHost(t *testing.T) {
 	theme := DefaultTheme()
-	got := renderHostPanel(nil, nil, NewRateCalc(), 30, 10, &theme)
+	got := renderCPUPanel(nil, nil, 30, 8, &theme)
+	if !strings.Contains(got, "waiting") {
+		t.Error("nil host should show waiting message")
+	}
+}
+
+func TestRenderMemPanel(t *testing.T) {
+	theme := DefaultTheme()
+	host := &protocol.HostMetrics{
+		MemTotal:   8 * 1024 * 1024 * 1024,
+		MemUsed:    4 * 1024 * 1024 * 1024,
+		MemPercent: 50.0,
+		MemCached:  1 * 1024 * 1024 * 1024,
+		MemFree:    3 * 1024 * 1024 * 1024,
+		SwapTotal:  2 * 1024 * 1024 * 1024,
+		SwapUsed:   512 * 1024 * 1024,
+	}
+
+	got := renderMemPanel(host, 50, 8, &theme)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "Used") {
+		t.Error("should contain Used label")
+	}
+	if !strings.Contains(plain, "Cached") {
+		t.Error("should contain Cached label")
+	}
+	if !strings.Contains(plain, "Swap") {
+		t.Error("should contain Swap label")
+	}
+}
+
+func TestRenderMemPanelNilHost(t *testing.T) {
+	theme := DefaultTheme()
+	got := renderMemPanel(nil, 30, 8, &theme)
 	if !strings.Contains(got, "waiting") {
 		t.Error("nil host should show waiting message")
 	}

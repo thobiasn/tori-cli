@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"path/filepath"
 	"sync"
@@ -337,13 +336,8 @@ func (d *DockerCollector) containerStats(ctx context.Context, id, name, image, s
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
 	var stats container.StatsResponse
-	if err := json.Unmarshal(body, &stats); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
 		return nil, err
 	}
 

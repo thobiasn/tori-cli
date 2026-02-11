@@ -506,7 +506,7 @@ func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) 
 			placeholders[i] = "?"
 			args = append(args, id)
 		}
-		query += ` AND container_id IN (` + joinStrings(placeholders, ",") + `)`
+		query += ` AND container_id IN (` + strings.Join(placeholders, ",") + `)`
 	}
 	if f.Stream != "" {
 		query += ` AND stream = ?`
@@ -588,17 +588,6 @@ func (s *Store) AckAlert(ctx context.Context, id int64) error {
 		return fmt.Errorf("alert %d not found", id)
 	}
 	return nil
-}
-
-func joinStrings(s []string, sep string) string {
-	result := ""
-	for i, v := range s {
-		if i > 0 {
-			result += sep
-		}
-		result += v
-	}
-	return result
 }
 
 // Prune deletes data older than the retention period.

@@ -244,35 +244,7 @@ func (c *connState) dispatch(env *protocol.Envelope) {
 // --- Streaming ---
 
 func (c *connState) subscribeMetrics() {
-	if _, exists := c.subs[TopicMetrics]; exists {
-		return
-	}
-
-	sub, ch := c.ss.hub.Subscribe(TopicMetrics)
-	ctx, cancel := context.WithCancel(context.Background())
-	c.subs[TopicMetrics] = &subscription{sub: sub, topic: TopicMetrics, cancel: cancel}
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-ch:
-				if !ok {
-					return
-				}
-				update, ok := msg.(*protocol.MetricsUpdate)
-				if !ok {
-					continue
-				}
-				env, err := protocol.NewEnvelope(protocol.TypeMetricsUpdate, 0, update)
-				if err != nil {
-					continue
-				}
-				c.writeMsg(env)
-			}
-		}
-	}()
+	c.subscribeSimple(TopicMetrics, protocol.TypeMetricsUpdate)
 }
 
 func (c *connState) subscribeLogs(env *protocol.Envelope) {
@@ -289,7 +261,7 @@ func (c *connState) subscribeLogs(env *protocol.Envelope) {
 	}
 
 	sub, ch := c.ss.hub.Subscribe(TopicLogs)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(c.ctx)
 	c.subs[TopicLogs] = &subscription{sub: sub, topic: TopicLogs, cancel: cancel}
 
 	// Capture project name for dynamic resolution (not a snapshot of IDs).
@@ -342,45 +314,23 @@ func (c *connState) containerInProject(containerID, project string) bool {
 }
 
 func (c *connState) subscribeAlerts() {
-	if _, exists := c.subs[TopicAlerts]; exists {
-		return
-	}
-
-	sub, ch := c.ss.hub.Subscribe(TopicAlerts)
-	ctx, cancel := context.WithCancel(context.Background())
-	c.subs[TopicAlerts] = &subscription{sub: sub, topic: TopicAlerts, cancel: cancel}
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-ch:
-				if !ok {
-					return
-				}
-				event, ok := msg.(*protocol.AlertEvent)
-				if !ok {
-					continue
-				}
-				env, err := protocol.NewEnvelope(protocol.TypeAlertEvent, 0, event)
-				if err != nil {
-					continue
-				}
-				c.writeMsg(env)
-			}
-		}
-	}()
+	c.subscribeSimple(TopicAlerts, protocol.TypeAlertEvent)
 }
 
 func (c *connState) subscribeContainers() {
-	if _, exists := c.subs[TopicContainers]; exists {
+	c.subscribeSimple(TopicContainers, protocol.TypeContainerEvent)
+}
+
+// subscribeSimple sets up a streaming subscription that forwards all messages
+// on the given topic to the client as envelopes of the given type.
+func (c *connState) subscribeSimple(topic string, envType protocol.MsgType) {
+	if _, exists := c.subs[topic]; exists {
 		return
 	}
 
-	sub, ch := c.ss.hub.Subscribe(TopicContainers)
-	ctx, cancel := context.WithCancel(context.Background())
-	c.subs[TopicContainers] = &subscription{sub: sub, topic: TopicContainers, cancel: cancel}
+	sub, ch := c.ss.hub.Subscribe(topic)
+	ctx, cancel := context.WithCancel(c.ctx)
+	c.subs[topic] = &subscription{sub: sub, topic: topic, cancel: cancel}
 
 	go func() {
 		for {
@@ -391,11 +341,7 @@ func (c *connState) subscribeContainers() {
 				if !ok {
 					return
 				}
-				event, ok := msg.(*protocol.ContainerEvent)
-				if !ok {
-					continue
-				}
-				env, err := protocol.NewEnvelope(protocol.TypeContainerEvent, 0, event)
+				env, err := protocol.NewEnvelope(envType, 0, msg)
 				if err != nil {
 					continue
 				}

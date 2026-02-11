@@ -254,13 +254,7 @@ func (a *Alerter) Evaluate(ctx context.Context, snap *MetricSnapshot) {
 		}
 	}
 
-	pending := make([]func(), len(a.deferred))
-	copy(pending, a.deferred)
-	a.mu.Unlock()
-
-	for _, fn := range pending {
-		fn()
-	}
+	a.runDeferred()
 }
 
 // EvaluateContainerEvent evaluates container-scoped rules against a single
@@ -286,6 +280,12 @@ func (a *Alerter) EvaluateContainerEvent(ctx context.Context, cm ContainerMetric
 		a.transition(ctx, r, key, matched, now, cm.ID, cm.Name)
 	}
 
+	a.runDeferred()
+}
+
+// runDeferred copies deferred side effects, releases a.mu, then executes them.
+// Caller must hold a.mu.
+func (a *Alerter) runDeferred() {
 	pending := make([]func(), len(a.deferred))
 	copy(pending, a.deferred)
 	a.mu.Unlock()
