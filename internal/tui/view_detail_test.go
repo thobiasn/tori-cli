@@ -74,6 +74,20 @@ func TestDetailRestartConfirmationFlow(t *testing.T) {
 	}
 }
 
+func TestDetailRestartNotInGroupMode(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	s.Detail.project = "myapp"
+	s.Detail.projectIDs = []string{"c1", "c2"}
+	s.Detail.reset()
+
+	// Press 'r' in group mode should not trigger restart.
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	if s.Detail.confirmRestart {
+		t.Error("'r' in group mode should not trigger confirm restart")
+	}
+}
+
 func TestDetailCursorBounded(t *testing.T) {
 	a := newTestApp()
 	s := a.session()
@@ -132,6 +146,9 @@ func TestDetailReset(t *testing.T) {
 	}
 	if s.filterStream != "" {
 		t.Errorf("filterStream = %q, want empty", s.filterStream)
+	}
+	if s.filterContainerID != "" {
+		t.Errorf("filterContainerID = %q, want empty", s.filterContainerID)
 	}
 	if s.searchText != "" {
 		t.Errorf("searchText = %q, want empty", s.searchText)
@@ -278,6 +295,22 @@ func TestDetailMatchesFilter(t *testing.T) {
 	}
 }
 
+func TestDetailMatchesFilterContainer(t *testing.T) {
+	s := &DetailState{project: "myapp", projectIDs: []string{"c1", "c2"}}
+	s.reset()
+
+	s.filterContainerID = "c1"
+	e1 := protocol.LogEntryMsg{ContainerID: "c1", Message: "yes"}
+	e2 := protocol.LogEntryMsg{ContainerID: "c2", Message: "no"}
+
+	if !s.matchesFilter(e1) {
+		t.Error("should match c1")
+	}
+	if s.matchesFilter(e2) {
+		t.Error("should not match c2")
+	}
+}
+
 func TestDetailFilteredData(t *testing.T) {
 	s := &DetailState{containerID: "c1"}
 	s.reset()
@@ -304,5 +337,80 @@ func TestDetailFilteredData(t *testing.T) {
 	data = s.filteredData()
 	if len(data) != 2 {
 		t.Errorf("search 'out': got %d, want 2", len(data))
+	}
+}
+
+func TestDetailGroupModeStreamEntry(t *testing.T) {
+	s := &DetailState{
+		project:    "myapp",
+		projectIDs: []string{"c1", "c2"},
+	}
+	s.reset()
+
+	// Entry from c1 (in project) should be accepted.
+	s.onStreamEntry(protocol.LogEntryMsg{ContainerID: "c1", Message: "yes"})
+	// Entry from c3 (not in project) should be rejected.
+	s.onStreamEntry(protocol.LogEntryMsg{ContainerID: "c3", Message: "no"})
+	// Entry from c2 (in project) should be accepted.
+	s.onStreamEntry(protocol.LogEntryMsg{ContainerID: "c2", Message: "also yes"})
+
+	if s.logs.Len() != 2 {
+		t.Errorf("expected 2 entries in group mode, got %d", s.logs.Len())
+	}
+}
+
+func TestDetailCycleContainerFilter(t *testing.T) {
+	s := &DetailState{
+		project:    "myapp",
+		projectIDs: []string{"c1", "c2", "c3"},
+	}
+	s.reset()
+
+	s.cycleContainerFilter(nil) // contInfo not needed for ID cycling
+	if s.filterContainerID != "c1" {
+		t.Errorf("first cycle = %q, want c1", s.filterContainerID)
+	}
+
+	s.cycleContainerFilter(nil)
+	if s.filterContainerID != "c2" {
+		t.Errorf("second cycle = %q, want c2", s.filterContainerID)
+	}
+
+	s.cycleContainerFilter(nil)
+	if s.filterContainerID != "c3" {
+		t.Errorf("third cycle = %q, want c3", s.filterContainerID)
+	}
+
+	s.cycleContainerFilter(nil)
+	if s.filterContainerID != "" {
+		t.Errorf("fourth cycle = %q, want empty", s.filterContainerID)
+	}
+}
+
+func TestDetailCycleContainerFilterSingleMode(t *testing.T) {
+	s := &DetailState{containerID: "c1"}
+	s.reset()
+
+	// In single-container mode, cycling should be a no-op.
+	s.cycleContainerFilter(nil)
+	if s.filterContainerID != "" {
+		t.Errorf("should stay empty in single mode, got %q", s.filterContainerID)
+	}
+}
+
+func TestDetailIsGroupMode(t *testing.T) {
+	single := &DetailState{containerID: "c1"}
+	if single.isGroupMode() {
+		t.Error("single container should not be group mode")
+	}
+
+	group := &DetailState{project: "myapp"}
+	if !group.isGroupMode() {
+		t.Error("project set should be group mode")
+	}
+
+	both := &DetailState{containerID: "c1", project: "myapp"}
+	if both.isGroupMode() {
+		t.Error("containerID set should not be group mode even with project")
 	}
 }

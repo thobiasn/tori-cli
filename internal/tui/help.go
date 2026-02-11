@@ -10,23 +10,9 @@ var dashboardHelp = `
  Navigation
    j/k, ↑/↓    Move cursor
    Space        Collapse/expand group
-   Enter        Open container detail
-   l            Open logs for container
+   Enter        Open container/group detail
    t            Toggle tracking
-   Tab, 1-4     Switch view
-   ?            Toggle help
-   q            Quit`
-
-var logViewHelp = `
- Navigation
-   j/k, ↑/↓    Move cursor / scroll
-   c            Cycle container filter
-   g            Cycle project filter
-   s            Cycle stream (all/stdout/stderr)
-   /            Text search
-   Enter        Expand/collapse line
-   Esc          Clear filters
-   Tab, 1-4     Switch view
+   Tab, 1-2     Switch view
    ?            Toggle help
    q            Quit`
 
@@ -36,7 +22,7 @@ var alertViewHelp = `
    a            Acknowledge alert
    s            Silence alert
    Esc          Clear selection
-   Tab, 1-4     Switch view
+   Tab, 1-2     Switch view
    ?            Toggle help
    q            Quit`
 
@@ -44,11 +30,13 @@ var detailViewHelp = `
  Navigation
    j/k, ↑/↓    Move cursor / scroll
    Enter        Expand/collapse line
-   /            Text search
+   c            Cycle container filter
+   g            Cycle project filter
    s            Cycle stream (all/stdout/stderr)
+   /            Text search
    r            Restart container
    Esc          Clear filters / back
-   Tab, 1-4     Switch view
+   Tab, 1-2     Switch view
    ?            Toggle help
    q            Quit`
 
@@ -58,8 +46,6 @@ func helpOverlay(active view, width, height int, theme *Theme) string {
 	switch active {
 	case viewDashboard:
 		text = dashboardHelp
-	case viewLogs:
-		text = logViewHelp
 	case viewAlerts:
 		text = alertViewHelp
 	case viewDetail:

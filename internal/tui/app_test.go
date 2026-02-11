@@ -86,7 +86,7 @@ func TestAppUpdateMetricsStaleCleanup(t *testing.T) {
 	}
 }
 
-func TestAppUpdateLogRoutesToAllViews(t *testing.T) {
+func TestAppUpdateLogRoutesToDetail(t *testing.T) {
 	a := newTestApp()
 	a.active = viewDashboard
 	s := a.session()
@@ -98,12 +98,6 @@ func TestAppUpdateLogRoutesToAllViews(t *testing.T) {
 	a = model.(App)
 
 	s = a.session()
-	if s.Logs.Len() != 1 {
-		t.Errorf("dashboard logs.Len() = %d, want 1", s.Logs.Len())
-	}
-	if s.Logv.logs.Len() != 1 {
-		t.Errorf("logv.logs.Len() = %d, want 1", s.Logv.logs.Len())
-	}
 	if s.Detail.logs.Len() != 1 {
 		t.Errorf("detail.logs.Len() = %d, want 1", s.Detail.logs.Len())
 	}
@@ -123,9 +117,6 @@ func TestAppUpdateLogDetailFilters(t *testing.T) {
 	s = a.session()
 	if s.Detail.logs.Len() != 0 {
 		t.Errorf("detail should filter non-matching container, got %d entries", s.Detail.logs.Len())
-	}
-	if s.Logv.logs.Len() != 1 {
-		t.Errorf("logv should have entry, got %d", s.Logv.logs.Len())
 	}
 }
 
@@ -191,20 +182,27 @@ func TestAppViewSwitchTab(t *testing.T) {
 
 	model, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
 	a = model.(App)
-	if a.active != viewDetail {
-		t.Errorf("after '2', active = %d, want viewDetail", a.active)
-	}
-
-	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})
-	a = model.(App)
 	if a.active != viewAlerts {
-		t.Errorf("after '3', active = %d, want viewAlerts", a.active)
+		t.Errorf("after '2', active = %d, want viewAlerts", a.active)
 	}
 
 	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
 	a = model.(App)
 	if a.active != viewDashboard {
 		t.Errorf("after '1', active = %d, want viewDashboard", a.active)
+	}
+
+	// Tab should cycle dashboard <-> alerts.
+	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
+	a = model.(App)
+	if a.active != viewAlerts {
+		t.Errorf("tab from dashboard should go to alerts, got %d", a.active)
+	}
+
+	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
+	a = model.(App)
+	if a.active != viewDashboard {
+		t.Errorf("tab from alerts should go to dashboard, got %d", a.active)
 	}
 }
 
@@ -260,7 +258,7 @@ func TestAppViewRendersWithoutPanic(t *testing.T) {
 	a.err = nil
 	a.width = 120
 	a.height = 40
-	for _, view := range []view{viewDashboard, viewLogs, viewAlerts, viewDetail} {
+	for _, view := range []view{viewDashboard, viewAlerts, viewDetail} {
 		a.active = view
 		v := a.View()
 		if v == "" {

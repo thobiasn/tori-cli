@@ -18,7 +18,6 @@ const (
 	viewDashboard view = iota
 	viewDetail
 	viewAlerts
-	viewLogs
 )
 
 // App is the root Bubbletea model.
@@ -179,8 +178,6 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case LogMsg:
 		if s := a.sessions[msg.Server]; s != nil {
-			s.Logs.Push(msg.LogEntryMsg)
-			s.Logv.onStreamEntry(msg.LogEntryMsg)
 			s.Detail.onStreamEntry(msg.LogEntryMsg)
 		}
 		return a, nil
@@ -210,8 +207,6 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ContainerEventMsg:
 		if s := a.sessions[msg.Server]; s != nil {
 			entry := containerEventToLog(msg.ContainerEvent)
-			s.Logs.Push(entry)
-			s.Logv.onStreamEntry(entry)
 			s.Detail.onStreamEntry(entry)
 		}
 		return a, nil
@@ -228,12 +223,6 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case trackingDoneMsg:
 		if s := a.sessions[msg.server]; s != nil {
 			return a, queryContainersCmd(s.Client)
-		}
-		return a, nil
-
-	case logQueryMsg:
-		if s := a.session(); s != nil {
-			s.Logv.handleBackfill(msg)
 		}
 		return a, nil
 
@@ -354,8 +343,6 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch a.active {
 	case viewDashboard:
 		return a, updateDashboard(&a, s, msg)
-	case viewLogs:
-		return a, updateLogView(&a, s, msg)
 	case viewAlerts:
 		return a, updateAlertView(&a, s, msg)
 	case viewDetail:
@@ -385,15 +372,16 @@ func (a *App) handleViewSwitch(key string) (tea.Cmd, bool) {
 	prev := a.active
 	switch key {
 	case "tab":
-		a.active = (a.active + 1) % 4
+		// Cycle between dashboard and alerts (skip detail — it's entered via Enter).
+		if a.active == viewDashboard {
+			a.active = viewAlerts
+		} else {
+			a.active = viewDashboard
+		}
 	case "1":
 		a.active = viewDashboard
 	case "2":
-		a.active = viewDetail
-	case "3":
 		a.active = viewAlerts
-	case "4":
-		a.active = viewLogs
 	default:
 		return nil, false
 	}
@@ -409,8 +397,6 @@ func (a *App) onViewSwitch() tea.Cmd {
 		return nil
 	}
 	switch a.active {
-	case viewLogs:
-		return s.Logv.onSwitch(s.Client)
 	case viewAlerts:
 		return s.Alertv.onSwitch(s.Client)
 	case viewDetail:
@@ -448,8 +434,6 @@ func (a App) View() string {
 	switch a.active {
 	case viewDashboard:
 		content = renderDashboard(&a, s, a.width, contentH)
-	case viewLogs:
-		content = renderLogView(&a, s, a.width, contentH)
 	case viewAlerts:
 		content = renderAlertView(&a, s, a.width, contentH)
 	case viewDetail:
@@ -498,31 +482,33 @@ func (a *App) renderServerPicker(width, height int) string {
 func (a *App) viewHints() string {
 	switch a.active {
 	case viewDashboard:
-		return "j/k Move  Space Fold  Enter Open  t Track  l Logs"
-	case viewLogs:
-		return "j/k Scroll  c Container  g Group  s Stream  / Search"
+		return "j/k Move  Space Fold  Enter Open  t Track"
 	case viewAlerts:
 		return "j/k Move  a Ack  s Silence"
 	case viewDetail:
-		return "j/k Scroll  s Stream  / Search  r Restart"
+		return "j/k Scroll  c Container  g Group  s Stream  / Search  r Restart"
 	}
 	return ""
 }
 
 func (a *App) renderFooter() string {
-	tabs := [4]struct {
-		num  string
-		name string
-	}{
-		{"1", "Dashboard"},
-		{"2", "Detail"},
-		{"3", "Alerts"},
-		{"4", "Logs"},
+	var footer string
+
+	if a.active == viewDetail {
+		footer += "  Esc Back"
 	}
 
-	var footer string
-	for i, t := range tabs {
-		if view(i) == a.active {
+	type tab struct {
+		num    string
+		name   string
+		target view
+	}
+	tabs := []tab{
+		{"1", "Dashboard", viewDashboard},
+		{"2", "Alerts", viewAlerts},
+	}
+	for _, t := range tabs {
+		if t.target == a.active {
 			footer += fmt.Sprintf(" [%s %s]", t.num, t.name)
 		} else {
 			footer += fmt.Sprintf("  %s %s ", t.num, t.name)

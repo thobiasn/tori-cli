@@ -148,22 +148,6 @@ func TestRenderDiskPanelEmpty(t *testing.T) {
 	}
 }
 
-func TestRenderLogPanel(t *testing.T) {
-	theme := DefaultTheme()
-	logs := NewRingBuffer[protocol.LogEntryMsg](10)
-	logs.Push(protocol.LogEntryMsg{Timestamp: 1700000000, ContainerName: "web", Message: "hello world", Stream: "stdout"})
-	logs.Push(protocol.LogEntryMsg{Timestamp: 1700000001, ContainerName: "web", Message: "error!", Stream: "stderr"})
-
-	got := renderLogPanel(logs, 80, 6, &theme)
-	plain := stripANSI(got)
-	if !strings.Contains(plain, "hello world") {
-		t.Error("should contain log message")
-	}
-	if !strings.Contains(plain, "web") {
-		t.Error("should contain container name")
-	}
-}
-
 func TestRenderContainerPanel(t *testing.T) {
 	theme := DefaultTheme()
 	groups := []containerGroup{

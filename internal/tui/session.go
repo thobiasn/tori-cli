@@ -13,7 +13,6 @@ type Session struct {
 	Disks      []protocol.DiskMetrics
 	Containers []protocol.ContainerMetrics
 	ContInfo   []protocol.ContainerInfo
-	Logs       *RingBuffer[protocol.LogEntryMsg]
 	Alerts     map[int64]*protocol.AlertEvent
 
 	// History buffers.
@@ -29,7 +28,6 @@ type Session struct {
 
 	// Per-session view state.
 	Dash   DashboardState
-	Logv   LogViewState
 	Alertv AlertViewState
 	Detail DetailState
 
@@ -39,22 +37,20 @@ type Session struct {
 // NewSession creates a session with initialized buffers.
 func NewSession(name string, client *Client, tunnel *Tunnel) *Session {
 	return &Session{
-		Name:           name,
-		Client:         client,
-		Tunnel:         tunnel,
-		Logs:           NewRingBuffer[protocol.LogEntryMsg](500),
-		Alerts:         make(map[int64]*protocol.AlertEvent),
-		Rates:          NewRateCalc(),
-		CPUHistory:     make(map[string]*RingBuffer[float64]),
-		MemHistory:     make(map[string]*RingBuffer[float64]),
+		Name:                 name,
+		Client:               client,
+		Tunnel:               tunnel,
+		Alerts:               make(map[int64]*protocol.AlertEvent),
+		Rates:                NewRateCalc(),
+		CPUHistory:           make(map[string]*RingBuffer[float64]),
+		MemHistory:           make(map[string]*RingBuffer[float64]),
 		HostCPUHistory:       NewRingBuffer[float64](180),
 		HostMemHistory:       NewRingBuffer[float64](180),
 		HostMemUsedHistory:   NewRingBuffer[float64](180),
 		HostMemAvailHistory:  NewRingBuffer[float64](180),
 		HostMemCachedHistory: NewRingBuffer[float64](180),
 		HostMemFreeHistory:   NewRingBuffer[float64](180),
-		Dash:           newDashboardState(),
-		Logv:           newLogViewState(),
-		Alertv:         newAlertViewState(),
+		Dash:                 newDashboardState(),
+		Alertv:               newAlertViewState(),
 	}
 }

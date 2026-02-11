@@ -114,12 +114,13 @@ type QueryMetricsResp struct {
 
 // QueryLogsReq is the body for TypeQueryLogs.
 type QueryLogsReq struct {
-	Start       int64  `msgpack:"start"`
-	End         int64  `msgpack:"end"`
-	ContainerID string `msgpack:"container_id,omitempty"`
-	Stream      string `msgpack:"stream,omitempty"`
-	Search      string `msgpack:"search,omitempty"`
-	Limit       int    `msgpack:"limit,omitempty"`
+	Start        int64    `msgpack:"start"`
+	End          int64    `msgpack:"end"`
+	ContainerID  string   `msgpack:"container_id,omitempty"`
+	ContainerIDs []string `msgpack:"container_ids,omitempty"`
+	Stream       string   `msgpack:"stream,omitempty"`
+	Search       string   `msgpack:"search,omitempty"`
+	Limit        int      `msgpack:"limit,omitempty"`
 }
 
 // QueryLogsResp is the response for TypeQueryLogs.

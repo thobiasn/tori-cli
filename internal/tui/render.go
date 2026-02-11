@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/thobiasn/rook/internal/protocol"
 )
 
 // Box renders a bordered panel with a title using rounded Unicode corners.
@@ -726,4 +727,58 @@ func ContainerNameColor(name string, theme *Theme) lipgloss.Color {
 	h.Write([]byte(name))
 	palette := theme.ContainerPalette
 	return palette[h.Sum32()%uint32(len(palette))]
+}
+
+// wrapText wraps a string into lines of the given width, breaking on rune boundaries.
+func wrapText(s string, width int) []string {
+	if width <= 0 {
+		return nil
+	}
+	runes := []rune(s)
+	var lines []string
+	for len(runes) > width {
+		lines = append(lines, string(runes[:width]))
+		runes = runes[width:]
+	}
+	if len(runes) > 0 {
+		lines = append(lines, string(runes))
+	}
+	return lines
+}
+
+// formatLogLine renders a single log entry as a styled string.
+func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme) string {
+	// Synthetic lifecycle events render as a distinct separator line.
+	if entry.Stream == "event" {
+		style := lipgloss.NewStyle().Foreground(theme.Warning)
+		ts := lipgloss.NewStyle().Foreground(theme.Muted).Render(FormatTimestamp(entry.Timestamp))
+		return ts + " " + style.Render(Truncate(entry.Message, width-9))
+	}
+
+	ts := lipgloss.NewStyle().Foreground(theme.Muted).Render(FormatTimestamp(entry.Timestamp))
+	nameColor := ContainerNameColor(entry.ContainerName, theme)
+	name := lipgloss.NewStyle().Foreground(nameColor).Render(fmt.Sprintf("%-14s", Truncate(entry.ContainerName, 14)))
+
+	// ts (8) + space (1) + name (14) + space (1) = 24 chars overhead
+	msgW := width - 24
+	if msgW < 10 {
+		msgW = 10
+	}
+	msg := Truncate(entry.Message, msgW)
+
+	if entry.Stream == "stderr" {
+		msg = lipgloss.NewStyle().Foreground(theme.Critical).Render(msg)
+	}
+
+	return fmt.Sprintf("%s %s %s", ts, name, msg)
+}
+
+// containerNameByID looks up a container name by ID.
+func containerNameByID(id string, contInfo []protocol.ContainerInfo) string {
+	for _, ci := range contInfo {
+		if ci.ID == id {
+			return ci.Name
+		}
+	}
+	return ""
 }

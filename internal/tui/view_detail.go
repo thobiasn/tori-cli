@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -11,17 +12,25 @@ import (
 	"github.com/thobiasn/rook/internal/protocol"
 )
 
-// DetailState holds state for the container detail view.
+// DetailState holds state for the container/group detail view.
 type DetailState struct {
-	containerID    string
-	logs           *RingBuffer[protocol.LogEntryMsg]
-	logScroll      int
-	logLive        bool
-	logCursor      int // -1 = inactive
-	logExpanded    int // -1 = none
-	filterStream   string // "", "stdout", "stderr"
-	searchText     string
-	searchMode     bool
+	containerID string // single-container mode (empty in group mode)
+	project     string // group mode (empty in single-container mode)
+	projectIDs  []string // container IDs in the project (group mode)
+
+	logs      *RingBuffer[protocol.LogEntryMsg]
+	logScroll int
+	logLive   bool
+	logCursor   int // -1 = inactive
+	logExpanded int // -1 = none
+
+	// Filters.
+	filterContainerID string // within-group container filter (c key)
+	filterProject     string // project filter (g key, only meaningful in group mode)
+	filterStream      string // "", "stdout", "stderr"
+	searchText        string
+	searchMode        bool
+
 	confirmRestart bool
 	backfilled     bool
 }
@@ -31,11 +40,13 @@ type detailLogQueryMsg struct {
 }
 
 func (s *DetailState) reset() {
-	s.logs = NewRingBuffer[protocol.LogEntryMsg](2000)
+	s.logs = NewRingBuffer[protocol.LogEntryMsg](5000)
 	s.logScroll = 0
 	s.logLive = true
 	s.logCursor = -1
 	s.logExpanded = -1
+	s.filterContainerID = ""
+	s.filterProject = ""
 	s.filterStream = ""
 	s.searchText = ""
 	s.searchMode = false
@@ -43,8 +54,12 @@ func (s *DetailState) reset() {
 	s.backfilled = false
 }
 
+func (s *DetailState) isGroupMode() bool {
+	return s.project != "" && s.containerID == ""
+}
+
 func (s *DetailState) onSwitch(c *Client) tea.Cmd {
-	if s.containerID == "" {
+	if s.containerID == "" && s.project == "" {
 		return nil
 	}
 	if s.logs == nil {
@@ -54,15 +69,21 @@ func (s *DetailState) onSwitch(c *Client) tea.Cmd {
 		return nil
 	}
 	id := s.containerID
+	ids := s.projectIDs
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		entries, err := c.QueryLogs(ctx, &protocol.QueryLogsReq{
-			Start:       0,
-			End:         time.Now().Unix(),
-			ContainerID: id,
-			Limit:       200,
-		})
+		req := &protocol.QueryLogsReq{
+			Start: 0,
+			End:   time.Now().Unix(),
+			Limit: 500,
+		}
+		if len(ids) > 0 {
+			req.ContainerIDs = ids
+		} else if id != "" {
+			req.ContainerID = id
+		}
+		entries, err := c.QueryLogs(ctx, req)
 		if err != nil {
 			return detailLogQueryMsg{}
 		}
@@ -71,7 +92,20 @@ func (s *DetailState) onSwitch(c *Client) tea.Cmd {
 }
 
 func (s *DetailState) onStreamEntry(entry protocol.LogEntryMsg) {
-	if s.logs == nil || entry.ContainerID != s.containerID {
+	if s.logs == nil {
+		return
+	}
+	if s.isGroupMode() {
+		// Accept entries from any container in the project.
+		for _, id := range s.projectIDs {
+			if entry.ContainerID == id {
+				s.logs.Push(entry)
+				return
+			}
+		}
+		return
+	}
+	if entry.ContainerID != s.containerID {
 		return
 	}
 	s.logs.Push(entry)
@@ -93,7 +127,7 @@ func (s *DetailState) handleBackfill(msg detailLogQueryMsg) {
 		oldestTS = existing[0].Timestamp
 	}
 
-	newBuf := NewRingBuffer[protocol.LogEntryMsg](2000)
+	newBuf := NewRingBuffer[protocol.LogEntryMsg](5000)
 	for _, e := range msg.entries {
 		if oldestTS == 0 || e.Timestamp < oldestTS {
 			newBuf.Push(e)
@@ -107,6 +141,9 @@ func (s *DetailState) handleBackfill(msg detailLogQueryMsg) {
 }
 
 func (s *DetailState) matchesFilter(entry protocol.LogEntryMsg) bool {
+	if s.filterContainerID != "" && entry.ContainerID != s.filterContainerID {
+		return false
+	}
 	if s.filterStream != "" && entry.Stream != s.filterStream {
 		return false
 	}
@@ -121,7 +158,7 @@ func (s *DetailState) filteredData() []protocol.LogEntryMsg {
 		return nil
 	}
 	all := s.logs.Data()
-	if s.filterStream == "" && s.searchText == "" {
+	if s.filterContainerID == "" && s.filterStream == "" && s.searchText == "" {
 		return all
 	}
 	var out []protocol.LogEntryMsg
@@ -133,14 +170,84 @@ func (s *DetailState) filteredData() []protocol.LogEntryMsg {
 	return out
 }
 
-// renderDetail renders the container detail full-screen view.
+func (s *DetailState) cycleContainerFilter(contInfo []protocol.ContainerInfo) {
+	// In single-container mode, no container cycling.
+	if !s.isGroupMode() {
+		return
+	}
+	ids := s.projectIDs
+	if len(ids) == 0 {
+		return
+	}
+	if s.filterContainerID == "" {
+		s.filterContainerID = ids[0]
+		return
+	}
+	for i, id := range ids {
+		if id == s.filterContainerID {
+			if i+1 < len(ids) {
+				s.filterContainerID = ids[i+1]
+			} else {
+				s.filterContainerID = ""
+			}
+			return
+		}
+	}
+	s.filterContainerID = ""
+}
+
+func (s *DetailState) cycleProjectFilter(contInfo []protocol.ContainerInfo) {
+	seen := make(map[string]bool)
+	for _, ci := range contInfo {
+		if ci.Project != "" {
+			seen[ci.Project] = true
+		}
+	}
+	if len(seen) == 0 {
+		s.filterProject = ""
+		return
+	}
+	projects := make([]string, 0, len(seen))
+	for p := range seen {
+		projects = append(projects, p)
+	}
+	sort.Strings(projects)
+
+	if s.filterProject == "" {
+		s.filterProject = projects[0]
+		return
+	}
+	for i, p := range projects {
+		if p == s.filterProject {
+			if i+1 < len(projects) {
+				s.filterProject = projects[i+1]
+			} else {
+				s.filterProject = ""
+			}
+			return
+		}
+	}
+	s.filterProject = ""
+}
+
+// renderDetail renders the container/group detail full-screen view.
 func renderDetail(a *App, s *Session, width, height int) string {
 	theme := &a.theme
 	det := &s.Detail
 
-	if det.containerID == "" {
+	if det.containerID == "" && det.project == "" {
 		return Box("Detail", "  No container selected. Press Enter on a container in the dashboard.", width, height, theme)
 	}
+
+	if det.isGroupMode() {
+		return renderDetailGroup(a, s, width, height)
+	}
+	return renderDetailSingle(a, s, width, height)
+}
+
+func renderDetailSingle(a *App, s *Session, width, height int) string {
+	theme := &a.theme
+	det := &s.Detail
 
 	// Find current container metrics.
 	var cm *protocol.ContainerMetrics
@@ -160,7 +267,7 @@ func renderDetail(a *App, s *Session, width, height int) string {
 		}
 	}
 
-	// Title.
+	// Title: "name — state — N alerts"
 	title := "Detail"
 	if ci != nil {
 		title = stripANSI(ci.Name)
@@ -172,26 +279,28 @@ func renderDetail(a *App, s *Session, width, height int) string {
 		stateInd := theme.StateIndicator(cm.State)
 		title = stripANSI(cm.Name) + " ── " + stateInd + " " + stripANSI(cm.State)
 	}
+	// Show alert count in title.
+	alertCount := len(containerAlerts(s.Alerts, det.containerID))
+	if alertCount > 0 {
+		title += fmt.Sprintf(" ── %d alert", alertCount)
+		if alertCount > 1 {
+			title += "s"
+		}
+	}
 
-	// Top section: CPU (3) + MEM (3) + NET + BLK + PID + IMG + UP + blank + RESTARTS + HC = 15 content + 2 borders = 17
-	metricsH := 17
+	// 1/3 metrics, 2/3 logs.
+	metricsH := height / 3
+	if metricsH < 11 {
+		metricsH = 11
+	}
 	logH := height - metricsH - 1
 	if logH < 5 {
 		metricsH = height - 6
 		logH = 5
 	}
 
-	// Split top section: left = metrics, right = alerts (50/50).
-	leftW := width / 2
-	rightW := width - leftW
-
-	metricsContent := renderDetailMetrics(s, det, cm, leftW, metricsH, theme)
-	metricsBox := Box(title, metricsContent, leftW, metricsH, theme)
-
-	alertsContent := renderDetailAlerts(s, det.containerID, rightW, metricsH, theme)
-	alertsBox := Box("Alerts", alertsContent, rightW, metricsH, theme)
-
-	topRow := lipgloss.JoinHorizontal(lipgloss.Top, metricsBox, alertsBox)
+	metricsContent := renderDetailMetrics(s, det, cm, width, metricsH, theme)
+	metricsBox := Box(title, metricsContent, width, metricsH, theme)
 
 	// Bottom section: logs.
 	containerName := ""
@@ -207,10 +316,114 @@ func renderDetail(a *App, s *Session, width, height int) string {
 
 	// Restart confirmation overlay.
 	if det.confirmRestart {
-		return topRow + "\n" + renderRestartConfirm(cm, width, logH, theme)
+		return metricsBox + "\n" + renderRestartConfirm(cm, width, logH, theme)
 	}
 
-	return topRow + "\n" + logBox
+	return metricsBox + "\n" + logBox
+}
+
+func renderDetailGroup(a *App, s *Session, width, height int) string {
+	theme := &a.theme
+	det := &s.Detail
+
+	// Build title: "project — N/M running — K alerts"
+	total := len(det.projectIDs)
+	running := 0
+	for _, id := range det.projectIDs {
+		for _, c := range s.Containers {
+			if c.ID == id && c.State == "running" {
+				running++
+				break
+			}
+		}
+	}
+	title := det.project + fmt.Sprintf(" ── %d/%d running", running, total)
+
+	// Count alerts for all containers in project.
+	alertCount := 0
+	for _, id := range det.projectIDs {
+		alertCount += len(containerAlerts(s.Alerts, id))
+	}
+	if alertCount > 0 {
+		title += fmt.Sprintf(" ── %d alert", alertCount)
+		if alertCount > 1 {
+			title += "s"
+		}
+	}
+
+	// 1/3 metrics, 2/3 logs.
+	metricsH := height / 3
+	if metricsH < 11 {
+		metricsH = 11
+	}
+	logH := height - metricsH - 1
+	if logH < 5 {
+		metricsH = height - 6
+		logH = 5
+	}
+
+	metricsContent := renderDetailGroupMetrics(s, det, width, metricsH, theme)
+	metricsBox := Box(title, metricsContent, width, metricsH, theme)
+
+	var logBox string
+	if det.logs != nil && logH > 3 {
+		logBox = renderDetailLogs(det, det.project, width, logH, theme)
+	}
+
+	return metricsBox + "\n" + logBox
+}
+
+func renderDetailGroupMetrics(s *Session, det *DetailState, width, height int, theme *Theme) string {
+	innerW := width - 2
+	var lines []string
+
+	// Aggregate CPU/MEM across all containers in the group.
+	var totalCPU, totalMem float64
+	var totalMemUsage, totalMemLimit uint64
+	for _, id := range det.projectIDs {
+		for _, c := range s.Containers {
+			if c.ID == id {
+				totalCPU += c.CPUPercent
+				totalMem += c.MemPercent
+				totalMemUsage += c.MemUsage
+				totalMemLimit += c.MemLimit
+				break
+			}
+		}
+	}
+
+	lines = append(lines, fmt.Sprintf(" CPU  %5.1f%% (total)", totalCPU))
+	lines = append(lines, fmt.Sprintf(" MEM  %s / %s (total)", FormatBytes(totalMemUsage), FormatBytes(totalMemLimit)))
+	lines = append(lines, "")
+
+	// Per-container summary table.
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+	lines = append(lines, muted.Render(" CONTAINER          STATE     CPU     MEM"))
+	for _, id := range det.projectIDs {
+		name := containerNameByID(id, s.ContInfo)
+		if name == "" {
+			name = id[:min(12, len(id))]
+		}
+		var cm *protocol.ContainerMetrics
+		for i := range s.Containers {
+			if s.Containers[i].ID == id {
+				cm = &s.Containers[i]
+				break
+			}
+		}
+		if cm != nil {
+			indicator := theme.StateIndicator(cm.State)
+			line := fmt.Sprintf(" %s %-18s %-8s %5.1f%% %6s",
+				indicator, Truncate(name, 18), Truncate(cm.State, 8),
+				cm.CPUPercent, FormatBytes(cm.MemUsage))
+			lines = append(lines, TruncateStyled(line, innerW))
+		} else {
+			line := fmt.Sprintf("   %-18s %-8s    —      —", Truncate(name, 18), "—")
+			lines = append(lines, muted.Render(Truncate(line, innerW)))
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMetrics, width, height int, theme *Theme) string {
@@ -218,16 +431,16 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 		return "  Waiting for metrics..."
 	}
 	innerW := width - 2
-	graphRows := 3
+	graphRows := 2
 	labelW := 5 // " CPU " / " MEM "
 
 	var lines []string
 
-	// CPU + MEM: value next to label (right-aligned), graph fills remaining width.
+	// CPU + MEM: value next to label, graph fills remaining width.
 	cpuVal := fmt.Sprintf("%5.1f%%", cm.CPUPercent)
 	memVal := fmt.Sprintf("%s / %s limit", FormatBytes(cm.MemUsage), FormatBytes(cm.MemLimit))
 	valW := max(len(cpuVal), len(memVal))
-	leftW := labelW + valW + 1 // " CPU " + padded value + space before graph
+	leftW := labelW + valW + 1
 	graphW := innerW - leftW
 	if graphW < 10 {
 		graphW = 10
@@ -264,18 +477,22 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 		lines = append(lines, fmt.Sprintf(" MEM %s", memVal))
 	}
 
-	// NET + BLK on separate lines.
+	// NET + BLK on one line.
 	rates := s.Rates.ContainerRates[det.containerID]
 	rxStyle := lipgloss.NewStyle().Foreground(theme.Healthy)
 	txStyle := lipgloss.NewStyle().Foreground(theme.Accent)
-	lines = append(lines, fmt.Sprintf(" NET  %s %s  %s %s",
+	lines = append(lines, fmt.Sprintf(" NET  %s %s  %s %s    BLK  %s %s  %s %s",
 		rxStyle.Render("▼"), FormatBytesRate(rates.NetRxRate),
-		txStyle.Render("▲"), FormatBytesRate(rates.NetTxRate)))
-	lines = append(lines, fmt.Sprintf(" BLK  %s %s  %s %s",
+		txStyle.Render("▲"), FormatBytesRate(rates.NetTxRate),
 		rxStyle.Render("R"), FormatBytesRate(rates.BlockReadRate),
 		txStyle.Render("W"), FormatBytesRate(rates.BlockWriteRate)))
 
-	// PID, IMG, UP.
+	// PID + RESTARTS + HC on one line.
+	uptime := formatContainerUptime(cm.State, cm.StartedAt, cm.ExitCode)
+	lines = append(lines, fmt.Sprintf(" PID  %d    %s    HC %s",
+		cm.PIDs, formatRestarts(cm.RestartCount, theme), theme.HealthText(cm.Health)))
+
+	// IMG + UP on one line.
 	var image string
 	for _, ci := range s.ContInfo {
 		if ci.ID == det.containerID {
@@ -283,19 +500,11 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 			break
 		}
 	}
-	lines = append(lines, fmt.Sprintf(" PID  %d", cm.PIDs))
-	if image != "" {
-		lines = append(lines, fmt.Sprintf(" IMG  %s", Truncate(image, innerW-6)))
-	} else {
-		lines = append(lines, fmt.Sprintf(" IMG  %s", Truncate(stripANSI(cm.Image), innerW-6)))
+	if image == "" {
+		image = stripANSI(cm.Image)
 	}
-	uptime := formatContainerUptime(cm.State, cm.StartedAt, cm.ExitCode)
-	lines = append(lines, fmt.Sprintf(" UP   %s", uptime))
-
-	// Blank line, then HC + RESTARTS grouped.
-	lines = append(lines, "")
-	lines = append(lines, fmt.Sprintf(" HC   %s", theme.HealthText(cm.Health)))
-	lines = append(lines, fmt.Sprintf(" RESTARTS  %s", formatRestarts(cm.RestartCount, theme)))
+	imgLine := fmt.Sprintf(" IMG  %s    UP %s", Truncate(image, innerW-20), uptime)
+	lines = append(lines, Truncate(imgLine, innerW))
 
 	return strings.Join(lines, "\n")
 }
@@ -308,7 +517,6 @@ func historyData(hist map[string]*RingBuffer[float64], id string) []float64 {
 }
 
 // containerAlerts returns active alerts that match a container ID.
-// Instance keys use the format "rulename:containerID".
 func containerAlerts(alerts map[int64]*protocol.AlertEvent, containerID string) []*protocol.AlertEvent {
 	suffix := ":" + containerID
 	var out []*protocol.AlertEvent
@@ -320,30 +528,7 @@ func containerAlerts(alerts map[int64]*protocol.AlertEvent, containerID string) 
 	return out
 }
 
-func renderDetailAlerts(s *Session, containerID string, width, height int, theme *Theme) string {
-	alerts := containerAlerts(s.Alerts, containerID)
-	if len(alerts) == 0 {
-		return lipgloss.NewStyle().Foreground(theme.Muted).Render("  No active alerts")
-	}
-
-	innerW := width - 2
-	muted := lipgloss.NewStyle().Foreground(theme.Muted)
-	var lines []string
-	for _, alert := range alerts {
-		sev := severityTag(alert.Severity, theme)
-		ts := time.Unix(alert.FiredAt, 0).Format("15:04")
-		rule := Truncate(alert.RuleName, 16)
-		line := fmt.Sprintf(" %s %s %s", sev, ts, rule)
-		lines = append(lines, TruncateStyled(line, innerW))
-		if alert.Message != "" {
-			lines = append(lines, "  "+Truncate(alert.Message, innerW-3))
-		}
-		lines = append(lines, muted.Render("  "+alert.Condition))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func renderDetailLogs(s *DetailState, containerName string, width, height int, theme *Theme) string {
+func renderDetailLogs(s *DetailState, label string, width, height int, theme *Theme) string {
 	boxH := height - 1 // leave room for shortcut footer
 	innerH := boxH - 2
 	if innerH < 1 {
@@ -405,9 +590,10 @@ func renderDetailLogs(s *DetailState, containerName string, width, height int, t
 	}
 
 	title := "Logs"
-	if containerName != "" {
-		title += " ── " + containerName
+	if label != "" {
+		title += " ── " + label
 	}
+	title += " ── " + FormatNumber(len(data)) + " lines"
 	paused := s.logScroll > 0 || s.logCursor >= 0
 	if paused {
 		title += " ── PAUSED"
@@ -422,10 +608,21 @@ func renderDetailLogs(s *DetailState, containerName string, width, height int, t
 func renderDetailLogFooter(s *DetailState, width int, theme *Theme) string {
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 
+	var parts []string
+
+	if s.isGroupMode() {
+		contLabel := "all"
+		if s.filterContainerID != "" {
+			contLabel = Truncate(s.filterContainerID[:min(12, len(s.filterContainerID))], 12)
+		}
+		parts = append(parts, "c: "+muted.Render(contLabel))
+	}
+
 	streamLabel := "all"
 	if s.filterStream != "" {
 		streamLabel = s.filterStream
 	}
+	parts = append(parts, "s: "+muted.Render(streamLabel))
 
 	var searchPart string
 	if s.searchMode {
@@ -435,8 +632,14 @@ func renderDetailLogFooter(s *DetailState, width int, theme *Theme) string {
 	} else {
 		searchPart = "/ search"
 	}
+	parts = append(parts, searchPart)
 
-	footer := fmt.Sprintf(" s: %s | %s | r restart | Esc clear", muted.Render(streamLabel), searchPart)
+	if s.containerID != "" {
+		parts = append(parts, "r restart")
+	}
+	parts = append(parts, "Esc clear")
+
+	footer := " " + strings.Join(parts, " | ")
 	return Truncate(footer, width)
 }
 
@@ -493,8 +696,12 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 
 	data := det.filteredData()
 	// Compute innerH for cursor bounds (same formula as renderDetail).
-	metricsH := 17
-	logH := a.height - 1 - metricsH - 1
+	contentH := a.height - 1
+	metricsH := contentH / 3
+	if metricsH < 11 {
+		metricsH = 11
+	}
+	logH := contentH - metricsH - 1
 	if logH < 5 {
 		logH = 5
 	}
@@ -515,7 +722,19 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 
 	switch key {
 	case "r":
-		det.confirmRestart = true
+		if det.containerID != "" {
+			det.confirmRestart = true
+		}
+	case "c":
+		det.cycleContainerFilter(s.ContInfo)
+		det.logScroll = 0
+		det.logCursor = -1
+		det.logExpanded = -1
+	case "g":
+		det.cycleProjectFilter(s.ContInfo)
+		det.logScroll = 0
+		det.logCursor = -1
+		det.logExpanded = -1
 	case "j", "down":
 		if det.logCursor == -1 {
 			det.logCursor = visibleCount - 1
@@ -568,8 +787,9 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 			det.logScroll = 0
 			det.logCursor = -1
 			det.logExpanded = -1
-		} else if det.filterStream != "" {
+		} else if det.filterStream != "" || det.filterContainerID != "" {
 			det.filterStream = ""
+			det.filterContainerID = ""
 			det.logScroll = 0
 			det.logCursor = -1
 			det.logExpanded = -1

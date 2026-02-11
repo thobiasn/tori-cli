@@ -331,6 +331,51 @@ func TestIsContainerTracked(t *testing.T) {
 	}
 }
 
+func TestUpdateDashboardEnterGroupHeader(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	s.Dash.groups = []containerGroup{
+		{name: "myapp", containers: []protocol.ContainerMetrics{
+			{ID: "c1", Name: "web"}, {ID: "c2", Name: "db"},
+		}},
+	}
+	s.ContInfo = []protocol.ContainerInfo{
+		{ID: "c1", Name: "web", Project: "myapp"},
+		{ID: "c2", Name: "db", Project: "myapp"},
+	}
+	s.Dash.cursor = 0 // on group header
+
+	updateDashboard(&a, s, tea.KeyMsg{Type: tea.KeyEnter})
+	if a.active != viewDetail {
+		t.Errorf("enter on group header should open detail, got %d", a.active)
+	}
+	if s.Detail.project != "myapp" {
+		t.Errorf("detail.project = %q, want myapp", s.Detail.project)
+	}
+	if s.Detail.containerID != "" {
+		t.Errorf("detail.containerID should be empty in group mode, got %q", s.Detail.containerID)
+	}
+	if len(s.Detail.projectIDs) != 2 {
+		t.Errorf("detail.projectIDs len = %d, want 2", len(s.Detail.projectIDs))
+	}
+}
+
+func TestUpdateDashboardEnterOtherGroupNoOp(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	s.Dash.groups = []containerGroup{
+		{name: "other", containers: []protocol.ContainerMetrics{
+			{ID: "c1", Name: "standalone"},
+		}},
+	}
+	s.Dash.cursor = 0
+
+	updateDashboard(&a, s, tea.KeyMsg{Type: tea.KeyEnter})
+	if a.active != viewDashboard {
+		t.Errorf("enter on 'other' group should stay on dashboard, got %d", a.active)
+	}
+}
+
 func TestCursorContainerMetrics(t *testing.T) {
 	groups := []containerGroup{
 		{name: "app", containers: []protocol.ContainerMetrics{

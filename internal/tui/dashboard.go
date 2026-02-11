@@ -101,7 +101,7 @@ func buildGroups(containers []protocol.ContainerMetrics, contInfo []protocol.Con
 	return groups
 }
 
-// renderDashboard assembles the 4-quadrant dashboard layout.
+// renderDashboard assembles the dashboard layout.
 func renderDashboard(a *App, s *Session, width, height int) string {
 	theme := &a.theme
 
@@ -131,25 +131,14 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		cpuH = 12
 	}
 
-	logH := (height - cpuH - alertH) * 25 / 100
-	if logH < 5 {
-		logH = 5
-	}
-
-	middleH := height - cpuH - alertH - logH
+	middleH := height - cpuH - alertH
 	if middleH < 8 {
 		middleH = 8
-		// Reclaim from logs if needed.
-		logH = height - cpuH - alertH - middleH
-		if logH < 5 {
-			logH = 5
-		}
 	}
 
 	cpuHistory := s.HostCPUHistory.Data()
 
 	alertPanel := renderAlertPanel(s.Alerts, width, theme)
-	logPanel := renderLogPanel(s.Logs, width, logH, theme)
 
 	if width >= 100 {
 		// Wide: 4-quadrant layout (side-by-side top and middle).
@@ -188,7 +177,7 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		selPanel := renderSelectedPanel(a, s, midRightW, middleH, theme)
 		midRow := lipgloss.JoinHorizontal(lipgloss.Top, contPanel, selPanel)
 
-		return strings.Join([]string{alertPanel, topRow, midRow, logPanel}, "\n")
+		return strings.Join([]string{alertPanel, topRow, midRow}, "\n")
 	}
 
 	// Narrow (80-99): stacked layout.
@@ -222,7 +211,7 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 	contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, width, contH, theme)
 	selPanel := renderSelectedPanel(a, s, width, selH, theme)
 
-	return strings.Join([]string{alertPanel, cpuPanel, memPanel, diskPanel, contPanel, selPanel, logPanel}, "\n")
+	return strings.Join([]string{alertPanel, cpuPanel, memPanel, diskPanel, contPanel, selPanel}, "\n")
 }
 
 // updateDashboard handles keys for the dashboard view.
@@ -247,17 +236,26 @@ func updateDashboard(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		id := cursorContainerID(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
 		if id != "" {
 			s.Detail.containerID = id
+			s.Detail.project = ""
 			s.Detail.reset()
 			a.active = viewDetail
 			return s.Detail.onSwitch(s.Client)
 		}
-	case "l":
-		// Jump to log view filtered to selected container.
-		id := cursorContainerID(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
-		if id != "" {
-			s.Logv.filterContainerID = id
-			a.active = viewLogs
-			return s.Logv.onSwitch(s.Client)
+		// Enter on group header opens detail in group mode.
+		groupName := cursorGroupName(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
+		if groupName != "" && groupName != "other" {
+			s.Detail.containerID = ""
+			s.Detail.project = groupName
+			s.Detail.reset()
+			// Populate projectIDs from contInfo.
+			s.Detail.projectIDs = nil
+			for _, ci := range s.ContInfo {
+				if ci.Project == groupName {
+					s.Detail.projectIDs = append(s.Detail.projectIDs, ci.ID)
+				}
+			}
+			a.active = viewDetail
+			return s.Detail.onSwitch(s.Client)
 		}
 	case "t":
 		return toggleTracking(s)

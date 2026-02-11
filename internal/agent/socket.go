@@ -443,7 +443,9 @@ func (c *connState) queryLogs(env *protocol.Envelope) {
 		Search: req.Search,
 		Limit:  req.Limit,
 	}
-	if req.ContainerID != "" {
+	if len(req.ContainerIDs) > 0 {
+		filter.ContainerIDs = req.ContainerIDs
+	} else if req.ContainerID != "" {
 		filter.ContainerIDs = []string{req.ContainerID}
 	}
 
