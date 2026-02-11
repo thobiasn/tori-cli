@@ -34,19 +34,20 @@ cmd/rook/main.go          — single entry point, subcommands for agent/connect
 internal/agent/            — collector, alerter, storage, socket server (flat package — no sub-packages)
 internal/tui/              — bubbletea views and components
 internal/protocol/         — shared message types, msgpack encoding
+deploy/                    — install.sh, rook.service (systemd), Dockerfile, docker-compose.yml
 ```
 
 **Actual file layout (internal/agent/):**
 
 ```
-agent.go       — Agent struct, Run() loop, collect() orchestration, shutdown
+agent.go       — Agent struct, Run() loop, collect() orchestration, shutdown, SIGHUP config reload
 config.go      — Config types (storage, host, docker, collect, alerts, notify), TOML loading, validation
 store.go       — SQLite schema, Store struct, all Insert/Query/Prune methods, metric+alert types
 host.go        — HostCollector: reads /proc (cpu, memory, loadavg, uptime, disk, network)
 docker.go      — DockerCollector: container list, stats, CPU/mem/net/block calc, RestartContainer, UpdateContainerState, runtime tracking toggle
 logs.go        — LogTailer: per-container goroutines, Docker log demux via stdcopy, batched insert
 alert.go       — Condition parser, Alerter state machine (inactive→pending→firing→resolved), Evaluate(), EvaluateContainerEvent()
-notify.go      — Notifier: email (net/smtp with timeout) + webhook (dedicated http.Client)
+notify.go      — Notifier: Channel interface (email + multiple webhooks with custom headers/templates)
 events.go      — EventWatcher: Docker Events API listener, real-time container state updates
 hub.go         — Hub: pub/sub message fan-out to connected clients, topic-based subscriptions
 socket.go      — SocketServer: Unix socket listener, per-client connection handling, request dispatch
@@ -137,12 +138,31 @@ Code is a liability, not an asset. Every line we write is a line we have to main
 - `restartFn` field allows test injection. Production path uses `docker.RestartContainer`.
 - `Alerter.mu` protects `instances` and `deferred` — held during `Evaluate()` and `EvaluateContainerEvent()`. Slow side effects (notify, restart) are collected into `deferred` under the lock, then executed after release.
 - `EvaluateContainerEvent()` evaluates only container-scoped rules for a single container. It does NOT do stale cleanup — that stays in the regular `Evaluate()` cycle.
+- `Silence(ruleName, duration)` suppresses notifications only (not restart actions). Per-rule, checked in `fire()`. Socket server enforces max 30-day duration.
+- `HasRule(name)` validates rule exists (used by socket silence command). `ResolveAll()` resolves all firing alerts (used during config reload).
 
 ### Config
 
 - TOML parsed by `github.com/BurntSushi/toml`. `Duration` type wraps `time.Duration` with `UnmarshalText`.
 - Validation happens in `validate()` which calls `validateAlert()` per rule. `validateAlert` calls `parseCondition` to verify the condition string is valid.
 - Empty `Alerts` map is valid (no alerting configured). Agent skips alerter construction when `len(cfg.Alerts) == 0`.
+
+### Config reload
+
+- Agent listens for SIGHUP to trigger config reload via `Reload()`.
+- Reloadable fields: collection interval, retention days, docker include/exclude filters, alert rules, notifications.
+- Non-reloadable fields (logged as warnings): storage path, socket path, proc/sys paths, docker socket.
+- Alerter is rebuilt on reload — old alerts resolved via `ResolveAll()` before swap.
+- `EventWatcher.SetAlerter()` and `SocketServer.SetAlerter()` update the alerter reference under their own mutexes.
+- `DockerCollector.SetFilters()` updates include/exclude at runtime.
+
+### Notification system
+
+- `Channel` interface with `Send(subject, body)` — implemented by `emailChannel` and `webhookChannel`.
+- Multiple webhooks supported (`[[notify.webhooks]]` array in TOML config).
+- Webhook config: `URL`, `Headers` (custom, sanitized against CRLF injection), `Template` (Go template for custom payload body).
+- Default webhook payload if no template: `{"text": "*Subject*\nBody"}`.
+- `Notifier.Send()` errors are logged, not fatal — collect loop continues.
 
 ### Networking gotchas
 
