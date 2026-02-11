@@ -338,6 +338,143 @@ func Graph(data []float64, width, rows int, maxVal float64, theme *Theme) string
 	return strings.Join(rowStrs, "\n")
 }
 
+// GraphWithGrid renders a multi-row braille graph with horizontal grid lines.
+// gridPcts are percentage values (0-100) at which dashed lines are drawn in the
+// muted color. Data is rendered on top with UsageColor per row. maxVal must be >0.
+func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []float64, theme *Theme) string {
+	if width < 1 || rows < 1 || maxVal <= 0 {
+		return ""
+	}
+
+	maxPoints := width * 2
+	if len(data) > maxPoints {
+		data = data[len(data)-maxPoints:]
+	}
+
+	totalDots := rows * 4
+
+	// Normalize data heights.
+	heights := make([]int, len(data))
+	for i, v := range data {
+		h := int(v / maxVal * float64(totalDots))
+		if h > totalDots {
+			h = totalDots
+		}
+		if h < 0 {
+			h = 0
+		}
+		if h < 1 && v > 0 {
+			h = 1
+		}
+		heights[i] = h
+	}
+
+	// Convert grid percentages to dot positions.
+	gridDots := make(map[int]bool, len(gridPcts))
+	for _, pct := range gridPcts {
+		dot := int(pct / maxVal * float64(totalDots))
+		if dot < 0 {
+			dot = 0
+		}
+		if dot >= totalDots {
+			dot = totalDots - 1
+		}
+		gridDots[dot] = true
+	}
+
+	leftBits := [4]byte{0x01, 0x02, 0x04, 0x40}
+	rightBits := [4]byte{0x08, 0x10, 0x20, 0x80}
+
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+
+	rowStrs := make([]string, rows)
+	for r := 0; r < rows; r++ {
+		bottomDot := (rows - 1 - r) * 4
+
+		dataChars := make([]rune, width)
+		gridChars := make([]rune, width)
+		hasData := make([]bool, width)
+
+		// Build data patterns.
+		for col := 0; col < len(heights); col += 2 {
+			charIdx := width - (len(heights)-col+1)/2
+			if charIdx < 0 {
+				continue
+			}
+			var pattern byte
+			lh := heights[col]
+			for dot := 0; dot < 4; dot++ {
+				if lh > bottomDot+dot {
+					pattern |= leftBits[dot]
+				}
+			}
+			if col+1 < len(heights) {
+				rh := heights[col+1]
+				for dot := 0; dot < 4; dot++ {
+					if rh > bottomDot+dot {
+						pattern |= rightBits[dot]
+					}
+				}
+			}
+			dataChars[charIdx] = rune(0x2800 + int(pattern))
+			hasData[charIdx] = pattern != 0
+		}
+
+		// Build grid patterns (dashed: left-column dot every other char).
+		for i := 0; i < width; i++ {
+			var pattern byte
+			for dot := 0; dot < 4; dot++ {
+				if gridDots[bottomDot+dot] {
+					if i%2 == 0 {
+						pattern |= leftBits[dot]
+					}
+				}
+			}
+			gridChars[i] = rune(0x2800 + int(pattern))
+		}
+
+		// Compose: data chars in usage color, grid-only chars in muted.
+		var b strings.Builder
+		type run struct {
+			isData bool
+			chars  []rune
+		}
+		var runs []run
+		for i := 0; i < width; i++ {
+			ch := dataChars[i]
+			if ch == 0 {
+				ch = 0x2800
+			}
+			// Merge grid dots into data character.
+			merged := rune(int(ch) | (int(gridChars[i]) - 0x2800))
+			isData := hasData[i]
+
+			if len(runs) > 0 && runs[len(runs)-1].isData == isData {
+				runs[len(runs)-1].chars = append(runs[len(runs)-1].chars, merged)
+			} else {
+				runs = append(runs, run{isData, []rune{merged}})
+			}
+		}
+
+		rowTopPct := float64(bottomDot+4) / float64(totalDots) * maxVal
+		dataColor := theme.UsageColor(rowTopPct)
+		dataStyle := lipgloss.NewStyle().Foreground(dataColor)
+
+		for _, rn := range runs {
+			s := string(rn.chars)
+			if rn.isData {
+				b.WriteString(dataStyle.Render(s))
+			} else {
+				b.WriteString(muted.Render(s))
+			}
+		}
+
+		rowStrs[r] = b.String()
+	}
+
+	return strings.Join(rowStrs, "\n")
+}
+
 // GraphFixedColor renders a multi-row braille graph in a single fixed color.
 // Same logic as Graph but uses the given color uniformly instead of per-row UsageColor.
 func GraphFixedColor(data []float64, width, rows int, maxVal float64, color lipgloss.Color) string {

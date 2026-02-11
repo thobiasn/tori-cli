@@ -30,7 +30,7 @@ func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, hei
 		if graphW < 10 {
 			graphW = 10
 		}
-		graph := Graph(cpuHistory, graphW, graphRows, 0, theme)
+		graph := GraphWithGrid(cpuHistory, graphW, graphRows, 100, []float64{0, 50, 80, 90, 100}, theme)
 		graphLines := strings.Split(graph, "\n")
 		pad := strings.Repeat(" ", len(cpuVal)+1)
 		for i, gl := range graphLines {
