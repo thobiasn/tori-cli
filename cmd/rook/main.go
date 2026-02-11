@@ -100,16 +100,16 @@ func runConnect(args []string) {
 		runSessions(map[string]*tui.Session{positional: sess})
 
 	default:
-		// No args: try config for multi-server, fall back to default socket.
-		cfgPath := *configPath
-		if cfgPath == "" {
-			cfgPath = tui.DefaultConfigPath()
+		// No args: ensure config exists, then connect to all servers.
+		cfgPath, err := tui.EnsureDefaultConfig(*configPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "config: %v\n", err)
+			os.Exit(1)
 		}
 		cfg, err := tui.LoadConfig(cfgPath)
 		if err != nil {
-			// No config — connect to default socket.
-			runSingleSession("local", "/run/rook/rook.sock", nil)
-			return
+			fmt.Fprintf(os.Stderr, "load config %s: %v\n", cfgPath, err)
+			os.Exit(1)
 		}
 		sessions := connectAll(cfg)
 		if len(sessions) == 0 {
@@ -121,12 +121,14 @@ func runConnect(args []string) {
 }
 
 func loadClientConfig(path string) *tui.Config {
-	if path == "" {
-		path = tui.DefaultConfigPath()
-	}
-	cfg, err := tui.LoadConfig(path)
+	cfgPath, err := tui.EnsureDefaultConfig(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "load config %s: %v\n", path, err)
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		os.Exit(1)
+	}
+	cfg, err := tui.LoadConfig(cfgPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load config %s: %v\n", cfgPath, err)
 		os.Exit(1)
 	}
 	return cfg
