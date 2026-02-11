@@ -68,6 +68,47 @@ func TestBuildGroupsEmpty(t *testing.T) {
 	}
 }
 
+func TestBuildGroupsUntrackedInjected(t *testing.T) {
+	// Metrics only contain tracked containers.
+	containers := []protocol.ContainerMetrics{
+		{ID: "c1", Name: "web", State: "running", CPUPercent: 5.0},
+	}
+	// ContInfo has both tracked and untracked.
+	contInfo := []protocol.ContainerInfo{
+		{ID: "c1", Name: "web", Project: "app", Tracked: true},
+		{ID: "c2", Name: "db", Project: "app", Tracked: false, State: "running"},
+	}
+
+	groups := buildGroups(containers, contInfo)
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(groups))
+	}
+	g := groups[0]
+	if g.name != "app" {
+		t.Errorf("group name = %q, want app", g.name)
+	}
+	if len(g.containers) != 2 {
+		t.Fatalf("expected 2 containers in group, got %d", len(g.containers))
+	}
+
+	// Find the untracked container (db) — it should be injected as a stub.
+	var found bool
+	for _, c := range g.containers {
+		if c.ID == "c2" {
+			found = true
+			if c.Name != "db" {
+				t.Errorf("stub name = %q, want db", c.Name)
+			}
+			if c.CPUPercent != 0 {
+				t.Errorf("stub CPU = %f, want 0 (zero stats)", c.CPUPercent)
+			}
+		}
+	}
+	if !found {
+		t.Error("untracked container c2 was not injected into groups")
+	}
+}
+
 func TestCursorContainerID(t *testing.T) {
 	groups := []containerGroup{
 		{name: "app", containers: []protocol.ContainerMetrics{

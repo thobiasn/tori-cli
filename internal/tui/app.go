@@ -135,6 +135,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionContainersMsg:
 		if s := a.sessions[msg.server]; s != nil {
 			s.ContInfo = msg.containers
+			// Rebuild groups so untracked containers appear as stubs immediately.
+			s.Dash.groups = buildGroups(s.Containers, s.ContInfo)
 		}
 		return a, nil
 
