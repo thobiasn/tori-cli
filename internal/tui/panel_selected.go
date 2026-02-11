@@ -55,19 +55,23 @@ func renderGroupSummary(s *Session, g *containerGroup, width, height int, theme 
 		graphH = 5
 	}
 
-	// CPU + MEM side-by-side inner boxes (auto-scaled: aggregated values).
-	leftW := innerW / 2
-	rightW := innerW - leftW
-	graphRows := graphH - 2
-	if graphRows < 1 {
-		graphRows = 1
+	// CPU + MEM stacked vertically.
+	cpuH := graphH / 2
+	memH := graphH - cpuH
+	cpuRows := cpuH - 2
+	memRows := memH - 2
+	if cpuRows < 1 {
+		cpuRows = 1
+	}
+	if memRows < 1 {
+		memRows = 1
 	}
 
 	cpuVal := fmt.Sprintf("%5.1f%%", totalCPU)
 	cpuAgg := aggregateHistory(s.CPUHistory, ids)
 	var cpuContent string
 	if len(cpuAgg) > 0 {
-		cpuContent = strings.Join(autoGridGraph(cpuAgg, cpuVal, leftW-2, graphRows, theme), "\n")
+		cpuContent = strings.Join(autoGridGraph(cpuAgg, cpuVal, innerW-2, cpuRows, theme, theme.CPUGraph), "\n")
 	} else {
 		cpuContent = fmt.Sprintf(" CPU: %s", cpuVal)
 	}
@@ -76,14 +80,14 @@ func renderGroupSummary(s *Session, g *containerGroup, width, height int, theme 
 	memAgg := aggregateHistory(s.MemHistory, ids)
 	var memContent string
 	if len(memAgg) > 0 {
-		memContent = strings.Join(autoGridGraph(memAgg, memVal, rightW-2, graphRows, theme), "\n")
+		memContent = strings.Join(autoGridGraph(memAgg, memVal, innerW-2, memRows, theme, theme.MemGraph), "\n")
 	} else {
 		memContent = fmt.Sprintf(" MEM: %s", memVal)
 	}
 
-	graphs := lipgloss.JoinHorizontal(lipgloss.Top,
-		Box("CPU", cpuContent, leftW, graphH, theme),
-		Box("Memory", memContent, rightW, graphH, theme))
+	graphs := lipgloss.JoinVertical(lipgloss.Left,
+		Box("CPU", cpuContent, innerW, cpuH, theme),
+		Box("Memory", memContent, innerW, memH, theme))
 
 	var lines []string
 	lines = append(lines, strings.Split(graphs, "\n")...)
@@ -156,19 +160,23 @@ func renderContainerSelected(s *Session, c *protocol.ContainerMetrics, width, he
 		graphH = 5
 	}
 
-	// CPU + MEM side-by-side inner boxes.
-	leftW := innerW / 2
-	rightW := innerW - leftW
-	graphRows := graphH - 2 // inner box borders
-	if graphRows < 1 {
-		graphRows = 1
+	// CPU + MEM stacked vertically.
+	cpuH := graphH / 2
+	memH := graphH - cpuH
+	cpuRows := cpuH - 2
+	memRows := memH - 2
+	if cpuRows < 1 {
+		cpuRows = 1
+	}
+	if memRows < 1 {
+		memRows = 1
 	}
 
 	cpuVal := fmt.Sprintf("%5.1f%%", c.CPUPercent)
 	cpuData := historyData(s.CPUHistory, c.ID)
 	var cpuContent string
 	if len(cpuData) > 0 {
-		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, theme), "\n")
+		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, innerW-2, cpuRows, theme, theme.CPUGraph), "\n")
 	} else {
 		cpuContent = fmt.Sprintf(" CPU: %s", cpuVal)
 	}
@@ -177,14 +185,14 @@ func renderContainerSelected(s *Session, c *protocol.ContainerMetrics, width, he
 	memData := historyData(s.MemHistory, c.ID)
 	var memContent string
 	if len(memData) > 0 {
-		memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, theme), "\n")
+		memContent = strings.Join(autoGridGraph(memData, memVal, innerW-2, memRows, theme, theme.MemGraph), "\n")
 	} else {
 		memContent = fmt.Sprintf(" MEM: %s", memVal)
 	}
 
-	graphs := lipgloss.JoinHorizontal(lipgloss.Top,
-		Box("CPU", cpuContent, leftW, graphH, theme),
-		Box("Memory", memContent, rightW, graphH, theme))
+	graphs := lipgloss.JoinVertical(lipgloss.Left,
+		Box("CPU", cpuContent, innerW, cpuH, theme),
+		Box("Memory", memContent, innerW, memH, theme))
 
 	var lines []string
 	lines = append(lines, strings.Split(graphs, "\n")...)

@@ -325,7 +325,7 @@ func Graph(data []float64, width, rows int, maxVal float64, theme *Theme) string
 // GraphWithGrid renders a multi-row braille graph with horizontal grid lines.
 // gridPcts are percentage values (0-100) at which dashed lines are drawn in the
 // muted color. Data is rendered on top with UsageColor per row. maxVal must be >0.
-func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []float64, theme *Theme) string {
+func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []float64, theme *Theme, fixedColor ...lipgloss.Color) string {
 	if width < 1 || rows < 1 || maxVal <= 0 {
 		return ""
 	}
@@ -440,8 +440,13 @@ func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []f
 			}
 		}
 
-		rowTopPct := float64(bottomDot+4) / float64(totalDots) * maxVal
-		dataColor := theme.UsageColor(rowTopPct)
+		var dataColor lipgloss.Color
+		if len(fixedColor) > 0 && fixedColor[0] != "" {
+			dataColor = fixedColor[0]
+		} else {
+			rowTopPct := float64(bottomDot+4) / float64(totalDots) * maxVal
+			dataColor = theme.UsageColor(rowTopPct)
+		}
 		dataStyle := lipgloss.NewStyle().Foreground(dataColor)
 
 		for _, rn := range runs {

@@ -50,7 +50,8 @@ func gridGraph(data []float64, value string, innerW, rows int, theme *Theme) []s
 // autoGridGraph renders a braille graph auto-scaled to the observed data range.
 // Unlike gridGraph which uses a fixed 0-100 scale, this adapts the Y axis to
 // the data's observed maximum, making small variations visible.
-func autoGridGraph(data []float64, value string, innerW, rows int, theme *Theme) []string {
+// An optional color overrides the default per-row UsageColor.
+func autoGridGraph(data []float64, value string, innerW, rows int, theme *Theme, color ...lipgloss.Color) []string {
 	if len(data) == 0 {
 		return nil
 	}
@@ -72,7 +73,7 @@ func autoGridGraph(data []float64, value string, innerW, rows int, theme *Theme)
 	}
 
 	gridPcts := []float64{0, 50, 100}
-	graph := GraphWithGrid(data, graphW, rows, maxVal, gridPcts, theme)
+	graph := GraphWithGrid(data, graphW, rows, maxVal, gridPcts, theme, color...)
 	graphLines := strings.Split(graph, "\n")
 
 	// Labels: ceiling at top row, mid at 50%.

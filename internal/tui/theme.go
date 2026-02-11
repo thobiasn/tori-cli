@@ -11,6 +11,10 @@ type Theme struct {
 	Accent   lipgloss.Color // cyan
 	Muted    lipgloss.Color // gray
 
+	// Graph colors for container CPU/MEM charts.
+	CPUGraph lipgloss.Color // green
+	MemGraph lipgloss.Color // blue
+
 	// Memory / disk metric colors.
 	MemUsed lipgloss.Color // green
 	MemFree lipgloss.Color // yellow
@@ -27,6 +31,8 @@ func DefaultTheme() Theme {
 		Healthy:  lipgloss.Color("10"),
 		Accent:   lipgloss.Color("14"),
 		Muted:        lipgloss.Color("8"),
+		CPUGraph: lipgloss.Color("10"), // green
+		MemGraph: lipgloss.Color("12"), // blue
 		MemUsed: lipgloss.Color("10"),
 		MemFree: lipgloss.Color("11"),
 		ContainerPalette: []lipgloss.Color{
