@@ -310,9 +310,9 @@ func TestHandleMetricsBackfill(t *testing.T) {
 	s := newTestSession()
 	resp := &protocol.QueryMetricsResp{
 		Host: []protocol.TimedHostMetrics{
-			{Timestamp: 1, HostMetrics: protocol.HostMetrics{CPUPercent: 10, MemPercent: 20}},
-			{Timestamp: 2, HostMetrics: protocol.HostMetrics{CPUPercent: 30, MemPercent: 40}},
-			{Timestamp: 3, HostMetrics: protocol.HostMetrics{CPUPercent: 50, MemPercent: 60}},
+			{Timestamp: 1, HostMetrics: protocol.HostMetrics{CPUPercent: 10, MemPercent: 20, MemTotal: 1000, MemFree: 300, MemCached: 200}},
+			{Timestamp: 2, HostMetrics: protocol.HostMetrics{CPUPercent: 30, MemPercent: 40, MemTotal: 1000, MemFree: 250, MemCached: 150}},
+			{Timestamp: 3, HostMetrics: protocol.HostMetrics{CPUPercent: 50, MemPercent: 60, MemTotal: 1000, MemFree: 200, MemCached: 100}},
 		},
 		Containers: []protocol.TimedContainerMetrics{
 			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 5, MemPercent: 15}},
@@ -332,6 +332,29 @@ func TestHandleMetricsBackfill(t *testing.T) {
 	}
 	if s.HostMemHistory.Len() != 3 {
 		t.Errorf("HostMemHistory.Len() = %d, want 3", s.HostMemHistory.Len())
+	}
+
+	// Per-metric memory histories populated.
+	if s.HostMemUsedHistory.Len() != 3 {
+		t.Errorf("HostMemUsedHistory.Len() = %d, want 3", s.HostMemUsedHistory.Len())
+	}
+	if s.HostMemAvailHistory.Len() != 3 {
+		t.Errorf("HostMemAvailHistory.Len() = %d, want 3", s.HostMemAvailHistory.Len())
+	}
+	if s.HostMemCachedHistory.Len() != 3 {
+		t.Errorf("HostMemCachedHistory.Len() = %d, want 3", s.HostMemCachedHistory.Len())
+	}
+	if s.HostMemFreeHistory.Len() != 3 {
+		t.Errorf("HostMemFreeHistory.Len() = %d, want 3", s.HostMemFreeHistory.Len())
+	}
+	// Verify computed percentages for first entry: free=300/1000=30%, cached=200/1000=20%.
+	freeData := s.HostMemFreeHistory.Data()
+	if freeData[0] != 30 {
+		t.Errorf("HostMemFreeHistory[0] = %f, want 30", freeData[0])
+	}
+	cachedData := s.HostMemCachedHistory.Data()
+	if cachedData[0] != 20 {
+		t.Errorf("HostMemCachedHistory[0] = %f, want 20", cachedData[0])
 	}
 
 	// Container histories created and populated.

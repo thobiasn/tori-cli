@@ -57,38 +57,116 @@ func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, hei
 	return Box("CPU", strings.Join(lines, "\n"), width, height, theme)
 }
 
-// renderMemPanel renders the memory panel with usage details.
-func renderMemPanel(host *protocol.HostMetrics, width, height int, theme *Theme) string {
+// memHistories holds per-metric history data for the memory panel.
+type memHistories struct {
+	Used      []float64
+	Available []float64
+	Cached    []float64
+	Free      []float64
+}
+
+// memDivider renders a btop-style divider: ─Label:──────value─
+func memDivider(label, value string, width int, labelColor lipgloss.Color, theme *Theme) string {
+	// "─" + label + ":─" + fill + value + "─"
+	labelStr := label + ":"
+	labelLen := len(labelStr)
+	valueLen := len(value)
+	fillLen := width - 2 - labelLen - valueLen // 2 for leading and trailing ─
+	if fillLen < 1 {
+		fillLen = 1
+	}
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+	styledLabel := lipgloss.NewStyle().Foreground(labelColor).Render(labelStr)
+	return muted.Render("─") + styledLabel + muted.Render(strings.Repeat("─", fillLen)+value+"─")
+}
+
+// renderMemPanel renders the memory panel with btop-style dividers and braille graphs.
+func renderMemPanel(host *protocol.HostMetrics, hist memHistories, width, height int, theme *Theme) string {
 	if host == nil {
 		return Box("Memory", "  waiting for data...", width, height, theme)
 	}
 
 	innerW := width - 2
-	barW := innerW - 2
-	if barW < 10 {
-		barW = 10
-	}
 
 	var lines []string
 
-	// Memory progress bar (no percentage).
-	memLine := fmt.Sprintf(" %s", ProgressBarSimple(host.MemPercent, barW, theme))
-	lines = append(lines, memLine)
+	// Total: label with value right-aligned, no graph.
+	totalVal := FormatBytes(host.MemTotal)
+	totalLabel := " Total:"
+	totalGap := innerW - len(totalLabel) - len(totalVal)
+	if totalGap < 1 {
+		totalGap = 1
+	}
+	lines = append(lines, totalLabel+strings.Repeat(" ", totalGap)+totalVal)
 
-	// Used / Total with percentage.
-	usedLine := fmt.Sprintf(" Used: %s / %s  %.1f%%", FormatBytes(host.MemUsed), FormatBytes(host.MemTotal), host.MemPercent)
-	lines = append(lines, usedLine)
+	// Compute percentages.
+	available := host.MemFree + host.MemCached
+	usedPct := host.MemPercent
+	var availPct, cachedPct, freePct float64
+	if host.MemTotal > 0 {
+		total := float64(host.MemTotal)
+		availPct = float64(available) / total * 100
+		cachedPct = float64(host.MemCached) / total * 100
+		freePct = float64(host.MemFree) / total * 100
+	}
 
-	// Cached + Free.
-	cachedLine := fmt.Sprintf(" Cached: %s  Free: %s", FormatBytes(host.MemCached), FormatBytes(host.MemFree))
-	lines = append(lines, cachedLine)
+	type metricEntry struct {
+		label   string
+		pct     float64
+		val     string
+		color   lipgloss.Color
+		history []float64
+	}
+	metrics := []metricEntry{
+		{"Used", usedPct, FormatBytes(host.MemUsed), theme.MemUsed, hist.Used},
+		{"Available", availPct, FormatBytes(available), theme.MemAvailable, hist.Available},
+		{"Cached", cachedPct, FormatBytes(host.MemCached), theme.MemCached, hist.Cached},
+		{"Free", freePct, FormatBytes(host.MemFree), theme.MemFree, hist.Free},
+	}
 
-	// Swap.
-	if host.SwapTotal > 0 {
-		swapLine := fmt.Sprintf(" Swap: %s / %s", FormatBytes(host.SwapUsed), FormatBytes(host.SwapTotal))
-		lines = append(lines, swapLine)
-	} else {
-		lines = append(lines, " Swap: none")
+	// Fixed lines per metric: divider (1) + percentage (1) = 2, plus graph rows.
+	// Total fixed lines: total line (1) + 4 metrics × 2 fixed = 9.
+	// Swap adds 2 lines if present.
+	fixedLines := 1 + len(metrics)*2
+	hasSwap := host.SwapTotal > 0
+	if hasSwap {
+		fixedLines += 2
+	}
+	innerH := height - 2 // box borders
+	graphBudget := innerH - fixedLines
+	if graphBudget < 0 {
+		graphBudget = 0
+	}
+	rowsPerMetric := graphBudget / len(metrics)
+	if rowsPerMetric < 1 {
+		rowsPerMetric = 1
+	}
+	// Cap at reasonable height.
+	if rowsPerMetric > 4 {
+		rowsPerMetric = 4
+	}
+
+	graphW := innerW - 1 // 1 char left padding
+	if graphW < 4 {
+		graphW = 4
+	}
+
+	for _, m := range metrics {
+		lines = append(lines, memDivider(m.label, m.val, innerW, m.color, theme))
+		lines = append(lines, fmt.Sprintf(" %3.0f%%", m.pct))
+		if len(m.history) > 0 && graphBudget > 0 {
+			graph := GraphFixedColor(m.history, graphW, rowsPerMetric, 100, m.color)
+			for _, gl := range strings.Split(graph, "\n") {
+				lines = append(lines, " "+gl)
+			}
+		}
+	}
+
+	if hasSwap {
+		swapPct := float64(host.SwapUsed) / float64(host.SwapTotal) * 100
+		swapVal := FormatBytes(host.SwapUsed) + "/" + FormatBytes(host.SwapTotal)
+		lines = append(lines, memDivider("Swap", swapVal, innerW, theme.Warning, theme))
+		lines = append(lines, fmt.Sprintf(" %3.0f%%", swapPct))
 	}
 
 	return Box("Memory", strings.Join(lines, "\n"), width, height, theme)

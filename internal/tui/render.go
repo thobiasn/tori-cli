@@ -312,6 +312,89 @@ func Graph(data []float64, width, rows int, maxVal float64, theme *Theme) string
 	return strings.Join(rowStrs, "\n")
 }
 
+// GraphFixedColor renders a multi-row braille graph in a single fixed color.
+// Same logic as Graph but uses the given color uniformly instead of per-row UsageColor.
+func GraphFixedColor(data []float64, width, rows int, maxVal float64, color lipgloss.Color) string {
+	if width < 1 || rows < 1 || len(data) == 0 {
+		return ""
+	}
+
+	maxPoints := width * 2
+	if len(data) > maxPoints {
+		data = data[len(data)-maxPoints:]
+	}
+
+	if maxVal <= 0 {
+		for _, v := range data {
+			if v > maxVal {
+				maxVal = v
+			}
+		}
+	}
+	if maxVal <= 0 {
+		maxVal = 1
+	}
+
+	totalDots := rows * 4
+
+	heights := make([]int, len(data))
+	for i, v := range data {
+		h := int(v / maxVal * float64(totalDots))
+		if h > totalDots {
+			h = totalDots
+		}
+		if h < 0 {
+			h = 0
+		}
+		if h < 1 && v > 0 {
+			h = 1
+		}
+		heights[i] = h
+	}
+
+	leftBits := [4]byte{0x01, 0x02, 0x04, 0x40}
+	rightBits := [4]byte{0x08, 0x10, 0x20, 0x80}
+
+	style := lipgloss.NewStyle().Foreground(color)
+	rowStrs := make([]string, rows)
+	for r := 0; r < rows; r++ {
+		bottomDot := (rows - 1 - r) * 4
+
+		var chars []rune
+		for col := 0; col < len(heights); col += 2 {
+			var pattern byte
+			lh := heights[col]
+			for dot := 0; dot < 4; dot++ {
+				if lh > bottomDot+dot {
+					pattern |= leftBits[dot]
+				}
+			}
+			if col+1 < len(heights) {
+				rh := heights[col+1]
+				for dot := 0; dot < 4; dot++ {
+					if rh > bottomDot+dot {
+						pattern |= rightBits[dot]
+					}
+				}
+			}
+			chars = append(chars, rune(0x2800+int(pattern)))
+		}
+
+		if pad := width - len(chars); pad > 0 {
+			padded := make([]rune, width)
+			for p := 0; p < pad; p++ {
+				padded[p] = 0x2800
+			}
+			copy(padded[pad:], chars)
+			chars = padded
+		}
+
+		rowStrs[r] = style.Render(string(chars))
+	}
+
+	return strings.Join(rowStrs, "\n")
+}
+
 // nowFn is the time source for formatContainerUptime. Tests override for determinism.
 var nowFn = time.Now
 

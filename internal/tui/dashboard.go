@@ -126,9 +126,9 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		}
 	}
 
-	cpuH := height * 20 / 100
-	if cpuH < 6 {
-		cpuH = 6
+	cpuH := height * 28 / 100
+	if cpuH < 12 {
+		cpuH = 12
 	}
 
 	logH := (height - cpuH - alertH) * 25 / 100
@@ -153,15 +153,23 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 
 	if width >= 100 {
 		// Wide: 4-quadrant layout (side-by-side top and middle).
-		halfW := width / 2
-		rightW := width - halfW
+		leftW := width * 65 / 100
+		rightW := width - leftW
 
-		cpuPanel := renderCPUPanel(cpuHistory, s.Host, halfW, cpuH, theme)
-		memPanel := renderMemPanel(s.Host, rightW, cpuH, theme)
+		cpuPanel := renderCPUPanel(cpuHistory, s.Host, leftW, cpuH, theme)
+		memHist := memHistories{
+			Used:      s.HostMemUsedHistory.Data(),
+			Available: s.HostMemAvailHistory.Data(),
+			Cached:    s.HostMemCachedHistory.Data(),
+			Free:      s.HostMemFreeHistory.Data(),
+		}
+		memPanel := renderMemPanel(s.Host, memHist, rightW, cpuH, theme)
 		topRow := lipgloss.JoinHorizontal(lipgloss.Top, cpuPanel, memPanel)
 
+		halfW := width / 2
+		midRightW := width - halfW
 		contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, halfW, middleH, theme)
-		selPanel := renderSelectedPanel(a, s, rightW, middleH, theme)
+		selPanel := renderSelectedPanel(a, s, midRightW, middleH, theme)
 		midRow := lipgloss.JoinHorizontal(lipgloss.Top, contPanel, selPanel)
 
 		return strings.Join([]string{alertPanel, topRow, midRow, logPanel}, "\n")
@@ -169,7 +177,7 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 
 	// Narrow (80-99): stacked layout.
 	selH := 8
-	memH := 6
+	memH := 14
 	contH := middleH - selH - memH
 	if contH < 4 {
 		contH = 4
@@ -180,7 +188,13 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		}
 	}
 	cpuPanel := renderCPUPanel(cpuHistory, s.Host, width, cpuH, theme)
-	memPanel := renderMemPanel(s.Host, width, memH, theme)
+	memHist := memHistories{
+		Used:      s.HostMemUsedHistory.Data(),
+		Available: s.HostMemAvailHistory.Data(),
+		Cached:    s.HostMemCachedHistory.Data(),
+		Free:      s.HostMemFreeHistory.Data(),
+	}
+	memPanel := renderMemPanel(s.Host, memHist, width, memH, theme)
 	contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, width, contH, theme)
 	selPanel := renderSelectedPanel(a, s, width, selH, theme)
 

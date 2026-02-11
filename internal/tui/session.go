@@ -20,8 +20,12 @@ type Session struct {
 	Rates          *RateCalc
 	CPUHistory     map[string]*RingBuffer[float64]
 	MemHistory     map[string]*RingBuffer[float64]
-	HostCPUHistory *RingBuffer[float64]
-	HostMemHistory *RingBuffer[float64]
+	HostCPUHistory      *RingBuffer[float64]
+	HostMemHistory      *RingBuffer[float64]
+	HostMemUsedHistory  *RingBuffer[float64]
+	HostMemAvailHistory *RingBuffer[float64]
+	HostMemCachedHistory *RingBuffer[float64]
+	HostMemFreeHistory  *RingBuffer[float64]
 
 	// Per-session view state.
 	Dash   DashboardState
@@ -43,8 +47,12 @@ func NewSession(name string, client *Client, tunnel *Tunnel) *Session {
 		Rates:          NewRateCalc(),
 		CPUHistory:     make(map[string]*RingBuffer[float64]),
 		MemHistory:     make(map[string]*RingBuffer[float64]),
-		HostCPUHistory: NewRingBuffer[float64](180),
-		HostMemHistory: NewRingBuffer[float64](180),
+		HostCPUHistory:       NewRingBuffer[float64](180),
+		HostMemHistory:       NewRingBuffer[float64](180),
+		HostMemUsedHistory:   NewRingBuffer[float64](180),
+		HostMemAvailHistory:  NewRingBuffer[float64](180),
+		HostMemCachedHistory: NewRingBuffer[float64](180),
+		HostMemFreeHistory:   NewRingBuffer[float64](180),
 		Dash:           newDashboardState(),
 		Logv:           newLogViewState(),
 		Alertv:         newAlertViewState(),

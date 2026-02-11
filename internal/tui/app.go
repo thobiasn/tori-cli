@@ -265,6 +265,7 @@ func (a *App) handleSessionMetrics(s *Session, m *protocol.MetricsUpdate) tea.Cm
 	if m.Host != nil {
 		s.HostCPUHistory.Push(m.Host.CPUPercent)
 		s.HostMemHistory.Push(m.Host.MemPercent)
+		pushMemHistories(s, m.Host)
 	}
 
 	// Per-container history + stale cleanup.
@@ -298,6 +299,8 @@ func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp) {
 	for _, h := range resp.Host {
 		s.HostCPUHistory.Push(h.CPUPercent)
 		s.HostMemHistory.Push(h.MemPercent)
+		hm := h.HostMetrics
+		pushMemHistories(s, &hm)
 	}
 	for _, c := range resp.Containers {
 		if _, ok := s.CPUHistory[c.ID]; !ok {
@@ -538,6 +541,18 @@ func (a *App) renderFooter() string {
 
 	footer += "  ? Help  q Quit"
 	return Truncate(footer, a.width)
+}
+
+// pushMemHistories pushes per-metric memory percentages to history buffers.
+func pushMemHistories(s *Session, h *protocol.HostMetrics) {
+	if h.MemTotal == 0 {
+		return
+	}
+	total := float64(h.MemTotal)
+	s.HostMemUsedHistory.Push(h.MemPercent)
+	s.HostMemAvailHistory.Push(float64(h.MemFree+h.MemCached) / total * 100)
+	s.HostMemCachedHistory.Push(float64(h.MemCached) / total * 100)
+	s.HostMemFreeHistory.Push(float64(h.MemFree) / total * 100)
 }
 
 // containerEventToLog converts a container lifecycle event into a synthetic

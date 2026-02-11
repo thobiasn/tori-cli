@@ -74,23 +74,42 @@ func TestRenderMemPanel(t *testing.T) {
 		SwapTotal:  2 * 1024 * 1024 * 1024,
 		SwapUsed:   512 * 1024 * 1024,
 	}
+	hist := memHistories{
+		Used:      []float64{40, 45, 50},
+		Available: []float64{50, 55, 50},
+		Cached:    []float64{10, 12, 12.5},
+		Free:      []float64{30, 35, 37.5},
+	}
 
-	got := renderMemPanel(host, 50, 8, &theme)
+	got := renderMemPanel(host, hist, 50, 20, &theme)
 	plain := stripANSI(got)
+	if !strings.Contains(plain, "Total") {
+		t.Error("should contain Total label")
+	}
 	if !strings.Contains(plain, "Used") {
 		t.Error("should contain Used label")
+	}
+	if !strings.Contains(plain, "Available") {
+		t.Error("should contain Available label")
 	}
 	if !strings.Contains(plain, "Cached") {
 		t.Error("should contain Cached label")
 	}
+	if !strings.Contains(plain, "Free") {
+		t.Error("should contain Free label")
+	}
 	if !strings.Contains(plain, "Swap") {
 		t.Error("should contain Swap label")
+	}
+	// Should contain percentage values.
+	if !strings.Contains(plain, "50%") {
+		t.Error("should contain Used percentage")
 	}
 }
 
 func TestRenderMemPanelNilHost(t *testing.T) {
 	theme := DefaultTheme()
-	got := renderMemPanel(nil, 30, 8, &theme)
+	got := renderMemPanel(nil, memHistories{}, 30, 8, &theme)
 	if !strings.Contains(got, "waiting") {
 		t.Error("nil host should show waiting message")
 	}
