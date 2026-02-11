@@ -78,8 +78,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.Storage.RetentionDays != 7 {
 		t.Errorf("default retention = %d, want 7", cfg.Storage.RetentionDays)
 	}
-	if cfg.Socket.Path != "/run/rook.sock" {
-		t.Errorf("default socket = %q, want /run/rook.sock", cfg.Socket.Path)
+	if cfg.Socket.Path != "/run/rook/rook.sock" {
+		t.Errorf("default socket = %q, want /run/rook/rook.sock", cfg.Socket.Path)
 	}
 	if cfg.Host.Proc != "/proc" {
 		t.Errorf("default proc = %q, want /proc", cfg.Host.Proc)

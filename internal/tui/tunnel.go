@@ -61,6 +61,7 @@ func (t *Tunnel) start(host, remoteSock string, opts SSHOptions) error {
 
 	var stderr bytes.Buffer
 	t.cmd = t.execFn("ssh", args...)
+	t.cmd.Stdin = os.Stdin // allow passphrase prompts
 	t.cmd.Stderr = &stderr
 
 	if err := t.cmd.Start(); err != nil {

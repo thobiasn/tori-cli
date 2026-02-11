@@ -364,6 +364,9 @@ func (a *App) onViewSwitch() tea.Cmd {
 	return nil
 }
 
+// Err returns the application-level error (e.g. connection lost), if any.
+func (a App) Err() error { return a.err }
+
 func (a App) View() string {
 	if a.err != nil {
 		return fmt.Sprintf("Error: %v\n", a.err)

@@ -110,7 +110,7 @@ func setDefaults(cfg *Config) {
 		cfg.Storage.RetentionDays = 7
 	}
 	if cfg.Socket.Path == "" {
-		cfg.Socket.Path = "/run/rook.sock"
+		cfg.Socket.Path = "/run/rook/rook.sock"
 	}
 	if cfg.Host.Proc == "" {
 		cfg.Host.Proc = "/proc"

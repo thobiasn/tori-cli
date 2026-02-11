@@ -77,7 +77,7 @@ func runConnect(args []string) {
 
 	case positional != "" && strings.Contains(positional, "@"):
 		// Ad-hoc SSH: rook connect user@host
-		tunnel, err := tui.NewTunnel(positional, "/run/rook.sock")
+		tunnel, err := tui.NewTunnel(positional, "/run/rook/rook.sock")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "tunnel: %v\n", err)
 			os.Exit(1)
@@ -108,7 +108,7 @@ func runConnect(args []string) {
 		cfg, err := tui.LoadConfig(cfgPath)
 		if err != nil {
 			// No config — connect to default socket.
-			runSingleSession("local", "/run/rook.sock", nil)
+			runSingleSession("local", "/run/rook/rook.sock", nil)
 			return
 		}
 		sessions := connectAll(cfg)
@@ -135,7 +135,7 @@ func loadClientConfig(path string) *tui.Config {
 func connectServer(name string, srv tui.ServerConfig) (*tui.Session, error) {
 	remoteSock := srv.Socket
 	if remoteSock == "" {
-		remoteSock = "/run/rook.sock"
+		remoteSock = "/run/rook/rook.sock"
 	}
 
 	var tunnel *tui.Tunnel
@@ -218,7 +218,7 @@ func runSessions(sessions map[string]*tui.Session) {
 		s.Client.SetProgram(p)
 	}
 
-	_, err := p.Run()
+	model, err := p.Run()
 
 	// Cleanup.
 	for _, s := range sessions {
@@ -230,6 +230,10 @@ func runSessions(sessions map[string]*tui.Session) {
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
+		os.Exit(1)
+	}
+	if final, ok := model.(tui.App); ok && final.Err() != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", final.Err())
 		os.Exit(1)
 	}
 }

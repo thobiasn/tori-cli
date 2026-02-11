@@ -50,7 +50,7 @@ The agent is the source of truth. It collects, stores, evaluates, and alerts ind
 
 ## Key Design Decisions
 
-- **Transport:** Unix socket (`/run/rook.sock`) + SSH tunnel. No HTTP server, no exposed ports.
+- **Transport:** Unix socket (`/run/rook/rook.sock`) + SSH tunnel. No HTTP server, no exposed ports.
 - **Protocol:** msgpack over Unix socket. Two patterns: streaming subscriptions (agent pushes) and request-response (client asks).
 - **Storage:** SQLite in WAL mode at `/var/lib/rook/rook.db` with configurable retention. One database file. If you're writing JOINs across more than 2 tables, rethink the data model.
 - **Config:** TOML format. Agent config at `/etc/rook/config.toml`, client config at `~/.config/rook/config.toml`. Paths in config are absolute. Defaults are sane for bare metal (`/proc`, `/sys`). Docker deployment overrides them (`/host/proc`, `/host/sys`). No detection logic.

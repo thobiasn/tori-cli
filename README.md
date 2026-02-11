@@ -21,7 +21,7 @@ Existing tools either require a full monitoring stack (Grafana + Prometheus + Lo
 │  VPS            │                           │
 │  ┌──────────────▼────────────────────────┐  │
 │  │  rook agent                           │  │
-│  │  Unix socket: /run/rook.sock          │  │
+│  │  Unix socket: /run/rook/rook.sock          │  │
 │  │                                       │  │
 │  │  ├── Collector (host metrics, docker) │  │
 │  │  ├── Log tailer (docker log API)      │  │
@@ -92,7 +92,7 @@ path = "/var/lib/rook/rook.db"
 retention_days = 7
 
 [socket]
-path = "/run/rook.sock"
+path = "/run/rook/rook.sock"
 
 [host]
 proc = "/proc"
@@ -152,13 +152,13 @@ url = "https://hooks.slack.com/services/..."
 
 [servers.prod]
 host = "user@prod.example.com"
-socket = "/run/rook.sock"
+socket = "/run/rook/rook.sock"
 # port = 2222                          # custom SSH port (default: 22)
 # identity_file = "~/.ssh/prod_key"    # path to SSH private key
 
 [servers.staging]
 host = "user@staging.example.com"
-socket = "/run/rook.sock"
+socket = "/run/rook/rook.sock"
 # port = 22
 # identity_file = "~/.ssh/staging_key"
 ```
@@ -248,7 +248,7 @@ rook connect prod
 rook connect user@myserver.com
 
 # Direct socket (local development)
-rook connect --socket /run/rook.sock
+rook connect --socket /run/rook/rook.sock
 ```
 
 When connected to multiple servers, press `S` to open the server picker and switch between them. Each server has isolated data — switching is instant since all sessions receive data concurrently.
@@ -259,7 +259,7 @@ When connected to multiple servers, press `S` to open the server picker and swit
 
 **Self-healing actions:** When an alert rule includes `actions = ["restart"]`, Rook will restart containers via the Docker API. This means the agent needs write access to the Docker socket. Be deliberate about which alert rules include restart actions and set `max_restarts` to prevent restart loops.
 
-**Unix socket permissions:** The Rook socket at `/run/rook.sock` is the only way to interact with the agent. It should be owned by root and readable only by authorized users. The default file mode is `0660`. Since access is gated by SSH, anyone who can connect already has shell access to the server — Rook doesn't expand the attack surface.
+**Unix socket permissions:** The Rook socket at `/run/rook/rook.sock` is the only way to interact with the agent. The default file mode is `0666` because SSH is the real auth gate — anyone who can reach the socket already has shell access to the server. Rook doesn't expand the attack surface.
 
 **Config file:** The agent config contains SMTP credentials and webhook URLs. Permissions should be `0600` owned by the user running the agent.
 

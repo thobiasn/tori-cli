@@ -58,8 +58,8 @@ func (ss *SocketServer) Start(path string) error {
 		return fmt.Errorf("listen: %w", err)
 	}
 
-	// Set permissions to 0660.
-	if err := os.Chmod(path, 0660); err != nil {
+	// World-accessible: SSH is the auth gate, not file permissions.
+	if err := os.Chmod(path, 0666); err != nil {
 		ln.Close()
 		return fmt.Errorf("chmod socket: %w", err)
 	}
@@ -114,6 +114,8 @@ func (ss *SocketServer) handleConn(conn net.Conn) {
 	defer conn.Close()
 	defer func() { <-ss.connSem }()
 
+	slog.Info("client connected", "remote", conn.RemoteAddr())
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -124,6 +126,7 @@ func (ss *SocketServer) handleConn(conn net.Conn) {
 		subs: make(map[string]*subscription),
 	}
 	defer c.cleanup()
+	defer slog.Info("client disconnected", "remote", conn.RemoteAddr())
 
 	for {
 		env, err := protocol.ReadMsg(conn)
