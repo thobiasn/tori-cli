@@ -440,6 +440,20 @@ func (a *App) renderServerPicker(width, height int) string {
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, picker)
 }
 
+func (a *App) viewHints() string {
+	switch a.active {
+	case viewDashboard:
+		return "j/k Move  Space Fold  Enter Open  t Track  l Logs"
+	case viewLogs:
+		return "j/k Scroll  c Container  g Group  s Stream  / Search"
+	case viewAlerts:
+		return "j/k Move  a Ack  s Silence"
+	case viewDetail:
+		return "j/k Scroll  s Stream  / Search  r Restart"
+	}
+	return ""
+}
+
 func (a *App) renderFooter() string {
 	tabs := [4]struct {
 		num  string
@@ -463,6 +477,11 @@ func (a *App) renderFooter() string {
 	// Show server name when multi-server.
 	if len(a.sessions) > 1 {
 		footer += fmt.Sprintf("  [%s]  S Switch", a.activeSession)
+	}
+
+	if hints := a.viewHints(); hints != "" {
+		muted := lipgloss.NewStyle().Foreground(a.theme.Muted)
+		footer += "  " + muted.Render(hints)
 	}
 
 	footer += "  ? Help  q Quit"

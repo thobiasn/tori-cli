@@ -40,12 +40,32 @@ func buildGroups(containers []protocol.ContainerMetrics, contInfo []protocol.Con
 	}
 
 	grouped := make(map[string][]protocol.ContainerMetrics)
+	seen := make(map[string]bool, len(containers))
 	for _, c := range containers {
+		seen[c.ID] = true
 		proj := projectOf[c.ID]
 		if proj == "" {
 			proj = "other"
 		}
 		grouped[proj] = append(grouped[proj], c)
+	}
+
+	// Inject untracked containers from contInfo as stubs (zero stats).
+	for _, ci := range contInfo {
+		if seen[ci.ID] {
+			continue
+		}
+		stub := protocol.ContainerMetrics{
+			ID: ci.ID, Name: ci.Name, Image: ci.Image,
+			State: ci.State, Health: ci.Health,
+			StartedAt: ci.StartedAt, RestartCount: ci.RestartCount,
+			ExitCode: ci.ExitCode,
+		}
+		proj := ci.Project
+		if proj == "" {
+			proj = "other"
+		}
+		grouped[proj] = append(grouped[proj], stub)
 	}
 
 	// Sort group names alpha, "other" last.

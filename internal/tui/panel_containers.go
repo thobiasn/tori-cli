@@ -30,8 +30,8 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 		trackedState[ci.ID] = ci.Tracked
 	}
 
-	// Fixed-width columns: state(1) + space(1) + alert(2) + health(1) + space(1) + cpu(5) + space(1) + mem(5) + space(1) + uptime(7) + space(1) + restart(3) = ~29
-	fixedCols := 29
+	// Fixed-width columns: state(1) + space(1) + alert(2) + health(1) + space(1) + cpu(5) + space(1) + mem(6) + space(1) + uptime(7) + space(1) + restart(3) = ~30
+	fixedCols := 30
 	nameW := innerW - fixedCols - 2 // 2 for leading/trailing space
 	if nameW < 8 {
 		nameW = 8
@@ -96,7 +96,7 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 			var stats string
 			if !tracked {
 				// Untracked: show dashes for stats in muted color.
-				stats = fmt.Sprintf("   —      — %-7s", Truncate(uptime, 7))
+				stats = fmt.Sprintf("   —       — %-7s", Truncate(uptime, 7))
 				row := fmt.Sprintf(" %s %s%-*s %s %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
 				if pos == cursor {
 					row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
@@ -105,14 +105,14 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 				}
 				lines = append(lines, TruncateStyled(row, innerW))
 			} else if c.State == "running" {
-				stats = fmt.Sprintf("%5.1f%% %5s %-7s", c.CPUPercent, FormatBytes(c.MemUsage), Truncate(uptime, 7))
+				stats = fmt.Sprintf("%5.1f%% %6s %-7s", c.CPUPercent, FormatBytes(c.MemUsage), Truncate(uptime, 7))
 				row := fmt.Sprintf(" %s %s%-*s %s %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
 				if pos == cursor {
 					row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
 				}
 				lines = append(lines, TruncateStyled(row, innerW))
 			} else {
-				stats = fmt.Sprintf("   —      — %-7s", Truncate(uptime, 7))
+				stats = fmt.Sprintf("   —       — %-7s", Truncate(uptime, 7))
 				row := fmt.Sprintf(" %s %s%-*s %s %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
 				if pos == cursor {
 					row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
