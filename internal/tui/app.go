@@ -268,7 +268,7 @@ func (a *App) handleSessionMetrics(s *Session, m *protocol.MetricsUpdate) tea.Cm
 			s.MemHistory[c.ID] = NewRingBuffer[float64](180)
 		}
 		s.CPUHistory[c.ID].Push(c.CPUPercent)
-		s.MemHistory[c.ID].Push(c.MemPercent)
+		s.MemHistory[c.ID].Push(float64(c.MemUsage))
 	}
 	for id := range s.CPUHistory {
 		if !current[id] {
@@ -299,7 +299,7 @@ func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp) {
 			s.MemHistory[c.ID] = NewRingBuffer[float64](180)
 		}
 		s.CPUHistory[c.ID].Push(c.CPUPercent)
-		s.MemHistory[c.ID].Push(c.MemPercent)
+		s.MemHistory[c.ID].Push(float64(c.MemUsage))
 	}
 }
 

@@ -416,7 +416,7 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, width, height int, t
 	cpuAgg := aggregateHistory(s.CPUHistory, det.projectIDs)
 	var cpuContent string
 	if len(cpuAgg) > 0 {
-		cpuContent = strings.Join(autoGridGraph(cpuAgg, cpuVal, leftW-2, graphRows, theme, theme.CPUGraph), "\n")
+		cpuContent = strings.Join(autoGridGraph(cpuAgg, cpuVal, leftW-2, graphRows, theme, theme.CPUGraph, pctAxis), "\n")
 	} else {
 		cpuContent = fmt.Sprintf(" CPU %s", cpuVal)
 	}
@@ -425,7 +425,7 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, width, height int, t
 	memAgg := aggregateHistory(s.MemHistory, det.projectIDs)
 	var memContent string
 	if len(memAgg) > 0 {
-		memContent = strings.Join(autoGridGraph(memAgg, memVal, rightW-2, graphRows, theme, theme.MemGraph), "\n")
+		memContent = strings.Join(autoGridGraph(memAgg, memVal, rightW-2, graphRows, theme, theme.MemGraph, bytesAxis), "\n")
 	} else {
 		memContent = fmt.Sprintf(" MEM %s", memVal)
 	}
@@ -503,7 +503,7 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 	cpuData := historyData(s.CPUHistory, det.containerID)
 	var cpuContent string
 	if len(cpuData) > 0 {
-		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, theme, theme.CPUGraph), "\n")
+		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, theme, theme.CPUGraph, pctAxis), "\n")
 	} else {
 		cpuContent = fmt.Sprintf(" CPU %s", cpuVal)
 	}
@@ -512,7 +512,7 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 	memData := historyData(s.MemHistory, det.containerID)
 	var memContent string
 	if len(memData) > 0 {
-		memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, theme, theme.MemGraph), "\n")
+		memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, theme, theme.MemGraph, bytesAxis), "\n")
 	} else {
 		memContent = fmt.Sprintf(" MEM %s", memVal)
 	}

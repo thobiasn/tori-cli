@@ -8,23 +8,42 @@ import (
 	"github.com/thobiasn/rook/internal/protocol"
 )
 
+// graphAxis controls how auto-scaled graph ceilings and labels are computed.
+type graphAxis struct {
+	ceilFn   func(float64) float64
+	labelFn  func(float64) string
+	ceilOnly bool // only show ceiling label, skip midpoint
+}
+
+var pctAxis = graphAxis{
+	ceilFn:  niceMax,
+	labelFn: func(v float64) string { return formatAutoLabel(v) + "%" },
+}
+
+var bytesAxis = graphAxis{
+	ceilFn:   niceMaxBytes,
+	labelFn:  func(v float64) string { return FormatBytes(uint64(v)) },
+	ceilOnly: true,
+}
+
 // gridGraph renders a braille graph with grid lines at 0/50/80/100% and
 // muted percentage labels on the right margin. The value string is placed at
 // the bottom-right of the last graph row. Returns the rendered lines.
-func gridGraph(data []float64, value string, innerW, rows int, theme *Theme) []string {
+// An optional color overrides the default per-row UsageColor.
+func gridGraph(data []float64, value string, innerW, rows int, theme *Theme, color ...lipgloss.Color) []string {
 	graphW := innerW - len(value) - 2
 	if graphW < 10 {
 		graphW = 10
 	}
 	gridPcts := []float64{0, 50, 80, 100}
-	graph := GraphWithGrid(data, graphW, rows, 100, gridPcts, theme)
+	graph := GraphWithGrid(data, graphW, rows, 100, gridPcts, theme, color...)
 	graphLines := strings.Split(graph, "\n")
 
 	gridLabels := make(map[int]string)
 	for _, pct := range []float64{100, 50, 80} {
 		row := int(float64(rows-1) * (1.0 - pct/100.0))
 		if _, taken := gridLabels[row]; !taken {
-			gridLabels[row] = fmt.Sprintf("%3.0f", pct)
+			gridLabels[row] = fmt.Sprintf("%3.0f%%", pct)
 		}
 	}
 
@@ -50,8 +69,7 @@ func gridGraph(data []float64, value string, innerW, rows int, theme *Theme) []s
 // autoGridGraph renders a braille graph auto-scaled to the observed data range.
 // Unlike gridGraph which uses a fixed 0-100 scale, this adapts the Y axis to
 // the data's observed maximum, making small variations visible.
-// An optional color overrides the default per-row UsageColor.
-func autoGridGraph(data []float64, value string, innerW, rows int, theme *Theme, color ...lipgloss.Color) []string {
+func autoGridGraph(data []float64, value string, innerW, rows int, theme *Theme, color lipgloss.Color, axis graphAxis) []string {
 	if len(data) == 0 {
 		return nil
 	}
@@ -65,7 +83,7 @@ func autoGridGraph(data []float64, value string, innerW, rows int, theme *Theme,
 	if maxObs < 0.1 {
 		maxObs = 1
 	}
-	maxVal := niceMax(maxObs)
+	maxVal := axis.ceilFn(maxObs)
 
 	graphW := innerW - len(value) - 2
 	if graphW < 10 {
@@ -73,15 +91,15 @@ func autoGridGraph(data []float64, value string, innerW, rows int, theme *Theme,
 	}
 
 	gridPcts := []float64{0, 50, 100}
-	graph := GraphWithGrid(data, graphW, rows, maxVal, gridPcts, theme, color...)
+	graph := GraphWithGrid(data, graphW, rows, maxVal, gridPcts, theme, color)
 	graphLines := strings.Split(graph, "\n")
 
-	// Labels: ceiling at top row, mid at 50%.
+	// Labels: ceiling at top row, mid at 50% (unless ceilOnly).
 	midRow := int(float64(rows-1) * 0.5)
 	gridLabels := make(map[int]string)
-	gridLabels[0] = formatAutoLabel(maxVal)
-	if midRow > 0 && midRow < rows-1 {
-		gridLabels[midRow] = formatAutoLabel(maxVal / 2)
+	gridLabels[0] = axis.labelFn(maxVal)
+	if !axis.ceilOnly && midRow > 0 && midRow < rows-1 {
+		gridLabels[midRow] = axis.labelFn(maxVal / 2)
 	}
 
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
@@ -116,6 +134,27 @@ func niceMax(v float64) float64 {
 	}
 	// Large values: round up to next 500.
 	return float64(int(v/500)+1) * 500
+}
+
+// niceMaxBytes rounds a byte value up to a clean ceiling within its unit.
+// It normalizes to the appropriate binary unit, applies niceMax on the
+// normalized value, then denormalizes back to bytes.
+func niceMaxBytes(v float64) float64 {
+	if v <= 0 {
+		return 1
+	}
+	switch {
+	case v >= 1<<40:
+		return niceMax(v/float64(uint64(1)<<40)) * float64(uint64(1)<<40)
+	case v >= 1<<30:
+		return niceMax(v/float64(uint64(1)<<30)) * float64(uint64(1)<<30)
+	case v >= 1<<20:
+		return niceMax(v/float64(uint64(1)<<20)) * float64(uint64(1)<<20)
+	case v >= 1<<10:
+		return niceMax(v/float64(uint64(1)<<10)) * float64(uint64(1)<<10)
+	default:
+		return niceMax(v)
+	}
 }
 
 // formatAutoLabel formats a number compactly for auto-scaled axis labels.
@@ -194,7 +233,7 @@ func renderMemPanel(host *protocol.HostMetrics, usedHistory []float64, width, he
 	var lines []string
 
 	if len(usedHistory) > 0 {
-		lines = append(lines, gridGraph(usedHistory, memVal, innerW, graphRows, theme)...)
+		lines = append(lines, gridGraph(usedHistory, memVal, innerW, graphRows, theme, theme.MemGraph)...)
 	} else {
 		lines = append(lines, fmt.Sprintf(" Mem %s", memVal))
 	}
