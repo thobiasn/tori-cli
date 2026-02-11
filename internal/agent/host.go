@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -184,6 +185,8 @@ func (h *HostCollector) readUptime(m *HostMetrics) error {
 }
 
 // readDisk reads /proc/mounts, filters to real devices, and calls statfs.
+// When a device appears multiple times (e.g. bind mounts inside Docker),
+// the shortest mountpoint is kept as it represents the real filesystem root.
 func (h *HostCollector) readDisk() ([]DiskMetrics, error) {
 	f, err := os.Open(filepath.Join(h.proc, "mounts"))
 	if err != nil {
@@ -191,8 +194,12 @@ func (h *HostCollector) readDisk() ([]DiskMetrics, error) {
 	}
 	defer f.Close()
 
-	seen := make(map[string]bool)
-	var disks []DiskMetrics
+	// Collect all mountpoints per device, keep the shortest.
+	type devMount struct {
+		device     string
+		mountpoint string
+	}
+	best := make(map[string]devMount)
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -203,19 +210,20 @@ func (h *HostCollector) readDisk() ([]DiskMetrics, error) {
 		device := fields[0]
 		mountpoint := fields[1]
 
-		// Only real block devices
 		if !strings.HasPrefix(device, "/dev/") {
 			continue
 		}
-		// Deduplicate by device
-		if seen[device] {
-			continue
+		prev, ok := best[device]
+		if !ok || len(mountpoint) < len(prev.mountpoint) {
+			best[device] = devMount{device, mountpoint}
 		}
-		seen[device] = true
+	}
 
+	var disks []DiskMetrics
+	for _, dm := range best {
 		var stat syscall.Statfs_t
-		if err := syscall.Statfs(mountpoint, &stat); err != nil {
-			continue // skip unmountable/permission-denied
+		if err := syscall.Statfs(dm.mountpoint, &stat); err != nil {
+			continue
 		}
 
 		total := stat.Blocks * uint64(stat.Bsize)
@@ -227,14 +235,18 @@ func (h *HostCollector) readDisk() ([]DiskMetrics, error) {
 		}
 
 		disks = append(disks, DiskMetrics{
-			Mountpoint: mountpoint,
-			Device:     device,
+			Mountpoint: dm.mountpoint,
+			Device:     dm.device,
 			Total:      total,
 			Used:       used,
 			Free:       free,
 			Percent:    pct,
 		})
 	}
+
+	sort.Slice(disks, func(i, j int) bool {
+		return disks[i].Mountpoint < disks[j].Mountpoint
+	})
 	return disks, nil
 }
 
