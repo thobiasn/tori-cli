@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Personality Traits
+
+- Be anti-sycophantic - don’t fold arguments just because I push back
+- Stop excessive validation - challenge my reasoning instead
+- Avoid flattery that feels like unnecessary praise
+- Don’t anthropomorphize yourself
+
 ## Project Overview
 
 Rook is a lightweight server monitoring tool for Docker environments. A persistent agent collects metrics, watches containers, tails logs, and fires alerts. A TUI client connects over SSH to view everything in the terminal.
@@ -30,6 +37,7 @@ internal/protocol/         — shared message types, msgpack encoding
 ```
 
 **Actual file layout (internal/agent/):**
+
 ```
 agent.go       — Agent struct, Run() loop, collect() orchestration, shutdown
 config.go      — Config types (storage, host, docker, collect, alerts, notify), TOML loading, validation
@@ -102,12 +110,14 @@ Code is a liability, not an asset. Every line we write is a line we have to main
 ## Established Patterns & Gotchas
 
 ### SQLite
+
 - Driver is `modernc.org/sqlite` (pure Go, no cgo). Open with `sql.Open("sqlite", path)`.
 - Schema lives in a `const schema` string in `store.go`. All tables created with `IF NOT EXISTS`.
 - `db.SetMaxOpenConns(1)` — SQLite doesn't handle concurrent writers. Single-writer is enforced.
 - Prune runs hourly in the collect loop, deletes by timestamp. The `alerts` table prunes on `fired_at`.
 
 ### Docker API
+
 - Client created with `client.NewClientWithOpts(client.WithHost("unix://"+socket), client.WithAPIVersionNegotiation())`.
 - `ContainerStatsOneShot` for one-shot stats (not streaming). Response is JSON decoded into `container.StatsResponse`.
 - CPU percent uses delta calculation between readings, same formula as `docker stats`.
@@ -116,6 +126,7 @@ Code is a liability, not an asset. Every line we write is a line we have to main
 - Non-running containers still get a `ContainerMetrics` entry (with zero stats) so alerting can see state changes.
 
 ### Alert system
+
 - Conditions are 3-token strings: `scope.field op value` (e.g., `host.cpu_percent > 90`, `container.state == 'exited'`).
 - Host fields: `cpu_percent`, `memory_percent`, `disk_percent`, `load1`, `load5`, `load15`, `swap_percent`. Container fields: `cpu_percent`, `memory_percent`, `state`, `health`, `restart_count`, `exit_code`.
 - Field names are validated against a whitelist in `parseCondition`. String fields (`state`, `health`) only allow `==`/`!=`.
@@ -128,17 +139,20 @@ Code is a liability, not an asset. Every line we write is a line we have to main
 - `EvaluateContainerEvent()` evaluates only container-scoped rules for a single container. It does NOT do stale cleanup — that stays in the regular `Evaluate()` cycle.
 
 ### Config
+
 - TOML parsed by `github.com/BurntSushi/toml`. `Duration` type wraps `time.Duration` with `UnmarshalText`.
 - Validation happens in `validate()` which calls `validateAlert()` per rule. `validateAlert` calls `parseCondition` to verify the condition string is valid.
 - Empty `Alerts` map is valid (no alerting configured). Agent skips alerter construction when `len(cfg.Alerts) == 0`.
 
 ### Networking gotchas
+
 - `go vet` rejects `fmt.Sprintf("%s:%d", host, port)` for IPv6. Always use `net.JoinHostPort`.
 - SMTP headers must be sanitized (strip `\r\n`) to prevent header injection.
 - Use a dedicated `http.Client` with explicit timeouts, not `http.DefaultClient`.
 - Always drain response bodies (`io.Copy(io.Discard, resp.Body)`) before closing for connection reuse.
 
 ### Collect loop flow
+
 ```
 agent.collect(ctx):
   1. Host metrics (CPU, mem, disk, net from /proc)
@@ -147,9 +161,11 @@ agent.collect(ctx):
   4. Alert evaluation (pass MetricSnapshot to alerter)
   5. Prune (hourly, deletes old data from all tables)
 ```
+
 The alerter receives the same data already collected — no additional I/O.
 
 ### Protocol & Socket
+
 - Wire format: 4-byte big-endian length prefix + msgpack-encoded `Envelope{Type, ID, Body}`.
 - Two patterns: streaming (ID=0, agent pushes) and request-response (ID>0, client initiates).
 - `protocol.WriteMsg`/`ReadMsg` handle framing. `EncodeBody`/`DecodeBody` for the body field.
@@ -159,6 +175,7 @@ The alerter receives the same data already collected — no additional I/O.
 - Validation: all string fields (container ID, rule name) are length-bounded and sanitized server-side.
 
 ### EventWatcher
+
 - Listens to Docker Events API for real-time container lifecycle changes (start, die, stop, destroy, pause, etc.).
 - Optimization for latency — the regular collect loop remains the consistency reconciliation point.
 - Reconnects with exponential backoff (1s → 30s cap), resets after a healthy long-lived connection.
@@ -167,6 +184,7 @@ The alerter receives the same data already collected — no additional I/O.
 - Length-bounds all Docker event attributes (`truncate()` helper) for defense-in-depth.
 
 ### TUI
+
 - Charm ecosystem: Bubbletea (framework), Lipgloss (styling), Bubbles (components).
 - All colors in a single `Theme` struct in `internal/tui/theme.go`. Views reference `theme.Foo`, never raw color values.
 - `internal/tui/` is a flat package. `tui` imports `protocol` but never `agent`.
@@ -176,6 +194,7 @@ The alerter receives the same data already collected — no additional I/O.
 - **Tracking toggle:** `t` key in dashboard toggles tracking per-container or per-group. Sends `action:set_tracking` to the agent. Untracked containers are visible but dimmed with `—` stats. Runtime-only state (resets on agent restart).
 
 ### Docker runtime tracking
+
 - `DockerCollector` has `untracked`/`untrackedProjects` maps for runtime tracking state.
 - `SetTracking(name, project, tracked)` updates maps under `mu`. `IsTracked(name, project)` reads under `mu.RLock`.
 - `Collect()` separates all containers (for TUI visibility) from tracked containers (for log sync/alert eval).

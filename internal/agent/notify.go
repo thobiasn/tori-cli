@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"strings"
+	"text/template"
 	"time"
 )
 
@@ -26,47 +27,54 @@ var webhookClient = &http.Client{
 	},
 }
 
-// Notifier sends alert notifications via email and/or webhook.
+// Channel sends alert notifications to a single destination.
+type Channel interface {
+	Send(ctx context.Context, subject, body string) error
+}
+
+// Notifier sends alert notifications via configured channels.
 type Notifier struct {
-	email   *EmailConfig
-	webhook *WebhookConfig
+	channels []Channel
 }
 
 // NewNotifier creates a Notifier from config. Safe to call with zero-value config;
 // Send becomes a no-op if no channels are enabled.
 func NewNotifier(cfg *NotifyConfig) *Notifier {
-	var n Notifier
+	var channels []Channel
 	if cfg.Email.Enabled {
-		n.email = &cfg.Email
+		channels = append(channels, &emailChannel{cfg: cfg.Email})
 	}
-	if cfg.Webhook.Enabled {
-		n.webhook = &cfg.Webhook
+	for i := range cfg.Webhooks {
+		wh := &cfg.Webhooks[i]
+		if wh.Enabled {
+			channels = append(channels, newWebhookChannel(*wh))
+		}
 	}
-	return &n
+	return &Notifier{channels: channels}
 }
 
 // Send dispatches the alert to all enabled channels. Errors are logged, never returned —
 // alerting must not block the collect loop.
 func (n *Notifier) Send(ctx context.Context, subject, body string) {
-	if n.email != nil {
-		if err := n.sendEmail(subject, body); err != nil {
-			slog.Error("email notification failed", "error", err)
-		}
-	}
-	if n.webhook != nil {
-		if err := n.sendWebhook(ctx, subject, body); err != nil {
-			slog.Error("webhook notification failed", "error", err)
+	for _, ch := range n.channels {
+		if err := ch.Send(ctx, subject, body); err != nil {
+			slog.Error("notification failed", "error", err)
 		}
 	}
 }
 
-func (n *Notifier) sendEmail(subject, body string) error {
-	addr := net.JoinHostPort(n.email.SMTPHost, fmt.Sprintf("%d", n.email.SMTPPort))
+// emailChannel sends notifications via SMTP.
+type emailChannel struct {
+	cfg EmailConfig
+}
+
+func (e *emailChannel) Send(_ context.Context, subject, body string) error {
+	addr := net.JoinHostPort(e.cfg.SMTPHost, fmt.Sprintf("%d", e.cfg.SMTPPort))
 
 	// Sanitize header values to prevent SMTP header injection.
-	from := sanitizeHeader(n.email.From)
-	to := make([]string, len(n.email.To))
-	for i, t := range n.email.To {
+	from := sanitizeHeader(e.cfg.From)
+	to := make([]string, len(e.cfg.To))
+	for i, t := range e.cfg.To {
 		to[i] = sanitizeHeader(t)
 	}
 	subject = sanitizeHeader(subject)
@@ -80,9 +88,12 @@ func (n *Notifier) sendEmail(subject, body string) error {
 	if err != nil {
 		return fmt.Errorf("smtp connect: %w", err)
 	}
-	conn.SetDeadline(time.Now().Add(30 * time.Second))
+	if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		conn.Close()
+		return fmt.Errorf("smtp deadline: %w", err)
+	}
 
-	c, err := smtp.NewClient(conn, n.email.SMTPHost)
+	c, err := smtp.NewClient(conn, e.cfg.SMTPHost)
 	if err != nil {
 		conn.Close()
 		return fmt.Errorf("smtp client: %w", err)
@@ -117,22 +128,61 @@ func sanitizeHeader(s string) string {
 	return s
 }
 
-func (n *Notifier) sendWebhook(ctx context.Context, subject, body string) error {
-	payload, err := json.Marshal(map[string]string{
-		"text": fmt.Sprintf("*%s*\n%s", subject, body),
-	})
-	if err != nil {
-		return err
+// webhookChannel sends notifications via HTTP POST.
+type webhookChannel struct {
+	cfg  WebhookConfig
+	tmpl *template.Template // nil = use default JSON payload
+}
+
+// webhookData is the data passed to webhook templates.
+type webhookData struct {
+	Subject string
+	Body    string
+}
+
+func newWebhookChannel(cfg WebhookConfig) *webhookChannel {
+	wc := &webhookChannel{cfg: cfg}
+	if cfg.Template != "" {
+		// Template was already validated at config load time.
+		wc.tmpl = template.Must(template.New("webhook").Parse(cfg.Template))
+	}
+	return wc
+}
+
+func (w *webhookChannel) Send(ctx context.Context, subject, body string) error {
+	var payload []byte
+	if w.tmpl != nil {
+		var buf bytes.Buffer
+		if err := w.tmpl.Execute(&buf, webhookData{Subject: subject, Body: body}); err != nil {
+			return fmt.Errorf("template execute: %w", err)
+		}
+		payload = buf.Bytes()
+	} else {
+		var err error
+		payload, err = json.Marshal(map[string]string{
+			"text": fmt.Sprintf("*%s*\n%s", subject, body),
+		})
+		if err != nil {
+			return err
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, n.webhook.URL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.cfg.URL, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
+
+	// Apply custom headers first (sanitize values), then set Content-Type
+	// as default only if not overridden by a custom header.
+	for k, v := range w.cfg.Headers {
+		req.Header.Set(sanitizeHeader(k), sanitizeHeader(v))
+	}
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	resp, err := webhookClient.Do(req)
 	if err != nil {

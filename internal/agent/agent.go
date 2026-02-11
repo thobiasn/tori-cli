@@ -12,6 +12,7 @@ import (
 // Agent orchestrates metric collection, log tailing, and storage.
 type Agent struct {
 	cfg     *Config
+	cfgPath string
 	store   *Store
 	host    *HostCollector
 	docker  *DockerCollector
@@ -21,11 +22,12 @@ type Agent struct {
 	hub     *Hub
 	socket  *SocketServer
 
+	reload    chan *Config
 	lastPrune time.Time
 }
 
-// New creates an Agent from the given config.
-func New(cfg *Config) (*Agent, error) {
+// New creates an Agent from the given config. cfgPath is stored for reload.
+func New(cfg *Config, cfgPath string) (*Agent, error) {
 	store, err := OpenStore(cfg.Storage.Path)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
@@ -50,12 +52,14 @@ func New(cfg *Config) (*Agent, error) {
 	}
 
 	a := &Agent{
-		cfg:    cfg,
-		store:  store,
-		host:   NewHostCollector(&cfg.Host),
-		docker: docker,
-		logs:   lt,
-		hub:    hub,
+		cfg:     cfg,
+		cfgPath: cfgPath,
+		store:   store,
+		host:    NewHostCollector(&cfg.Host),
+		docker:  docker,
+		logs:    lt,
+		hub:     hub,
+		reload:  make(chan *Config, 1),
 	}
 
 	if len(cfg.Alerts) > 0 {
@@ -66,28 +70,30 @@ func New(cfg *Config) (*Agent, error) {
 			docker.Close()
 			return nil, fmt.Errorf("alerter: %w", err)
 		}
-		alerter.onStateChange = func(alert *Alert, state string) {
-			event := &protocol.AlertEvent{
-				ID:          alert.ID,
-				RuleName:    alert.RuleName,
-				Severity:    alert.Severity,
-				Condition:   alert.Condition,
-				InstanceKey: alert.InstanceKey,
-				FiredAt:     alert.FiredAt.Unix(),
-				Message:     alert.Message,
-				State:       state,
-			}
-			if alert.ResolvedAt != nil {
-				event.ResolvedAt = alert.ResolvedAt.Unix()
-			}
-			hub.Publish(TopicAlerts, event)
-		}
+		alerter.onStateChange = a.makeOnStateChange()
 		a.alerter = alerter
 	}
 
 	a.events = NewEventWatcher(docker, lt, a.alerter, hub)
 	a.socket = NewSocketServer(hub, store, docker, a.alerter)
 	return a, nil
+}
+
+// Reload re-reads the config file and sends it to the Run loop for application.
+// Safe to call from any goroutine (e.g. SIGHUP handler). If a reload is already
+// pending, the new one is dropped.
+func (a *Agent) Reload() error {
+	cfg, err := LoadConfig(a.cfgPath)
+	if err != nil {
+		return fmt.Errorf("reload config: %w", err)
+	}
+	select {
+	case a.reload <- cfg:
+		slog.Info("config reload queued")
+	default:
+		slog.Warn("config reload already pending, skipping")
+	}
+	return nil
 }
 
 // Run starts the collection loop and blocks until the context is cancelled.
@@ -116,7 +122,95 @@ func (a *Agent) Run(ctx context.Context) error {
 			return a.shutdown()
 		case <-ticker.C:
 			a.collect(ctx)
+		case newCfg := <-a.reload:
+			a.applyConfig(newCfg)
+			ticker.Reset(a.cfg.Collect.Interval.Duration)
 		}
+	}
+}
+
+// nonReloadableFields logs warnings if non-reloadable config fields have changed.
+func nonReloadableFields(old, updated *Config) {
+	if old.Storage.Path != updated.Storage.Path {
+		slog.Warn("config reload: storage.path cannot be changed at runtime", "old", old.Storage.Path, "new", updated.Storage.Path)
+	}
+	if old.Socket.Path != updated.Socket.Path {
+		slog.Warn("config reload: socket.path cannot be changed at runtime", "old", old.Socket.Path, "new", updated.Socket.Path)
+	}
+	if old.Host.Proc != updated.Host.Proc {
+		slog.Warn("config reload: host.proc cannot be changed at runtime", "old", old.Host.Proc, "new", updated.Host.Proc)
+	}
+	if old.Host.Sys != updated.Host.Sys {
+		slog.Warn("config reload: host.sys cannot be changed at runtime", "old", old.Host.Sys, "new", updated.Host.Sys)
+	}
+	if old.Docker.Socket != updated.Docker.Socket {
+		slog.Warn("config reload: docker.socket cannot be changed at runtime", "old", old.Docker.Socket, "new", updated.Docker.Socket)
+	}
+}
+
+func (a *Agent) applyConfig(newCfg *Config) {
+	nonReloadableFields(a.cfg, newCfg)
+
+	// Reloadable fields.
+	a.cfg.Storage.RetentionDays = newCfg.Storage.RetentionDays
+	a.cfg.Collect.Interval = newCfg.Collect.Interval
+	a.cfg.Docker.Include = newCfg.Docker.Include
+	a.cfg.Docker.Exclude = newCfg.Docker.Exclude
+
+	// Docker filters.
+	a.docker.SetFilters(newCfg.Docker.Include, newCfg.Docker.Exclude)
+
+	// Rebuild alerter + notifier if alert/notify config changed.
+	if len(newCfg.Alerts) > 0 {
+		notifier := NewNotifier(&newCfg.Notify)
+		alerter, err := NewAlerter(newCfg.Alerts, a.store, notifier, a.docker)
+		if err != nil {
+			slog.Error("config reload: failed to create alerter, keeping old", "error", err)
+			return
+		}
+		alerter.onStateChange = a.makeOnStateChange()
+		if a.alerter != nil {
+			a.alerter.ResolveAll()
+		}
+		a.alerter = alerter
+		a.events.SetAlerter(alerter)
+		a.socket.SetAlerter(alerter)
+	} else {
+		if a.alerter != nil {
+			a.alerter.ResolveAll()
+		}
+		a.alerter = nil
+		a.events.SetAlerter(nil)
+		a.socket.SetAlerter(nil)
+	}
+
+	a.cfg.Alerts = newCfg.Alerts
+	a.cfg.Notify = newCfg.Notify
+
+	slog.Info("config reloaded",
+		"interval", a.cfg.Collect.Interval.Duration,
+		"alert_rules", len(a.cfg.Alerts),
+		"retention_days", a.cfg.Storage.RetentionDays,
+	)
+}
+
+// makeOnStateChange returns the onStateChange callback for the alerter.
+func (a *Agent) makeOnStateChange() func(alert *Alert, state string) {
+	return func(alert *Alert, state string) {
+		event := &protocol.AlertEvent{
+			ID:          alert.ID,
+			RuleName:    alert.RuleName,
+			Severity:    alert.Severity,
+			Condition:   alert.Condition,
+			InstanceKey: alert.InstanceKey,
+			FiredAt:     alert.FiredAt.Unix(),
+			Message:     alert.Message,
+			State:       state,
+		}
+		if alert.ResolvedAt != nil {
+			event.ResolvedAt = alert.ResolvedAt.Unix()
+		}
+		a.hub.Publish(TopicAlerts, event)
 	}
 }
 

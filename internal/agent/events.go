@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/events"
@@ -17,8 +18,10 @@ import (
 type EventWatcher struct {
 	docker  *DockerCollector
 	logs    *LogTailer
-	alerter *Alerter
 	hub     *Hub
+
+	alerterMu sync.RWMutex
+	alerter   *Alerter
 
 	// Injectable for tests; production uses docker.client.Events.
 	eventsFn func(ctx context.Context, opts events.ListOptions) (<-chan events.Message, <-chan error)
@@ -37,6 +40,13 @@ func NewEventWatcher(docker *DockerCollector, logs *LogTailer, alerter *Alerter,
 	}
 	ew.eventsFn = docker.Client().Events
 	return ew
+}
+
+// SetAlerter replaces the alerter used for evaluating container events.
+func (ew *EventWatcher) SetAlerter(a *Alerter) {
+	ew.alerterMu.Lock()
+	defer ew.alerterMu.Unlock()
+	ew.alerter = a
 }
 
 // Wait blocks until Run() has exited.
@@ -177,13 +187,18 @@ func (ew *EventWatcher) handleEvent(ctx context.Context, msg events.Message) {
 	// Evaluate container alerts on relevant state changes.
 	alertActions := action == events.ActionStart || action == events.ActionDie ||
 		action == events.ActionStop || action == events.ActionKill
-	if ew.alerter != nil && alertActions {
-		ew.alerter.EvaluateContainerEvent(ctx, ContainerMetrics{
-			ID:    id,
-			Name:  name,
-			Image: image,
-			State: state,
-		})
+	if alertActions {
+		ew.alerterMu.RLock()
+		alerter := ew.alerter
+		ew.alerterMu.RUnlock()
+		if alerter != nil {
+			alerter.EvaluateContainerEvent(ctx, ContainerMetrics{
+				ID:    id,
+				Name:  name,
+				Image: image,
+				State: state,
+			})
+		}
 	}
 
 	// Publish event to hub.

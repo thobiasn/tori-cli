@@ -5,7 +5,10 @@ Requires=docker.service
 
 [Service]
 Type=simple
+User=rook
+Group=rook
 ExecStart=/usr/local/bin/rook agent --config /etc/rook/config.toml
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 

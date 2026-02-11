@@ -506,6 +506,18 @@ func (a *Alerter) doRestart(ctx context.Context, r *alertRule, inst *alertInstan
 	slog.Info("restarted container", "rule", r.name, "container", containerID, "restarts", inst.restarts)
 }
 
+// ResolveAll resolves all firing alerts. Called before replacing the alerter on config reload.
+func (a *Alerter) ResolveAll() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := a.now()
+	for key, inst := range a.instances {
+		if inst.state == stateFiring {
+			a.resolve(context.Background(), a.ruleForKey(key), key, inst, now)
+		}
+	}
+}
+
 // HasRule returns whether a rule with the given name exists.
 func (a *Alerter) HasRule(name string) bool {
 	for i := range a.rules {

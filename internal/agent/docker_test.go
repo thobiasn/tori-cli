@@ -357,6 +357,39 @@ func TestGetTrackingState(t *testing.T) {
 	}
 }
 
+func TestSetFilters(t *testing.T) {
+	d := &DockerCollector{
+		include: []string{"web-*"},
+		exclude: nil,
+	}
+
+	if !d.MatchFilter("web-app") {
+		t.Error("web-app should match initial include")
+	}
+	if d.MatchFilter("api-server") {
+		t.Error("api-server should not match initial include")
+	}
+
+	// Swap filters at runtime.
+	d.SetFilters([]string{"api-*"}, []string{"api-test"})
+
+	if d.MatchFilter("web-app") {
+		t.Error("web-app should no longer match after SetFilters")
+	}
+	if !d.MatchFilter("api-server") {
+		t.Error("api-server should match new include")
+	}
+	if d.MatchFilter("api-test") {
+		t.Error("api-test should be excluded")
+	}
+
+	// Clear all filters.
+	d.SetFilters(nil, nil)
+	if !d.MatchFilter("anything") {
+		t.Error("everything should match with no filters")
+	}
+}
+
 func TestMatchFilterExported(t *testing.T) {
 	d := &DockerCollector{include: []string{"web-*"}, exclude: []string{"web-test"}}
 	if !d.MatchFilter("web-prod") {

@@ -142,7 +142,7 @@ condition = "host.disk_percent > 90"
 severity = "warning"
 actions = ["notify"]
 
-[notify.webhook]
+[[notify.webhooks]]
 enabled = true
 url = "https://example.com/hook"
 `), 0644)
@@ -165,7 +165,7 @@ url = "https://example.com/hook"
 	if ac.Severity != "critical" {
 		t.Errorf("severity = %q, want critical", ac.Severity)
 	}
-	if !cfg.Notify.Webhook.Enabled {
+	if len(cfg.Notify.Webhooks) != 1 || !cfg.Notify.Webhooks[0].Enabled {
 		t.Error("webhook should be enabled")
 	}
 }
@@ -263,6 +263,110 @@ actions = ["notify"]
 	_, err := LoadConfig(path)
 	if err == nil {
 		t.Fatal("expected error for > operator on string field")
+	}
+}
+
+func TestWebhookValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  string
+		wantErr bool
+	}{
+		{
+			name: "valid webhook",
+			config: `
+[[notify.webhooks]]
+enabled = true
+url = "https://example.com/hook"
+`,
+		},
+		{
+			name: "disabled webhook no url",
+			config: `
+[[notify.webhooks]]
+enabled = false
+`,
+		},
+		{
+			name: "enabled webhook missing url",
+			config: `
+[[notify.webhooks]]
+enabled = true
+`,
+			wantErr: true,
+		},
+		{
+			name: "webhook with custom headers",
+			config: `
+[[notify.webhooks]]
+enabled = true
+url = "https://example.com/hook"
+headers = { "Authorization" = "Bearer xxx" }
+`,
+		},
+		{
+			name: "webhook with valid template",
+			config: `
+[[notify.webhooks]]
+enabled = true
+url = "https://example.com/hook"
+template = '{"msg":"{{.Subject}}"}'
+`,
+		},
+		{
+			name: "webhook with invalid template",
+			config: `
+[[notify.webhooks]]
+enabled = true
+url = "https://example.com/hook"
+template = '{{.Invalid'
+`,
+			wantErr: true,
+		},
+		{
+			name: "multiple webhooks",
+			config: `
+[[notify.webhooks]]
+enabled = true
+url = "https://example.com/hook1"
+
+[[notify.webhooks]]
+enabled = true
+url = "https://example.com/hook2"
+`,
+		},
+		{
+			name: "webhook invalid scheme",
+			config: `
+[[notify.webhooks]]
+enabled = true
+url = "ftp://example.com/hook"
+`,
+			wantErr: true,
+		},
+		{
+			name: "webhook http scheme allowed",
+			config: `
+[[notify.webhooks]]
+enabled = true
+url = "http://example.com/hook"
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.toml")
+			os.WriteFile(path, []byte(tt.config), 0644)
+			_, err := LoadConfig(path)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }
 

@@ -28,11 +28,13 @@ type SocketServer struct {
 	hub      *Hub
 	store    *Store
 	docker   *DockerCollector
-	alerter  *Alerter
 	listener net.Listener
 	path     string
 	wg       sync.WaitGroup
 	connSem  chan struct{}
+
+	alerterMu sync.RWMutex
+	alerter   *Alerter
 }
 
 // NewSocketServer creates a SocketServer. Call Start to begin accepting connections.
@@ -44,6 +46,13 @@ func NewSocketServer(hub *Hub, store *Store, docker *DockerCollector, alerter *A
 		alerter: alerter,
 		connSem: make(chan struct{}, maxConnections),
 	}
+}
+
+// SetAlerter replaces the alerter used for silence operations.
+func (ss *SocketServer) SetAlerter(a *Alerter) {
+	ss.alerterMu.Lock()
+	defer ss.alerterMu.Unlock()
+	ss.alerter = a
 }
 
 // Start begins listening on the given Unix socket path.
@@ -514,7 +523,10 @@ func (c *connState) silenceAlert(env *protocol.Envelope) {
 		c.sendError(env.ID, "invalid body")
 		return
 	}
-	if c.ss.alerter == nil {
+	c.ss.alerterMu.RLock()
+	alerter := c.ss.alerter
+	c.ss.alerterMu.RUnlock()
+	if alerter == nil {
 		c.sendError(env.ID, "alerter not configured")
 		return
 	}
@@ -522,11 +534,11 @@ func (c *connState) silenceAlert(env *protocol.Envelope) {
 		c.sendError(env.ID, fmt.Sprintf("duration must be 1-%d seconds", maxSilenceDuration))
 		return
 	}
-	if !c.ss.alerter.HasRule(req.RuleName) {
+	if !alerter.HasRule(req.RuleName) {
 		c.sendError(env.ID, "unknown rule name")
 		return
 	}
-	c.ss.alerter.Silence(req.RuleName, time.Duration(req.Duration)*time.Second)
+	alerter.Silence(req.RuleName, time.Duration(req.Duration)*time.Second)
 	c.sendResult(env.ID, &protocol.Result{OK: true, Message: "silenced"})
 }
 

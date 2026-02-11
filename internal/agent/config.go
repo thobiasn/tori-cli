@@ -2,7 +2,10 @@ package agent
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	"strings"
+	"text/template"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -41,8 +44,8 @@ type AlertConfig struct {
 }
 
 type NotifyConfig struct {
-	Email   EmailConfig   `toml:"email"`
-	Webhook WebhookConfig `toml:"webhook"`
+	Email    EmailConfig     `toml:"email"`
+	Webhooks []WebhookConfig `toml:"webhooks"`
 }
 
 type EmailConfig struct {
@@ -54,8 +57,10 @@ type EmailConfig struct {
 }
 
 type WebhookConfig struct {
-	Enabled bool   `toml:"enabled"`
-	URL     string `toml:"url"`
+	Enabled  bool              `toml:"enabled"`
+	URL      string            `toml:"url"`
+	Headers  map[string]string `toml:"headers"`
+	Template string            `toml:"template"`
 }
 
 type StorageConfig struct {
@@ -136,6 +141,41 @@ func validate(cfg *Config) error {
 	for name, ac := range cfg.Alerts {
 		if err := validateAlert(name, &ac); err != nil {
 			return err
+		}
+	}
+	for i, wh := range cfg.Notify.Webhooks {
+		if err := validateWebhook(i, &wh); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateWebhook(idx int, wh *WebhookConfig) error {
+	if !wh.Enabled {
+		return nil
+	}
+	if wh.URL == "" {
+		return fmt.Errorf("webhook[%d]: url is required when enabled", idx)
+	}
+	u, err := url.Parse(wh.URL)
+	if err != nil {
+		return fmt.Errorf("webhook[%d]: invalid url: %w", idx, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("webhook[%d]: url scheme must be http or https", idx)
+	}
+	for key, val := range wh.Headers {
+		if strings.ContainsAny(key, "\r\n") {
+			return fmt.Errorf("webhook[%d]: header key contains invalid characters", idx)
+		}
+		if strings.ContainsAny(val, "\r\n") {
+			return fmt.Errorf("webhook[%d]: header value contains invalid characters", idx)
+		}
+	}
+	if wh.Template != "" {
+		if _, err := template.New("").Parse(wh.Template); err != nil {
+			return fmt.Errorf("webhook[%d]: invalid template: %w", idx, err)
 		}
 	}
 	return nil

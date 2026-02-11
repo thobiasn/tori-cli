@@ -50,11 +50,22 @@ func runAgent(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	a, err := agent.New(cfg)
+	a, err := agent.New(cfg, *configPath)
 	if err != nil {
 		slog.Error("failed to create agent", "error", err)
 		os.Exit(1)
 	}
+
+	// SIGHUP triggers config reload.
+	sighup := make(chan os.Signal, 1)
+	signal.Notify(sighup, syscall.SIGHUP)
+	go func() {
+		for range sighup {
+			if err := a.Reload(); err != nil {
+				slog.Error("config reload failed", "error", err)
+			}
+		}
+	}()
 
 	if err := a.Run(ctx); err != nil {
 		slog.Error("agent stopped with error", "error", err)

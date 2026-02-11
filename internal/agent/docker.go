@@ -186,6 +186,14 @@ func (d *DockerCollector) UpdateContainerState(id, state, name, image, project s
 	})
 }
 
+// SetFilters updates the include/exclude filter lists at runtime.
+func (d *DockerCollector) SetFilters(include, exclude []string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.include = include
+	d.exclude = exclude
+}
+
 // MatchFilter checks if a container name passes the include/exclude filters.
 func (d *DockerCollector) MatchFilter(name string) bool {
 	return d.matchFilter(name)
@@ -468,9 +476,14 @@ func containerName(names []string) string {
 
 // matchFilter checks if a container name matches include/exclude patterns.
 func (d *DockerCollector) matchFilter(name string) bool {
-	if len(d.include) > 0 {
+	d.mu.RLock()
+	include := d.include
+	exclude := d.exclude
+	d.mu.RUnlock()
+
+	if len(include) > 0 {
 		matched := false
-		for _, pattern := range d.include {
+		for _, pattern := range include {
 			if ok, _ := filepath.Match(pattern, name); ok {
 				matched = true
 				break
@@ -481,7 +494,7 @@ func (d *DockerCollector) matchFilter(name string) bool {
 		}
 	}
 
-	for _, pattern := range d.exclude {
+	for _, pattern := range exclude {
 		if ok, _ := filepath.Match(pattern, name); ok {
 			return false
 		}
