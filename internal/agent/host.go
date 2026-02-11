@@ -184,11 +184,25 @@ func (h *HostCollector) readUptime(m *HostMetrics) error {
 	return nil
 }
 
-// readDisk reads /proc/mounts, filters to real block device directory mounts,
-// and calls statfs. File bind-mounts (e.g. Docker's /etc/hosts) are skipped.
-// When a device has multiple directory mounts, the shortest path is kept.
+// readDisk reads PID 1's mount table, filters to real block device directory
+// mounts, and calls statfs. File bind-mounts are skipped. When a device has
+// multiple directory mounts, the shortest path is kept.
+//
+// Mountpoints are accessed through /proc/1/root/ so that statfs resolves to
+// the host filesystem even when running inside a container (requires pid:host).
+// When running directly on the host, /proc/1/root/ points to / so paths
+// resolve identically.
 func (h *HostCollector) readDisk() ([]DiskMetrics, error) {
-	f, err := os.Open(filepath.Join(h.proc, "mounts"))
+	// Prefer PID 1's mount table (host init's namespace, works in containers
+	// with pid:host). Fall back to /proc/mounts for test envs or restricted setups.
+	mountsPath := filepath.Join(h.proc, "1", "mounts")
+	rootPrefix := filepath.Join(h.proc, "1", "root")
+	if _, err := os.Stat(mountsPath); err != nil {
+		mountsPath = filepath.Join(h.proc, "mounts")
+		rootPrefix = ""
+	}
+
+	f, err := os.Open(mountsPath)
 	if err != nil {
 		return nil, err
 	}
@@ -213,8 +227,9 @@ func (h *HostCollector) readDisk() ([]DiskMetrics, error) {
 			continue
 		}
 
-		// Skip file bind-mounts (e.g. /etc/hosts, /etc/resolv.conf).
-		info, err := os.Stat(mountpoint)
+		// Resolve through /proc/1/root to access host paths.
+		resolvedPath := filepath.Join(rootPrefix, mountpoint)
+		info, err := os.Stat(resolvedPath)
 		if err != nil || !info.IsDir() {
 			continue
 		}
@@ -227,8 +242,9 @@ func (h *HostCollector) readDisk() ([]DiskMetrics, error) {
 
 	var disks []DiskMetrics
 	for _, dm := range best {
+		resolvedPath := filepath.Join(rootPrefix, dm.mountpoint)
 		var stat syscall.Statfs_t
-		if err := syscall.Statfs(dm.mountpoint, &stat); err != nil {
+		if err := syscall.Statfs(resolvedPath, &stat); err != nil {
 			continue
 		}
 
