@@ -3,7 +3,10 @@ package agent
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -771,5 +774,255 @@ CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, rule_na
 	}
 	if results[0].RestartCount != 2 {
 		t.Errorf("restart_count = %d, want 2", results[0].RestartCount)
+	}
+}
+
+// --- Chatty container characterization tests ---
+// These tests document the current unbounded log ingestion behavior.
+// There is no throughput cap, no per-container size budget, and DELETE
+// does not reclaim disk space without VACUUM.
+
+func TestHighVolumeLogInsertion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.db")
+	s, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	ctx := context.Background()
+	ts := time.Now()
+
+	const totalEntries = 10_000
+	const batchSize = 100 // matches logBatchSize
+
+	for i := 0; i < totalEntries/batchSize; i++ {
+		batch := make([]LogEntry, batchSize)
+		for j := range batch {
+			batch[j] = LogEntry{
+				Timestamp:     ts,
+				ContainerID:   "chatty",
+				ContainerName: "chatty",
+				Stream:        "stdout",
+				Message:       fmt.Sprintf("log line %05d: %s", i*batchSize+j, strings.Repeat("x", 80)),
+			}
+		}
+		if err := s.InsertLogs(ctx, batch); err != nil {
+			t.Fatalf("batch %d: %v", i, err)
+		}
+	}
+
+	// Characterization: all 10,000 entries are stored — no cap exists.
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM logs").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != totalEntries {
+		t.Errorf("stored %d entries, want %d — expected no cap on log insertion", count, totalEntries)
+	}
+
+	s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("DB size after %d log entries (~100 bytes each): %.2f MB", totalEntries, float64(info.Size())/(1024*1024))
+}
+
+func TestPruneHighVolumeLogs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.db")
+	s, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	ctx := context.Background()
+	old := time.Now().Add(-8 * 24 * time.Hour)
+	recent := time.Now()
+
+	// Insert 10,000 old entries (8 days ago — outside 7-day retention).
+	const oldCount = 10_000
+	for i := 0; i < oldCount/100; i++ {
+		batch := make([]LogEntry, 100)
+		for j := range batch {
+			batch[j] = LogEntry{
+				Timestamp:     old,
+				ContainerID:   "chatty",
+				ContainerName: "chatty",
+				Stream:        "stdout",
+				Message:       fmt.Sprintf("old line %d", i*100+j),
+			}
+		}
+		if err := s.InsertLogs(ctx, batch); err != nil {
+			t.Fatalf("old batch %d: %v", i, err)
+		}
+	}
+
+	// Insert 100 recent entries.
+	recentBatch := make([]LogEntry, 100)
+	for i := range recentBatch {
+		recentBatch[i] = LogEntry{
+			Timestamp:     recent,
+			ContainerID:   "chatty",
+			ContainerName: "chatty",
+			Stream:        "stdout",
+			Message:       fmt.Sprintf("recent line %d", i),
+		}
+	}
+	if err := s.InsertLogs(ctx, recentBatch); err != nil {
+		t.Fatal(err)
+	}
+
+	// Checkpoint WAL for accurate file size measurement.
+	s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	prePrune, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Prune(ctx, 7); err != nil {
+		t.Fatal(err)
+	}
+
+	// Old entries should be gone.
+	var oldRemaining int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM logs WHERE timestamp = ?", old.Unix()).Scan(&oldRemaining); err != nil {
+		t.Fatal(err)
+	}
+	if oldRemaining != 0 {
+		t.Errorf("old entries remaining = %d, want 0", oldRemaining)
+	}
+
+	// Recent entries should survive.
+	var recentRemaining int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM logs WHERE timestamp = ?", recent.Unix()).Scan(&recentRemaining); err != nil {
+		t.Fatal(err)
+	}
+	if recentRemaining != 100 {
+		t.Errorf("recent entries remaining = %d, want 100", recentRemaining)
+	}
+
+	// Checkpoint and measure post-prune size.
+	s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	postPrune, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("DB size before prune: %.2f MB, after prune: %.2f MB (DELETE does not reclaim space without VACUUM)",
+		float64(prePrune.Size())/(1024*1024), float64(postPrune.Size())/(1024*1024))
+}
+
+func TestPruneDoesNotShrinkDBFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.db")
+	s, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	ctx := context.Background()
+	old := time.Now().Add(-2 * 24 * time.Hour)
+
+	// Insert 5,000 entries with ~100 byte messages.
+	const totalEntries = 5_000
+	for i := 0; i < totalEntries/100; i++ {
+		batch := make([]LogEntry, 100)
+		for j := range batch {
+			batch[j] = LogEntry{
+				Timestamp:     old,
+				ContainerID:   "chatty",
+				ContainerName: "chatty",
+				Stream:        "stdout",
+				Message:       fmt.Sprintf("line %d: %s", i*100+j, strings.Repeat("x", 80)),
+			}
+		}
+		if err := s.InsertLogs(ctx, batch); err != nil {
+			t.Fatalf("batch %d: %v", i, err)
+		}
+	}
+
+	// Checkpoint WAL so main file reflects all data.
+	s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	prePrune, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Prune all entries (retention 1 day, entries are 2 days old).
+	if err := s.Prune(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM logs").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("logs after prune = %d, want 0", count)
+	}
+
+	// Checkpoint again for accurate post-prune measurement.
+	s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	postPrune, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// File should NOT shrink — SQLite DELETE does not reclaim disk space.
+	if postPrune.Size() < prePrune.Size() {
+		t.Errorf("DB file shrank from %d to %d bytes — unexpected without VACUUM", prePrune.Size(), postPrune.Size())
+	}
+
+	t.Logf("DB size: %d bytes pre-prune, %d bytes post-prune (%.1f%% of original)",
+		prePrune.Size(), postPrune.Size(), float64(postPrune.Size())/float64(prePrune.Size())*100)
+}
+
+func TestLogStorageScaling(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+	ts := time.Now()
+	msg := strings.Repeat("a", 88) // ~100 bytes per entry with overhead
+
+	targets := []int{100, 1000, 5000}
+	inserted := 0
+
+	for _, target := range targets {
+		for inserted < target {
+			n := target - inserted
+			if n > 100 {
+				n = 100
+			}
+			batch := make([]LogEntry, n)
+			for j := range batch {
+				batch[j] = LogEntry{
+					Timestamp:     ts,
+					ContainerID:   "chatty",
+					ContainerName: "chatty",
+					Stream:        "stdout",
+					Message:       msg,
+				}
+			}
+			if err := s.InsertLogs(ctx, batch); err != nil {
+				t.Fatal(err)
+			}
+			inserted += n
+		}
+
+		var pageCount, pageSize int64
+		if err := s.db.QueryRow("PRAGMA page_count").Scan(&pageCount); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.db.QueryRow("PRAGMA page_size").Scan(&pageSize); err != nil {
+			t.Fatal(err)
+		}
+		dbSize := pageCount * pageSize
+		bytesPerEntry := float64(dbSize) / float64(target)
+		t.Logf("%5d entries: DB = %d bytes (%.2f MB), %.0f bytes/entry",
+			target, dbSize, float64(dbSize)/(1024*1024), bytesPerEntry)
 	}
 }
