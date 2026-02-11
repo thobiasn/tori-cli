@@ -24,20 +24,44 @@ func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, hei
 
 	var lines []string
 
-	// Braille graph with CPU% embedded in the last line.
+	// Braille graph with CPU% embedded in the last line and grid labels on the right.
 	if len(cpuHistory) > 0 {
 		graphW := innerW - len(cpuVal) - 2 // space + value + leading space
 		if graphW < 10 {
 			graphW = 10
 		}
-		graph := GraphWithGrid(cpuHistory, graphW, graphRows, 100, []float64{0, 50, 80, 90, 100}, theme)
+		gridPcts := []float64{0, 50, 80, 90, 100}
+		graph := GraphWithGrid(cpuHistory, graphW, graphRows, 100, gridPcts, theme)
 		graphLines := strings.Split(graph, "\n")
-		pad := strings.Repeat(" ", len(cpuVal)+1)
+
+		// Map grid percentages to braille row indices for labels.
+		totalDots := graphRows * 4
+		gridLabels := make(map[int]string)
+		for _, pct := range gridPcts {
+			if pct == 0 {
+				continue
+			}
+			dot := int(pct / 100 * float64(totalDots))
+			if dot >= totalDots {
+				dot = totalDots - 1
+			}
+			row := graphRows - 1 - dot/4
+			gridLabels[row] = fmt.Sprintf("%3.0f", pct)
+		}
+
+		muted := lipgloss.NewStyle().Foreground(theme.Muted)
+		labelW := len(cpuVal) + 1 // reuse the right margin
 		for i, gl := range graphLines {
 			if i == len(graphLines)-1 {
 				lines = append(lines, " "+gl+" "+cpuVal)
+			} else if label, ok := gridLabels[i]; ok {
+				pad := labelW - len(label)
+				if pad < 1 {
+					pad = 1
+				}
+				lines = append(lines, " "+gl+strings.Repeat(" ", pad)+muted.Render(label))
 			} else {
-				lines = append(lines, " "+gl+pad)
+				lines = append(lines, " "+gl+strings.Repeat(" ", labelW))
 			}
 		}
 	} else {
