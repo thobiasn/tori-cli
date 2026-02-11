@@ -184,9 +184,9 @@ func (h *HostCollector) readUptime(m *HostMetrics) error {
 	return nil
 }
 
-// readDisk reads /proc/mounts, filters to real devices, and calls statfs.
-// When a device appears multiple times (e.g. bind mounts inside Docker),
-// the shortest mountpoint is kept as it represents the real filesystem root.
+// readDisk reads /proc/mounts, filters to real block device directory mounts,
+// and calls statfs. File bind-mounts (e.g. Docker's /etc/hosts) are skipped.
+// When a device has multiple directory mounts, the shortest path is kept.
 func (h *HostCollector) readDisk() ([]DiskMetrics, error) {
 	f, err := os.Open(filepath.Join(h.proc, "mounts"))
 	if err != nil {
@@ -194,7 +194,6 @@ func (h *HostCollector) readDisk() ([]DiskMetrics, error) {
 	}
 	defer f.Close()
 
-	// Collect all mountpoints per device, keep the shortest.
 	type devMount struct {
 		device     string
 		mountpoint string
@@ -213,6 +212,13 @@ func (h *HostCollector) readDisk() ([]DiskMetrics, error) {
 		if !strings.HasPrefix(device, "/dev/") {
 			continue
 		}
+
+		// Skip file bind-mounts (e.g. /etc/hosts, /etc/resolv.conf).
+		info, err := os.Stat(mountpoint)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+
 		prev, ok := best[device]
 		if !ok || len(mountpoint) < len(prev.mountpoint) {
 			best[device] = devMount{device, mountpoint}
