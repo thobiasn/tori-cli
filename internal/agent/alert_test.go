@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -1346,6 +1347,129 @@ func TestContainerRestartCountAlert(t *testing.T) {
 	inst := a.instances["restarts:aaa"]
 	if inst == nil || inst.state != stateFiring {
 		t.Fatal("expected firing")
+	}
+}
+
+func TestRestartFailureDoesNotIncrementCounter(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"exited": {
+			Condition:   "container.state == 'exited'",
+			Severity:    "critical",
+			Actions:     []string{"restart"},
+			MaxRestarts: 3,
+		},
+	}
+	a, _, fd := testAlerterWithDocker(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Simulate Docker failure.
+	fd.err = fmt.Errorf("docker unavailable")
+
+	// Fire — restart attempt should fail, counter stays at 0.
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
+	})
+	inst := a.instances["exited:aaa"]
+	if inst == nil || inst.state != stateFiring {
+		t.Fatal("expected firing")
+	}
+	if inst.restarts != 0 {
+		t.Errorf("restarts = %d, want 0 (restart failed)", inst.restarts)
+	}
+
+	// Clear error, resolve and re-fire — restart should succeed now.
+	fd.err = nil
+	now = now.Add(10 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "running"}},
+	})
+	now = now.Add(10 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
+	})
+	inst = a.instances["exited:aaa"]
+	if inst.restarts != 1 {
+		t.Errorf("restarts = %d, want 1 (restart succeeded)", inst.restarts)
+	}
+}
+
+func TestDiskMountpointDisappears(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"disk_full": {
+			Condition: "host.disk_percent > 90",
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Fire for "/" mountpoint.
+	a.Evaluate(ctx, &MetricSnapshot{
+		Disks: []DiskMetrics{{Mountpoint: "/", Percent: 95}},
+	})
+	if inst, ok := a.instances["disk_full:/"]; !ok || inst.state != stateFiring {
+		t.Fatal("expected disk_full:/ firing")
+	}
+
+	// Mountpoint "/" disappears (e.g. unmounted), but Disks is not nil.
+	now = now.Add(10 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{
+		Disks: []DiskMetrics{{Mountpoint: "/home", Percent: 40}},
+	})
+
+	// Stale instance should be resolved and GC'd.
+	if _, exists := a.instances["disk_full:/"]; exists {
+		t.Error("expected disk_full:/ to be GC'd after mountpoint disappeared")
+	}
+
+	var resolvedAt *int64
+	if err := s.db.QueryRow("SELECT resolved_at FROM alerts WHERE instance_key = 'disk_full:/'").Scan(&resolvedAt); err != nil {
+		t.Fatal(err)
+	}
+	if resolvedAt == nil {
+		t.Error("resolved_at should be set for disappeared mountpoint")
+	}
+}
+
+func TestContainerEventFiresRestart(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"exited": {
+			Condition:   "container.state == 'exited'",
+			Severity:    "critical",
+			Actions:     []string{"restart"},
+			MaxRestarts: 2,
+		},
+	}
+	a, _, fd := testAlerterWithDocker(t, alerts)
+	ctx := context.Background()
+	a.now = func() time.Time { return time.Now() }
+
+	// Container dies — EvaluateContainerEvent should fire and restart.
+	a.EvaluateContainerEvent(ctx, ContainerMetrics{
+		ID:    "aaa",
+		Name:  "web",
+		State: "exited",
+	})
+
+	a.mu.Lock()
+	inst := a.instances["exited:aaa"]
+	a.mu.Unlock()
+
+	if inst == nil || inst.state != stateFiring {
+		t.Fatal("expected exited:aaa to be firing")
+	}
+	if len(fd.restarted) != 1 || fd.restarted[0] != "aaa" {
+		t.Errorf("expected 1 restart of aaa, got %v", fd.restarted)
+	}
+	if inst.restarts != 1 {
+		t.Errorf("restarts = %d, want 1", inst.restarts)
 	}
 }
 
