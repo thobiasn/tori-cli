@@ -55,6 +55,10 @@ func (t *Tunnel) start(host, remoteSock string, opts SSHOptions) error {
 		args = append(args, "-p", strconv.Itoa(opts.Port))
 	}
 	if opts.IdentityFile != "" {
+		if strings.HasPrefix(opts.IdentityFile, "-") {
+			os.RemoveAll(dir)
+			return fmt.Errorf("invalid identity file: %q", opts.IdentityFile)
+		}
 		args = append(args, "-i", opts.IdentityFile)
 	}
 	args = append(args, "-L", t.localSock+":"+remoteSock, host)

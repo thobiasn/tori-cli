@@ -7,6 +7,7 @@ set -e
 if [ -n "$ROOK_CONFIG" ]; then
     mkdir -p /etc/rook
     printf '%s\n' "$ROOK_CONFIG" > /etc/rook/config.toml
+    chmod 0600 /etc/rook/config.toml
 fi
 
 exec "$@"

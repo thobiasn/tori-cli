@@ -53,6 +53,15 @@ func TestTunnelRejectsHostStartingWithDash(t *testing.T) {
 	}
 }
 
+func TestTunnelRejectsIdentityFileStartingWithDash(t *testing.T) {
+	_, err := NewTunnel("user@host", "/run/rook.sock", SSHOptions{
+		IdentityFile: "-oProxyCommand=evil",
+	})
+	if err == nil {
+		t.Fatal("should reject identity file starting with -")
+	}
+}
+
 func TestTunnelSSHOptions(t *testing.T) {
 	var gotArgs []string
 	tun := &Tunnel{

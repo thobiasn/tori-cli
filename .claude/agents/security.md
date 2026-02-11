@@ -17,7 +17,7 @@ Rook runs with elevated access: Docker socket (effectively root), host `/proc` a
 
 ### Unix Socket
 
-- What are the file permissions on `/run/rook/rook.sock`? Should be `0660` or stricter.
+- Socket permissions are `0666` — SSH is the auth gate. On multi-user systems, any local user can connect. This is an intentional design decision.
 - Is there any way to interact with the agent other than the Unix socket? There should not be.
 - Are client connections authenticated or authorized in any way? Currently SSH is the auth layer — document this assumption explicitly if relying on it.
 
