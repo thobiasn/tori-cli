@@ -101,7 +101,7 @@ func backfillMetrics(c *Client) tea.Cmd {
 		now := time.Now().Unix()
 		resp, err := c.QueryMetrics(ctx, now-1800, now)
 		if err != nil {
-			return nil
+			return nil // Non-critical: graphs fill from live data instead.
 		}
 		return metricsBackfillMsg{server: c.server, resp: resp}
 	}

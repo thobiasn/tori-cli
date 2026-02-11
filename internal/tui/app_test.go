@@ -306,6 +306,74 @@ func TestAppServerPickerSingleServer(t *testing.T) {
 	}
 }
 
+func TestHandleMetricsBackfill(t *testing.T) {
+	s := newTestSession()
+	resp := &protocol.QueryMetricsResp{
+		Host: []protocol.TimedHostMetrics{
+			{Timestamp: 1, HostMetrics: protocol.HostMetrics{CPUPercent: 10, MemPercent: 20}},
+			{Timestamp: 2, HostMetrics: protocol.HostMetrics{CPUPercent: 30, MemPercent: 40}},
+			{Timestamp: 3, HostMetrics: protocol.HostMetrics{CPUPercent: 50, MemPercent: 60}},
+		},
+		Containers: []protocol.TimedContainerMetrics{
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 5, MemPercent: 15}},
+			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 25, MemPercent: 35}},
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "c2", CPUPercent: 8, MemPercent: 18}},
+		},
+	}
+	handleMetricsBackfill(s, resp)
+
+	// Host history populated in order.
+	if s.HostCPUHistory.Len() != 3 {
+		t.Errorf("HostCPUHistory.Len() = %d, want 3", s.HostCPUHistory.Len())
+	}
+	cpuData := s.HostCPUHistory.Data()
+	if cpuData[0] != 10 || cpuData[2] != 50 {
+		t.Errorf("HostCPUHistory = %v, want [10 30 50]", cpuData)
+	}
+	if s.HostMemHistory.Len() != 3 {
+		t.Errorf("HostMemHistory.Len() = %d, want 3", s.HostMemHistory.Len())
+	}
+
+	// Container histories created and populated.
+	if s.CPUHistory["c1"].Len() != 2 {
+		t.Errorf("c1 CPUHistory.Len() = %d, want 2", s.CPUHistory["c1"].Len())
+	}
+	if s.CPUHistory["c2"].Len() != 1 {
+		t.Errorf("c2 CPUHistory.Len() = %d, want 1", s.CPUHistory["c2"].Len())
+	}
+	if s.MemHistory["c1"].Len() != 2 {
+		t.Errorf("c1 MemHistory.Len() = %d, want 2", s.MemHistory["c1"].Len())
+	}
+}
+
+func TestAppUpdateMetricsBackfillMsg(t *testing.T) {
+	a := newTestApp()
+	resp := &protocol.QueryMetricsResp{
+		Host: []protocol.TimedHostMetrics{
+			{Timestamp: 1, HostMetrics: protocol.HostMetrics{CPUPercent: 42, MemPercent: 55}},
+		},
+	}
+	model, _ := a.Update(metricsBackfillMsg{server: testServer, resp: resp})
+	a = model.(App)
+
+	s := a.session()
+	if s.HostCPUHistory.Len() != 1 {
+		t.Errorf("HostCPUHistory.Len() = %d, want 1", s.HostCPUHistory.Len())
+	}
+
+	// Nil resp should be a no-op.
+	model, _ = a.Update(metricsBackfillMsg{server: testServer, resp: nil})
+	a = model.(App)
+	s = a.session()
+	if s.HostCPUHistory.Len() != 1 {
+		t.Errorf("nil resp should be no-op, HostCPUHistory.Len() = %d, want 1", s.HostCPUHistory.Len())
+	}
+
+	// Unknown server should be a no-op.
+	model, _ = a.Update(metricsBackfillMsg{server: "unknown", resp: resp})
+	a = model.(App)
+}
+
 func TestAppMultiServerMessageRouting(t *testing.T) {
 	s1 := NewSession("prod", nil, nil)
 	s2 := NewSession("staging", nil, nil)
