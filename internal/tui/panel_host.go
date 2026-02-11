@@ -47,50 +47,6 @@ func gridGraph(data []float64, value string, innerW, rows int, theme *Theme) []s
 	return lines
 }
 
-// limitGridGraph renders a braille graph with a fixed maxVal and grid lines at
-// 0/50/100% of maxVal. topLabel and midLabel are displayed at the 100% and 50%
-// grid positions respectively (e.g. "7.6G" and "3.8G" for a memory limit).
-// Used for containers with explicit CPU or memory limits.
-func limitGridGraph(data []float64, value string, innerW, rows int, maxVal float64, topLabel, midLabel string, theme *Theme) []string {
-	if len(data) == 0 || maxVal <= 0 {
-		return nil
-	}
-
-	graphW := innerW - len(value) - 2
-	if graphW < 10 {
-		graphW = 10
-	}
-
-	gridPcts := []float64{0, 50, 100}
-	graph := GraphWithGrid(data, graphW, rows, maxVal, gridPcts, theme)
-	graphLines := strings.Split(graph, "\n")
-
-	midRow := int(float64(rows-1) * 0.5)
-	gridLabels := make(map[int]string)
-	gridLabels[0] = topLabel
-	if midRow > 0 && midRow < rows-1 {
-		gridLabels[midRow] = midLabel
-	}
-
-	muted := lipgloss.NewStyle().Foreground(theme.Muted)
-	labelW := len(value) + 1
-	lines := make([]string, len(graphLines))
-	for i, gl := range graphLines {
-		if i == len(graphLines)-1 {
-			lines[i] = " " + gl + " " + value
-		} else if label, ok := gridLabels[i]; ok {
-			pad := labelW - len(label)
-			if pad < 1 {
-				pad = 1
-			}
-			lines[i] = " " + gl + strings.Repeat(" ", pad) + muted.Render(label)
-		} else {
-			lines[i] = " " + gl + strings.Repeat(" ", labelW)
-		}
-	}
-	return lines
-}
-
 // autoGridGraph renders a braille graph auto-scaled to the observed data range.
 // Unlike gridGraph which uses a fixed 0-100 scale, this adapts the Y axis to
 // the data's observed maximum, making small variations visible.

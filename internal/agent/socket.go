@@ -660,7 +660,7 @@ func convertTimedContainer(src []TimedContainerMetrics) []protocol.TimedContaine
 				Health: s.Health, StartedAt: s.StartedAt, RestartCount: s.RestartCount, ExitCode: s.ExitCode,
 				CPUPercent: s.CPUPercent, MemUsage: s.MemUsage, MemLimit: s.MemLimit, MemPercent: s.MemPercent,
 				NetRx: s.NetRx, NetTx: s.NetTx, BlockRead: s.BlockRead, BlockWrite: s.BlockWrite, PIDs: s.PIDs,
-				DiskUsage: s.DiskUsage, CPULimit: s.CPULimit,
+				DiskUsage: s.DiskUsage,
 			},
 		}
 	}

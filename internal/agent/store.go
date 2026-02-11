@@ -143,7 +143,6 @@ func (s *Store) ensureColumns() {
 		"ALTER TABLE container_metrics ADD COLUMN restart_count INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE container_metrics ADD COLUMN exit_code INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE container_metrics ADD COLUMN disk_usage INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE container_metrics ADD COLUMN cpu_limit REAL NOT NULL DEFAULT 0",
 	}
 	for _, stmt := range migrations {
 		_, err := s.db.Exec(stmt)
@@ -210,7 +209,6 @@ type ContainerMetrics struct {
 	BlockWrite   uint64
 	PIDs         uint64
 	DiskUsage    uint64
-	CPULimit     float64 // max CPU percent (100 = 1 core), 0 = no limit
 }
 
 // Alert represents a fired alert stored in the database.
@@ -302,8 +300,8 @@ func (s *Store) InsertContainerMetrics(ctx context.Context, ts time.Time, contai
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO container_metrics (timestamp, id, name, image, state, health, started_at, restart_count, exit_code, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids, disk_usage, cpu_limit)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		`INSERT INTO container_metrics (timestamp, id, name, image, state, health, started_at, restart_count, exit_code, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids, disk_usage)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -314,7 +312,7 @@ func (s *Store) InsertContainerMetrics(ctx context.Context, ts time.Time, contai
 		if _, err := stmt.ExecContext(ctx, unix, c.ID, c.Name, c.Image, c.State,
 			c.Health, c.StartedAt, c.RestartCount, c.ExitCode,
 			c.CPUPercent, c.MemUsage, c.MemLimit, c.MemPercent,
-			c.NetRx, c.NetTx, c.BlockRead, c.BlockWrite, c.PIDs, c.DiskUsage, c.CPULimit); err != nil {
+			c.NetRx, c.NetTx, c.BlockRead, c.BlockWrite, c.PIDs, c.DiskUsage); err != nil {
 			return err
 		}
 	}
@@ -474,7 +472,7 @@ func (s *Store) QueryNetMetrics(ctx context.Context, start, end int64) ([]TimedN
 
 func (s *Store) QueryContainerMetrics(ctx context.Context, start, end int64) ([]TimedContainerMetrics, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT timestamp, id, name, image, state, health, started_at, restart_count, exit_code, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids, disk_usage, cpu_limit
+		`SELECT timestamp, id, name, image, state, health, started_at, restart_count, exit_code, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids, disk_usage
 		 FROM container_metrics WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp`, start, end)
 	if err != nil {
 		return nil, err
@@ -488,7 +486,7 @@ func (s *Store) QueryContainerMetrics(ctx context.Context, start, end int64) ([]
 		if err := rows.Scan(&ts, &t.ID, &t.Name, &t.Image, &t.State,
 			&t.Health, &t.StartedAt, &t.RestartCount, &t.ExitCode,
 			&t.CPUPercent, &t.MemUsage, &t.MemLimit, &t.MemPercent,
-			&t.NetRx, &t.NetTx, &t.BlockRead, &t.BlockWrite, &t.PIDs, &t.DiskUsage, &t.CPULimit); err != nil {
+			&t.NetRx, &t.NetTx, &t.BlockRead, &t.BlockWrite, &t.PIDs, &t.DiskUsage); err != nil {
 			return nil, err
 		}
 		t.Timestamp = time.Unix(ts, 0)

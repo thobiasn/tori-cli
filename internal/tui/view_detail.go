@@ -499,34 +499,20 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 		graphRows = 1
 	}
 
-	// CPU: use limit-based scale if container has an explicit CPU limit, auto-scale otherwise.
-	hasCPULimit := cm.CPULimit > 0
 	cpuVal := fmt.Sprintf("%5.1f%%", cm.CPUPercent)
 	cpuData := historyData(s.CPUHistory, det.containerID)
 	var cpuContent string
 	if len(cpuData) > 0 {
-		if hasCPULimit {
-			cpuContent = strings.Join(limitGridGraph(cpuData, cpuVal, leftW-2, graphRows, cm.CPULimit,
-				formatAutoLabel(cm.CPULimit)+"%", formatAutoLabel(cm.CPULimit/2)+"%", theme), "\n")
-		} else {
-			cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, theme), "\n")
-		}
+		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, theme), "\n")
 	} else {
 		cpuContent = fmt.Sprintf(" CPU %s", cpuVal)
 	}
 
-	// MEM: use limit-based scale if container has an explicit limit, auto-scale otherwise.
-	hasMemLimit := cm.MemLimit > 0 && s.Host != nil && cm.MemLimit < s.Host.MemTotal
-	memVal := fmt.Sprintf("%s / %s", FormatBytes(cm.MemUsage), FormatBytes(cm.MemLimit))
+	memVal := FormatBytes(cm.MemUsage)
 	memData := historyData(s.MemHistory, det.containerID)
 	var memContent string
 	if len(memData) > 0 {
-		if hasMemLimit {
-			memContent = strings.Join(limitGridGraph(memData, memVal, rightW-2, graphRows, 100,
-				FormatBytes(cm.MemLimit), FormatBytes(cm.MemLimit/2), theme), "\n")
-		} else {
-			memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, theme), "\n")
-		}
+		memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, theme), "\n")
 	} else {
 		memContent = fmt.Sprintf(" MEM %s", memVal)
 	}

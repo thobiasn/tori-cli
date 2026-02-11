@@ -285,7 +285,7 @@ func (a *Agent) collect(ctx context.Context) {
 			Health: c.Health, StartedAt: c.StartedAt, RestartCount: c.RestartCount, ExitCode: c.ExitCode,
 			CPUPercent: c.CPUPercent, MemUsage: c.MemUsage, MemLimit: c.MemLimit, MemPercent: c.MemPercent,
 			NetRx: c.NetRx, NetTx: c.NetTx, BlockRead: c.BlockRead, BlockWrite: c.BlockWrite, PIDs: c.PIDs,
-			DiskUsage: c.DiskUsage, CPULimit: c.CPULimit,
+			DiskUsage: c.DiskUsage,
 		})
 	}
 	a.hub.Publish(TopicMetrics, update)

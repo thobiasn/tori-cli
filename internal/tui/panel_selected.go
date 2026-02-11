@@ -164,35 +164,20 @@ func renderContainerSelected(s *Session, c *protocol.ContainerMetrics, width, he
 		graphRows = 1
 	}
 
-	// CPU: use limit-based scale if container has an explicit CPU limit, auto-scale otherwise.
-	hasCPULimit := c.CPULimit > 0
 	cpuVal := fmt.Sprintf("%5.1f%%", c.CPUPercent)
 	cpuData := historyData(s.CPUHistory, c.ID)
 	var cpuContent string
 	if len(cpuData) > 0 {
-		if hasCPULimit {
-			cpuContent = strings.Join(limitGridGraph(cpuData, cpuVal, leftW-2, graphRows, c.CPULimit,
-				formatAutoLabel(c.CPULimit)+"%", formatAutoLabel(c.CPULimit/2)+"%", theme), "\n")
-		} else {
-			cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, theme), "\n")
-		}
+		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, theme), "\n")
 	} else {
 		cpuContent = fmt.Sprintf(" CPU: %s", cpuVal)
 	}
 
-	// MEM: use limit-based scale if container has an explicit limit, auto-scale otherwise.
-	// Docker sets MemLimit to host total when no limit is configured.
-	hasMemLimit := c.MemLimit > 0 && s.Host != nil && c.MemLimit < s.Host.MemTotal
-	memVal := fmt.Sprintf("%s / %s", FormatBytes(c.MemUsage), FormatBytes(c.MemLimit))
+	memVal := FormatBytes(c.MemUsage)
 	memData := historyData(s.MemHistory, c.ID)
 	var memContent string
 	if len(memData) > 0 {
-		if hasMemLimit {
-			memContent = strings.Join(limitGridGraph(memData, memVal, rightW-2, graphRows, 100,
-				FormatBytes(c.MemLimit), FormatBytes(c.MemLimit/2), theme), "\n")
-		} else {
-			memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, theme), "\n")
-		}
+		memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, theme), "\n")
 	} else {
 		memContent = fmt.Sprintf(" MEM: %s", memVal)
 	}

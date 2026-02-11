@@ -43,7 +43,6 @@ type inspectResult struct {
 	startedAt    int64
 	restartCount int
 	exitCode     int
-	cpuLimit     float64 // max CPU percent (100 = 1 core), 0 = no limit
 }
 
 type cpuPrev struct {
@@ -289,7 +288,6 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 				StartedAt:    ir.startedAt,
 				RestartCount: ir.restartCount,
 				ExitCode:     ir.exitCode,
-				CPULimit:     ir.cpuLimit,
 				DiskUsage:    diskUsage,
 			})
 			continue
@@ -307,7 +305,6 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 				StartedAt:    ir.startedAt,
 				RestartCount: ir.restartCount,
 				ExitCode:     ir.exitCode,
-				CPULimit:     ir.cpuLimit,
 				DiskUsage:    diskUsage,
 			})
 			continue
@@ -316,7 +313,6 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 		m.StartedAt = ir.startedAt
 		m.RestartCount = ir.restartCount
 		m.ExitCode = ir.exitCode
-		m.CPULimit = ir.cpuLimit
 		m.DiskUsage = diskUsage
 		metrics = append(metrics, *m)
 	}
@@ -346,7 +342,7 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 
 const maxHealthLen = 64
 
-// inspectContainer calls ContainerInspect and extracts health, startedAt, restartCount, exitCode, cpuLimit.
+// inspectContainer calls ContainerInspect and extracts health, startedAt, restartCount, exitCode.
 func (d *DockerCollector) inspectContainer(ctx context.Context, id string) inspectResult {
 	r := inspectResult{health: "none"}
 	inspect, err := d.client.ContainerInspect(ctx, id)
@@ -363,14 +359,6 @@ func (d *DockerCollector) inspectContainer(ctx context.Context, id string) inspe
 		r.exitCode = inspect.State.ExitCode
 	}
 	r.restartCount = inspect.RestartCount
-	// CPU limit: NanoCPUs or CpuQuota/CpuPeriod → percentage (100 = 1 core).
-	if inspect.HostConfig != nil {
-		if inspect.HostConfig.NanoCPUs > 0 {
-			r.cpuLimit = float64(inspect.HostConfig.NanoCPUs) / 1e9 * 100
-		} else if inspect.HostConfig.CPUQuota > 0 && inspect.HostConfig.CPUPeriod > 0 {
-			r.cpuLimit = float64(inspect.HostConfig.CPUQuota) / float64(inspect.HostConfig.CPUPeriod) * 100
-		}
-	}
 	return r
 }
 
