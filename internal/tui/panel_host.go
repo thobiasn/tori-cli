@@ -30,23 +30,17 @@ func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, hei
 		if graphW < 10 {
 			graphW = 10
 		}
-		gridPcts := []float64{0, 50, 80, 90, 100}
+		gridPcts := []float64{0, 50, 80, 100}
 		graph := GraphWithGrid(cpuHistory, graphW, graphRows, 100, gridPcts, theme)
 		graphLines := strings.Split(graph, "\n")
 
 		// Map grid percentages to braille row indices for labels.
-		totalDots := graphRows * 4
 		gridLabels := make(map[int]string)
-		for _, pct := range gridPcts {
-			if pct == 0 {
-				continue
+		for _, pct := range []float64{100, 50, 80} {
+			row := int(float64(graphRows-1) * (1.0 - pct/100.0))
+			if _, taken := gridLabels[row]; !taken {
+				gridLabels[row] = fmt.Sprintf("%3.0f", pct)
 			}
-			dot := int(pct / 100 * float64(totalDots))
-			if dot >= totalDots {
-				dot = totalDots - 1
-			}
-			row := graphRows - 1 - dot/4
-			gridLabels[row] = fmt.Sprintf("%3.0f", pct)
 		}
 
 		muted := lipgloss.NewStyle().Foreground(theme.Muted)
