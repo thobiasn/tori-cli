@@ -173,13 +173,13 @@ func TestRenderSelectedPanelContainer(t *testing.T) {
 		s.CPUHistory["c1"].Push(float64(i * 10))
 	}
 
-	got := renderSelectedPanel(&a, s, 50, 15, &a.theme)
+	got := renderSelectedPanel(&a, s, 50, 25, &a.theme)
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "web") {
 		t.Error("should contain container name 'web'")
 	}
-	if !strings.Contains(plain, "CPU") {
-		t.Error("should contain CPU label")
+	if !strings.Contains(plain, "5.5%") {
+		t.Error("should contain CPU percentage")
 	}
 	if !strings.Contains(plain, "nginx") {
 		t.Error("should contain image name")

@@ -8,6 +8,166 @@ import (
 	"github.com/thobiasn/rook/internal/protocol"
 )
 
+// gridGraph renders a braille graph with grid lines at 0/50/80/100% and
+// muted percentage labels on the right margin. The value string is placed at
+// the bottom-right of the last graph row. Returns the rendered lines.
+func gridGraph(data []float64, value string, innerW, rows int, theme *Theme) []string {
+	graphW := innerW - len(value) - 2
+	if graphW < 10 {
+		graphW = 10
+	}
+	gridPcts := []float64{0, 50, 80, 100}
+	graph := GraphWithGrid(data, graphW, rows, 100, gridPcts, theme)
+	graphLines := strings.Split(graph, "\n")
+
+	gridLabels := make(map[int]string)
+	for _, pct := range []float64{100, 50, 80} {
+		row := int(float64(rows-1) * (1.0 - pct/100.0))
+		if _, taken := gridLabels[row]; !taken {
+			gridLabels[row] = fmt.Sprintf("%3.0f", pct)
+		}
+	}
+
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+	labelW := len(value) + 1
+	lines := make([]string, len(graphLines))
+	for i, gl := range graphLines {
+		if i == len(graphLines)-1 {
+			lines[i] = " " + gl + " " + value
+		} else if label, ok := gridLabels[i]; ok {
+			pad := labelW - len(label)
+			if pad < 1 {
+				pad = 1
+			}
+			lines[i] = " " + gl + strings.Repeat(" ", pad) + muted.Render(label)
+		} else {
+			lines[i] = " " + gl + strings.Repeat(" ", labelW)
+		}
+	}
+	return lines
+}
+
+// limitGridGraph renders a braille graph with a fixed maxVal and grid lines at
+// 0/50/100% of maxVal. Labels show the actual values (not percentages). Used for
+// containers with explicit CPU or memory limits.
+func limitGridGraph(data []float64, value string, innerW, rows int, maxVal float64, theme *Theme) []string {
+	if len(data) == 0 || maxVal <= 0 {
+		return nil
+	}
+
+	graphW := innerW - len(value) - 2
+	if graphW < 10 {
+		graphW = 10
+	}
+
+	gridPcts := []float64{0, 50, 100}
+	graph := GraphWithGrid(data, graphW, rows, maxVal, gridPcts, theme)
+	graphLines := strings.Split(graph, "\n")
+
+	midRow := int(float64(rows-1) * 0.5)
+	gridLabels := make(map[int]string)
+	gridLabels[0] = formatAutoLabel(maxVal)
+	if midRow > 0 && midRow < rows-1 {
+		gridLabels[midRow] = formatAutoLabel(maxVal / 2)
+	}
+
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+	labelW := len(value) + 1
+	lines := make([]string, len(graphLines))
+	for i, gl := range graphLines {
+		if i == len(graphLines)-1 {
+			lines[i] = " " + gl + " " + value
+		} else if label, ok := gridLabels[i]; ok {
+			pad := labelW - len(label)
+			if pad < 1 {
+				pad = 1
+			}
+			lines[i] = " " + gl + strings.Repeat(" ", pad) + muted.Render(label)
+		} else {
+			lines[i] = " " + gl + strings.Repeat(" ", labelW)
+		}
+	}
+	return lines
+}
+
+// autoGridGraph renders a braille graph auto-scaled to the observed data range.
+// Unlike gridGraph which uses a fixed 0-100 scale, this adapts the Y axis to
+// the data's observed maximum, making small variations visible.
+func autoGridGraph(data []float64, value string, innerW, rows int, theme *Theme) []string {
+	if len(data) == 0 {
+		return nil
+	}
+
+	var maxObs float64
+	for _, v := range data {
+		if v > maxObs {
+			maxObs = v
+		}
+	}
+	if maxObs < 0.1 {
+		maxObs = 1
+	}
+	maxVal := niceMax(maxObs)
+
+	graphW := innerW - len(value) - 2
+	if graphW < 10 {
+		graphW = 10
+	}
+
+	gridPcts := []float64{0, 50, 100}
+	graph := GraphWithGrid(data, graphW, rows, maxVal, gridPcts, theme)
+	graphLines := strings.Split(graph, "\n")
+
+	// Labels: ceiling at top row, mid at 50%.
+	midRow := int(float64(rows-1) * 0.5)
+	gridLabels := make(map[int]string)
+	gridLabels[0] = formatAutoLabel(maxVal)
+	if midRow > 0 && midRow < rows-1 {
+		gridLabels[midRow] = formatAutoLabel(maxVal / 2)
+	}
+
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+	labelW := len(value) + 1
+	lines := make([]string, len(graphLines))
+	for i, gl := range graphLines {
+		if i == len(graphLines)-1 {
+			lines[i] = " " + gl + " " + value
+		} else if label, ok := gridLabels[i]; ok {
+			pad := labelW - len(label)
+			if pad < 1 {
+				pad = 1
+			}
+			lines[i] = " " + gl + strings.Repeat(" ", pad) + muted.Render(label)
+		} else {
+			lines[i] = " " + gl + strings.Repeat(" ", labelW)
+		}
+	}
+	return lines
+}
+
+// niceMax rounds a value up to a visually clean ceiling for axis labeling.
+func niceMax(v float64) float64 {
+	if v <= 0 {
+		return 1
+	}
+	steps := []float64{1, 2, 5, 10, 20, 25, 50, 75, 100, 150, 200, 300, 500, 1000}
+	for _, s := range steps {
+		if v <= s {
+			return s
+		}
+	}
+	// Large values: round up to next 500.
+	return float64(int(v/500)+1) * 500
+}
+
+// formatAutoLabel formats a number compactly for auto-scaled axis labels.
+func formatAutoLabel(v float64) string {
+	if v == float64(int(v)) {
+		return fmt.Sprintf("%d", int(v))
+	}
+	return fmt.Sprintf("%.1f", v)
+}
+
 // renderCPUPanel renders the CPU panel with a multi-row braille graph.
 func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, height int, theme *Theme) string {
 	if host == nil {
@@ -24,40 +184,8 @@ func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, hei
 
 	var lines []string
 
-	// Braille graph with CPU% embedded in the last line and grid labels on the right.
 	if len(cpuHistory) > 0 {
-		graphW := innerW - len(cpuVal) - 2 // space + value + leading space
-		if graphW < 10 {
-			graphW = 10
-		}
-		gridPcts := []float64{0, 50, 80, 100}
-		graph := GraphWithGrid(cpuHistory, graphW, graphRows, 100, gridPcts, theme)
-		graphLines := strings.Split(graph, "\n")
-
-		// Map grid percentages to braille row indices for labels.
-		gridLabels := make(map[int]string)
-		for _, pct := range []float64{100, 50, 80} {
-			row := int(float64(graphRows-1) * (1.0 - pct/100.0))
-			if _, taken := gridLabels[row]; !taken {
-				gridLabels[row] = fmt.Sprintf("%3.0f", pct)
-			}
-		}
-
-		muted := lipgloss.NewStyle().Foreground(theme.Muted)
-		labelW := len(cpuVal) + 1 // reuse the right margin
-		for i, gl := range graphLines {
-			if i == len(graphLines)-1 {
-				lines = append(lines, " "+gl+" "+cpuVal)
-			} else if label, ok := gridLabels[i]; ok {
-				pad := labelW - len(label)
-				if pad < 1 {
-					pad = 1
-				}
-				lines = append(lines, " "+gl+strings.Repeat(" ", pad)+muted.Render(label))
-			} else {
-				lines = append(lines, " "+gl+strings.Repeat(" ", labelW))
-			}
-		}
+		lines = append(lines, gridGraph(cpuHistory, cpuVal, innerW, graphRows, theme)...)
 	} else {
 		lines = append(lines, fmt.Sprintf(" CPU %s", cpuVal))
 	}
@@ -108,38 +236,7 @@ func renderMemPanel(host *protocol.HostMetrics, usedHistory []float64, width, he
 	var lines []string
 
 	if len(usedHistory) > 0 {
-		graphW := innerW - len(memVal) - 2
-		if graphW < 10 {
-			graphW = 10
-		}
-		gridPcts := []float64{0, 50, 80, 100}
-		graph := GraphWithGrid(usedHistory, graphW, graphRows, 100, gridPcts, theme)
-		graphLines := strings.Split(graph, "\n")
-
-		// Map grid percentages to braille row indices for labels.
-		gridLabels := make(map[int]string)
-		for _, pct := range []float64{100, 50, 80} {
-			row := int(float64(graphRows-1) * (1.0 - pct/100.0))
-			if _, taken := gridLabels[row]; !taken {
-				gridLabels[row] = fmt.Sprintf("%3.0f", pct)
-			}
-		}
-
-		muted := lipgloss.NewStyle().Foreground(theme.Muted)
-		labelW := len(memVal) + 1
-		for i, gl := range graphLines {
-			if i == len(graphLines)-1 {
-				lines = append(lines, " "+gl+" "+memVal)
-			} else if label, ok := gridLabels[i]; ok {
-				pad := labelW - len(label)
-				if pad < 1 {
-					pad = 1
-				}
-				lines = append(lines, " "+gl+strings.Repeat(" ", pad)+muted.Render(label))
-			} else {
-				lines = append(lines, " "+gl+strings.Repeat(" ", labelW))
-			}
-		}
+		lines = append(lines, gridGraph(usedHistory, memVal, innerW, graphRows, theme)...)
 	} else {
 		lines = append(lines, fmt.Sprintf(" Mem %s", memVal))
 	}
@@ -198,4 +295,16 @@ func highestUsageDisk(disks []protocol.DiskMetrics) protocol.DiskMetrics {
 		}
 	}
 	return best
+}
+
+// renderContainerDiskBox renders a small bordered disk panel showing container writable layer usage.
+func renderContainerDiskBox(diskUsage uint64, width, height int, theme *Theme) string {
+	content := " Writable layer: " + FormatBytes(diskUsage)
+	return Box("Disk", content, width, height, theme)
+}
+
+// renderGroupDiskBox renders a small bordered disk panel showing aggregate container disk usage.
+func renderGroupDiskBox(totalDisk uint64, width, height int, theme *Theme) string {
+	content := " Writable layers: " + FormatBytes(totalDisk)
+	return Box("Disk", content, width, height, theme)
 }

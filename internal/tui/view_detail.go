@@ -375,25 +375,72 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 
 func renderDetailGroupMetrics(s *Session, det *DetailState, width, height int, theme *Theme) string {
 	innerW := width - 2
-	var lines []string
 
-	// Aggregate CPU/MEM across all containers in the group.
-	var totalCPU, totalMem float64
-	var totalMemUsage, totalMemLimit uint64
+	// Aggregate CPU/MEM/Disk across all containers in the group.
+	var totalCPU float64
+	var totalMemUsage, totalMemLimit, totalDisk uint64
 	for _, id := range det.projectIDs {
 		for _, c := range s.Containers {
 			if c.ID == id {
 				totalCPU += c.CPUPercent
-				totalMem += c.MemPercent
 				totalMemUsage += c.MemUsage
 				totalMemLimit += c.MemLimit
+				totalDisk += c.DiskUsage
 				break
 			}
 		}
 	}
 
-	lines = append(lines, fmt.Sprintf(" CPU  %5.1f%% (total)", totalCPU))
-	lines = append(lines, fmt.Sprintf(" MEM  %s / %s (total)", FormatBytes(totalMemUsage), FormatBytes(totalMemLimit)))
+	// Per-container table: header + one row per container + blank separator.
+	tableLines := 2 + len(det.projectIDs)
+	hasDisk := totalDisk > 0
+	diskH := 0
+	if hasDisk {
+		diskH = 3
+	}
+	graphBudget := height - 2 - tableLines - diskH
+	if graphBudget < 5 {
+		graphBudget = 5
+	}
+
+	// Side-by-side CPU and MEM inner boxes.
+	leftW := innerW / 2
+	rightW := innerW - leftW
+	graphRows := graphBudget - 2 // inner box borders
+	if graphRows < 1 {
+		graphRows = 1
+	}
+
+	// Auto-scaled for groups (aggregated percentages don't fit 0-100).
+	cpuVal := fmt.Sprintf("%5.1f%%", totalCPU)
+	cpuAgg := aggregateHistory(s.CPUHistory, det.projectIDs)
+	var cpuContent string
+	if len(cpuAgg) > 0 {
+		cpuContent = strings.Join(autoGridGraph(cpuAgg, cpuVal, leftW-2, graphRows, theme), "\n")
+	} else {
+		cpuContent = fmt.Sprintf(" CPU %s", cpuVal)
+	}
+
+	memVal := fmt.Sprintf("%s / %s", FormatBytes(totalMemUsage), FormatBytes(totalMemLimit))
+	memAgg := aggregateHistory(s.MemHistory, det.projectIDs)
+	var memContent string
+	if len(memAgg) > 0 {
+		memContent = strings.Join(autoGridGraph(memAgg, memVal, rightW-2, graphRows, theme), "\n")
+	} else {
+		memContent = fmt.Sprintf(" MEM %s", memVal)
+	}
+
+	graphs := lipgloss.JoinHorizontal(lipgloss.Top,
+		Box("CPU", cpuContent, leftW, graphBudget, theme),
+		Box("Memory", memContent, rightW, graphBudget, theme))
+
+	var lines []string
+	lines = append(lines, strings.Split(graphs, "\n")...)
+
+	if hasDisk {
+		lines = append(lines, strings.Split(renderGroupDiskBox(totalDisk, innerW, diskH, theme), "\n")...)
+	}
+
 	lines = append(lines, "")
 
 	// Per-container summary table.
@@ -431,50 +478,66 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 		return "  Waiting for metrics..."
 	}
 	innerW := width - 2
-	graphRows := 2
-	labelW := 5 // " CPU " / " MEM "
+
+	// Info lines: NET+BLK, PID+HC, IMG+UP = 3 fixed.
+	infoLines := 3
+	hasDisk := cm.DiskUsage > 0
+	diskH := 0
+	if hasDisk {
+		diskH = 3
+	}
+	graphBudget := height - 2 - infoLines - diskH
+	if graphBudget < 5 {
+		graphBudget = 5
+	}
+
+	// Side-by-side CPU and MEM inner boxes.
+	leftW := innerW / 2
+	rightW := innerW - leftW
+	graphRows := graphBudget - 2 // inner box borders
+	if graphRows < 1 {
+		graphRows = 1
+	}
+
+	// CPU: use limit-based scale if container has an explicit CPU limit, auto-scale otherwise.
+	hasCPULimit := cm.CPULimit > 0
+	cpuVal := fmt.Sprintf("%5.1f%%", cm.CPUPercent)
+	cpuData := historyData(s.CPUHistory, det.containerID)
+	var cpuContent string
+	if len(cpuData) > 0 {
+		if hasCPULimit {
+			cpuContent = strings.Join(limitGridGraph(cpuData, cpuVal, leftW-2, graphRows, cm.CPULimit, theme), "\n")
+		} else {
+			cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, theme), "\n")
+		}
+	} else {
+		cpuContent = fmt.Sprintf(" CPU %s", cpuVal)
+	}
+
+	// MEM: use 0-100% scale if container has an explicit limit, auto-scale otherwise.
+	hasMemLimit := cm.MemLimit > 0 && s.Host != nil && cm.MemLimit < s.Host.MemTotal
+	memVal := fmt.Sprintf("%s / %s", FormatBytes(cm.MemUsage), FormatBytes(cm.MemLimit))
+	memData := historyData(s.MemHistory, det.containerID)
+	var memContent string
+	if len(memData) > 0 {
+		if hasMemLimit {
+			memContent = strings.Join(gridGraph(memData, memVal, rightW-2, graphRows, theme), "\n")
+		} else {
+			memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, theme), "\n")
+		}
+	} else {
+		memContent = fmt.Sprintf(" MEM %s", memVal)
+	}
+
+	graphs := lipgloss.JoinHorizontal(lipgloss.Top,
+		Box("CPU", cpuContent, leftW, graphBudget, theme),
+		Box("Memory", memContent, rightW, graphBudget, theme))
 
 	var lines []string
+	lines = append(lines, strings.Split(graphs, "\n")...)
 
-	// CPU + MEM: value next to label, graph fills remaining width.
-	cpuVal := fmt.Sprintf("%5.1f%%", cm.CPUPercent)
-	memVal := fmt.Sprintf("%s / %s limit", FormatBytes(cm.MemUsage), FormatBytes(cm.MemLimit))
-	valW := max(len(cpuVal), len(memVal))
-	leftW := labelW + valW + 1
-	graphW := innerW - leftW
-	if graphW < 10 {
-		graphW = 10
-	}
-	cpuVal = fmt.Sprintf("%*s", valW, cpuVal)
-	memVal = fmt.Sprintf("%*s", valW, memVal)
-	graphPad := strings.Repeat(" ", leftW)
-
-	cpuData := historyData(s.CPUHistory, det.containerID)
-	if len(cpuData) > 0 {
-		cpuGraph := Graph(cpuData, graphW, graphRows, 0, theme)
-		for i, gl := range strings.Split(cpuGraph, "\n") {
-			if i == 0 {
-				lines = append(lines, " CPU "+cpuVal+" "+gl)
-			} else {
-				lines = append(lines, graphPad+gl)
-			}
-		}
-	} else {
-		lines = append(lines, fmt.Sprintf(" CPU %s", cpuVal))
-	}
-
-	memData := historyData(s.MemHistory, det.containerID)
-	if len(memData) > 0 {
-		memGraph := Graph(memData, graphW, graphRows, 0, theme)
-		for i, gl := range strings.Split(memGraph, "\n") {
-			if i == 0 {
-				lines = append(lines, " MEM "+memVal+" "+gl)
-			} else {
-				lines = append(lines, graphPad+gl)
-			}
-		}
-	} else {
-		lines = append(lines, fmt.Sprintf(" MEM %s", memVal))
+	if hasDisk {
+		lines = append(lines, strings.Split(renderContainerDiskBox(cm.DiskUsage, innerW, diskH, theme), "\n")...)
 	}
 
 	// NET + BLK on one line.

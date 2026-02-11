@@ -26,6 +26,7 @@ func renderSelectedPanel(a *App, s *Session, width, height int, theme *Theme) st
 
 func renderGroupSummary(s *Session, g *containerGroup, width, height int, theme *Theme) string {
 	innerW := width - 2
+	innerH := height - 2
 	var totalCPU float64
 	var totalMem uint64
 	for _, c := range g.containers {
@@ -33,54 +34,62 @@ func renderGroupSummary(s *Session, g *containerGroup, width, height int, theme 
 		totalMem += c.MemUsage
 	}
 
-	var lines []string
-
-	// Aggregate CPU graph.
-	graphRows := 2
-	labelW := 5
-	cpuVal := fmt.Sprintf("%5.1f%%", totalCPU)
-	graphW := innerW - labelW - len(cpuVal) - 1
-	if graphW < 10 {
-		graphW = 10
-	}
-
 	ids := make([]string, len(g.containers))
 	for i, c := range g.containers {
 		ids[i] = c.ID
 	}
 
-	cpuAgg := aggregateHistory(s.CPUHistory, ids)
-	if len(cpuAgg) > 0 {
-		cpuGraph := Graph(cpuAgg, graphW, graphRows, 0, theme)
-		for i, gl := range strings.Split(cpuGraph, "\n") {
-			if i == 0 {
-				lines = append(lines, " CPU "+gl+" "+cpuVal)
-			} else {
-				lines = append(lines, strings.Repeat(" ", labelW)+gl)
-			}
-		}
-	} else {
-		lines = append(lines, fmt.Sprintf(" CPU: %s", cpuVal))
+	// Charts take 1/2 of inner height.
+	chartBudget := innerH / 2
+	var totalDisk uint64
+	for _, c := range g.containers {
+		totalDisk += c.DiskUsage
+	}
+	hasDisk := totalDisk > 0
+	diskH := 0
+	if hasDisk {
+		diskH = 3
+	}
+	graphH := chartBudget - diskH
+	if graphH < 5 {
+		graphH = 5
 	}
 
-	// Aggregate MEM graph.
-	memVal := fmt.Sprintf("%s", FormatBytes(totalMem))
-	memGraphW := innerW - labelW - len(memVal) - 1
-	if memGraphW < 10 {
-		memGraphW = 10
+	// CPU + MEM side-by-side inner boxes (auto-scaled: aggregated values).
+	leftW := innerW / 2
+	rightW := innerW - leftW
+	graphRows := graphH - 2
+	if graphRows < 1 {
+		graphRows = 1
 	}
-	memAgg := aggregateHistory(s.MemHistory, ids)
-	if len(memAgg) > 0 {
-		memGraph := Graph(memAgg, memGraphW, graphRows, 0, theme)
-		for i, gl := range strings.Split(memGraph, "\n") {
-			if i == 0 {
-				lines = append(lines, " MEM "+gl+" "+memVal)
-			} else {
-				lines = append(lines, strings.Repeat(" ", labelW)+gl)
-			}
-		}
+
+	cpuVal := fmt.Sprintf("%5.1f%%", totalCPU)
+	cpuAgg := aggregateHistory(s.CPUHistory, ids)
+	var cpuContent string
+	if len(cpuAgg) > 0 {
+		cpuContent = strings.Join(autoGridGraph(cpuAgg, cpuVal, leftW-2, graphRows, theme), "\n")
 	} else {
-		lines = append(lines, fmt.Sprintf(" MEM: %s", memVal))
+		cpuContent = fmt.Sprintf(" CPU: %s", cpuVal)
+	}
+
+	memVal := FormatBytes(totalMem)
+	memAgg := aggregateHistory(s.MemHistory, ids)
+	var memContent string
+	if len(memAgg) > 0 {
+		memContent = strings.Join(autoGridGraph(memAgg, memVal, rightW-2, graphRows, theme), "\n")
+	} else {
+		memContent = fmt.Sprintf(" MEM: %s", memVal)
+	}
+
+	graphs := lipgloss.JoinHorizontal(lipgloss.Top,
+		Box("CPU", cpuContent, leftW, graphH, theme),
+		Box("Memory", memContent, rightW, graphH, theme))
+
+	var lines []string
+	lines = append(lines, strings.Split(graphs, "\n")...)
+
+	if hasDisk {
+		lines = append(lines, strings.Split(renderGroupDiskBox(totalDisk, innerW, diskH, theme), "\n")...)
 	}
 
 	lines = append(lines, "")
@@ -133,87 +142,85 @@ func aggregateHistory(histories map[string]*RingBuffer[float64], ids []string) [
 
 func renderContainerSelected(s *Session, c *protocol.ContainerMetrics, width, height int, theme *Theme) string {
 	innerW := width - 2
-	var lines []string
+	innerH := height - 2
 
-	// CPU + MEM graphs with aligned widths.
-	cpuData := historyData(s.CPUHistory, c.ID)
-	memData := historyData(s.MemHistory, c.ID)
-	graphRows := 3
-	labelW := 5 // " CPU " / " MEM "
+	// Charts take 1/2 of inner height.
+	chartBudget := innerH / 2
+	hasDisk := c.DiskUsage > 0
+	diskH := 0
+	if hasDisk {
+		diskH = 3
+	}
+	graphH := chartBudget - diskH
+	if graphH < 5 {
+		graphH = 5
+	}
+
+	// CPU + MEM side-by-side inner boxes.
+	leftW := innerW / 2
+	rightW := innerW - leftW
+	graphRows := graphH - 2 // inner box borders
+	if graphRows < 1 {
+		graphRows = 1
+	}
+
+	// CPU: use limit-based scale if container has an explicit CPU limit, auto-scale otherwise.
+	hasCPULimit := c.CPULimit > 0
 	cpuVal := fmt.Sprintf("%5.1f%%", c.CPUPercent)
-	memVal := fmt.Sprintf("%s / %s", FormatBytes(c.MemUsage), FormatBytes(c.MemLimit))
-	valW := max(len(cpuVal), len(memVal))
-	graphW := innerW - labelW - valW - 1
-	if graphW < 10 {
-		graphW = 10
-	}
-	cpuVal = fmt.Sprintf("%*s", valW, cpuVal)
-	memVal = fmt.Sprintf("%*s", valW, memVal)
-
+	cpuData := historyData(s.CPUHistory, c.ID)
+	var cpuContent string
 	if len(cpuData) > 0 {
-		cpuGraph := Graph(cpuData, graphW, graphRows, 0, theme)
-		for i, line := range strings.Split(cpuGraph, "\n") {
-			if i == 0 {
-				lines = append(lines, " CPU "+line+" "+cpuVal)
-			} else {
-				lines = append(lines, strings.Repeat(" ", labelW)+line)
-			}
+		if hasCPULimit {
+			cpuContent = strings.Join(limitGridGraph(cpuData, cpuVal, leftW-2, graphRows, c.CPULimit, theme), "\n")
+		} else {
+			cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, theme), "\n")
 		}
 	} else {
-		lines = append(lines, fmt.Sprintf(" CPU: %s", cpuVal))
+		cpuContent = fmt.Sprintf(" CPU: %s", cpuVal)
 	}
 
+	// MEM: use 0-100% scale if container has an explicit limit, auto-scale otherwise.
+	// Docker sets MemLimit to host total when no limit is configured.
+	hasMemLimit := c.MemLimit > 0 && s.Host != nil && c.MemLimit < s.Host.MemTotal
+	memVal := fmt.Sprintf("%s / %s", FormatBytes(c.MemUsage), FormatBytes(c.MemLimit))
+	memData := historyData(s.MemHistory, c.ID)
+	var memContent string
 	if len(memData) > 0 {
-		memGraph := Graph(memData, graphW, graphRows, 0, theme)
-		for i, line := range strings.Split(memGraph, "\n") {
-			if i == 0 {
-				lines = append(lines, " MEM "+line+" "+memVal)
-			} else {
-				lines = append(lines, strings.Repeat(" ", labelW)+line)
-			}
+		if hasMemLimit {
+			memContent = strings.Join(gridGraph(memData, memVal, rightW-2, graphRows, theme), "\n")
+		} else {
+			memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, theme), "\n")
 		}
 	} else {
-		lines = append(lines, fmt.Sprintf(" MEM: %s", memVal))
+		memContent = fmt.Sprintf(" MEM: %s", memVal)
 	}
 
-	lines = append(lines, "")
+	graphs := lipgloss.JoinHorizontal(lipgloss.Top,
+		Box("CPU", cpuContent, leftW, graphH, theme),
+		Box("Memory", memContent, rightW, graphH, theme))
 
-	// NET/BLK rates.
+	var lines []string
+	lines = append(lines, strings.Split(graphs, "\n")...)
+
+	// Disk box.
+	if hasDisk {
+		lines = append(lines, strings.Split(renderContainerDiskBox(c.DiskUsage, innerW, diskH, theme), "\n")...)
+	}
+
+	// Info lines.
 	rates := s.Rates.ContainerRates[c.ID]
 	rxStyle := lipgloss.NewStyle().Foreground(theme.Healthy)
 	txStyle := lipgloss.NewStyle().Foreground(theme.Accent)
-	lines = append(lines, fmt.Sprintf(" NET  %s %s  %s %s",
+	lines = append(lines, fmt.Sprintf(" NET  %s %s  %s %s    BLK  %s %s  %s %s",
 		rxStyle.Render("▼"), FormatBytesRate(rates.NetRxRate),
-		txStyle.Render("▲"), FormatBytesRate(rates.NetTxRate)))
-	lines = append(lines, fmt.Sprintf(" BLK  %s %s  %s %s",
+		txStyle.Render("▲"), FormatBytesRate(rates.NetTxRate),
 		rxStyle.Render("R"), FormatBytesRate(rates.BlockReadRate),
 		txStyle.Render("W"), FormatBytesRate(rates.BlockWriteRate)))
-
-	// PID + IMG + UP.
-	lines = append(lines, fmt.Sprintf(" PID  %d", c.PIDs))
-	lines = append(lines, fmt.Sprintf(" IMG  %s", Truncate(stripANSI(c.Image), innerW-6)))
+	lines = append(lines, fmt.Sprintf(" PID  %d    %s    HC %s",
+		c.PIDs, formatRestarts(c.RestartCount, theme), theme.HealthText(c.Health)))
 	uptime := formatContainerUptime(c.State, c.StartedAt, c.ExitCode)
-	lines = append(lines, fmt.Sprintf(" UP   %s", uptime))
-
-	lines = append(lines, "")
-
-	// HC + RESTARTS grouped.
-	lines = append(lines, fmt.Sprintf(" HC   %s", theme.HealthText(c.Health)))
-	lines = append(lines, fmt.Sprintf(" RESTARTS  %s", formatRestarts(c.RestartCount, theme)))
-
-	// Separator + disk/net context.
-	lines = append(lines, lipgloss.NewStyle().Foreground(theme.Muted).Render(" "+strings.Repeat("─", innerW-2)))
-	if s.Host != nil && len(s.Disks) > 0 {
-		d := highestUsageDisk(s.Disks)
-		diskBarW := innerW - 8
-		if diskBarW < 10 {
-			diskBarW = 10
-		}
-		lines = append(lines, fmt.Sprintf(" DISK %s", ProgressBar(d.Percent, diskBarW, theme)))
-	}
-	lines = append(lines, fmt.Sprintf(" NET  %s %s  %s %s",
-		rxStyle.Render("▼"), FormatBytesRate(s.Rates.NetRxRate),
-		txStyle.Render("▲"), FormatBytesRate(s.Rates.NetTxRate)))
+	lines = append(lines, fmt.Sprintf(" IMG  %s    UP %s",
+		Truncate(stripANSI(c.Image), innerW-20), uptime))
 
 	// Title with state indicator.
 	stateIndicator := theme.StateIndicator(c.State)

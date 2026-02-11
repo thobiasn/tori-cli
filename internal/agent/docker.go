@@ -32,6 +32,10 @@ type DockerCollector struct {
 	// Runtime tracking state: names/projects that are untracked.
 	untracked         map[string]bool // container names
 	untrackedProjects map[string]bool // compose project names
+
+	// Periodic container disk size collection (Size: true is expensive).
+	sizeCollectN int            // counter for periodic size requests
+	cachedSizes  map[string]int64 // container ID → SizeRw (writable layer bytes)
 }
 
 type inspectResult struct {
@@ -39,6 +43,7 @@ type inspectResult struct {
 	startedAt    int64
 	restartCount int
 	exitCode     int
+	cpuLimit     float64 // max CPU percent (100 = 1 core), 0 = no limit
 }
 
 type cpuPrev struct {
@@ -63,6 +68,7 @@ func NewDockerCollector(cfg *DockerConfig) (*DockerCollector, error) {
 		inspectCache:      make(map[string]inspectResult),
 		untracked:         make(map[string]bool),
 		untrackedProjects: make(map[string]bool),
+		cachedSizes:       make(map[string]int64),
 	}, nil
 }
 
@@ -203,8 +209,16 @@ func (d *DockerCollector) MatchFilter(name string) bool {
 // The returned containers slice contains only tracked containers (for log sync
 // and alert evaluation). All discovered containers (including untracked) are
 // cached and available via Containers() for TUI visibility.
+// sizeCollectInterval controls how often we pass Size: true to ContainerList.
+// Size: true is expensive (requires diff per container), so we only do it
+// every 12th call (~1 min at 5s collect interval).
+const sizeCollectInterval = 12
+
 func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Container, error) {
-	containers, err := d.client.ContainerList(ctx, container.ListOptions{All: true})
+	collectSize := d.sizeCollectN%sizeCollectInterval == 0
+	d.sizeCollectN++
+
+	containers, err := d.client.ContainerList(ctx, container.ListOptions{All: true, Size: collectSize})
 	if err != nil {
 		return nil, nil, fmt.Errorf("container list: %w", err)
 	}
@@ -223,22 +237,26 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 		// Cache results for non-running containers; evict running ones for fresh data.
 		image := truncate(c.Image, maxImageLen)
 		project := c.Labels["com.docker.compose.project"]
-		var health string
-		var startedAt int64
-		var restartCount, exitCode int
+		var ir inspectResult
 		if c.State != "running" {
 			if cached, ok := d.inspectCache[c.ID]; ok {
-				health = cached.health
-				startedAt = cached.startedAt
-				restartCount = cached.restartCount
-				exitCode = cached.exitCode
+				ir = cached
 			} else {
-				health, startedAt, restartCount, exitCode = d.inspectContainer(ctx, c.ID)
-				d.inspectCache[c.ID] = inspectResult{health, startedAt, restartCount, exitCode}
+				ir = d.inspectContainer(ctx, c.ID)
+				d.inspectCache[c.ID] = ir
 			}
 		} else {
 			delete(d.inspectCache, c.ID)
-			health, startedAt, restartCount, exitCode = d.inspectContainer(ctx, c.ID)
+			ir = d.inspectContainer(ctx, c.ID)
+		}
+
+		// Cache container disk size when collected; use cached value otherwise.
+		if collectSize && c.SizeRw > 0 {
+			d.cachedSizes[c.ID] = c.SizeRw
+		}
+		var diskUsage uint64
+		if sz, ok := d.cachedSizes[c.ID]; ok && sz > 0 {
+			diskUsage = uint64(sz)
 		}
 
 		ctr := Container{
@@ -247,10 +265,10 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 			Image:        image,
 			State:        c.State,
 			Project:      project,
-			Health:       health,
-			StartedAt:    startedAt,
-			RestartCount: restartCount,
-			ExitCode:     exitCode,
+			Health:       ir.health,
+			StartedAt:    ir.startedAt,
+			RestartCount: ir.restartCount,
+			ExitCode:     ir.exitCode,
 		}
 		all = append(all, ctr)
 
@@ -267,10 +285,12 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 				Name:         name,
 				Image:        image,
 				State:        c.State,
-				Health:       health,
-				StartedAt:    startedAt,
-				RestartCount: restartCount,
-				ExitCode:     exitCode,
+				Health:       ir.health,
+				StartedAt:    ir.startedAt,
+				RestartCount: ir.restartCount,
+				ExitCode:     ir.exitCode,
+				CPULimit:     ir.cpuLimit,
+				DiskUsage:    diskUsage,
 			})
 			continue
 		}
@@ -283,17 +303,21 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 				Name:         name,
 				Image:        image,
 				State:        c.State,
-				Health:       health,
-				StartedAt:    startedAt,
-				RestartCount: restartCount,
-				ExitCode:     exitCode,
+				Health:       ir.health,
+				StartedAt:    ir.startedAt,
+				RestartCount: ir.restartCount,
+				ExitCode:     ir.exitCode,
+				CPULimit:     ir.cpuLimit,
+				DiskUsage:    diskUsage,
 			})
 			continue
 		}
-		m.Health = health
-		m.StartedAt = startedAt
-		m.RestartCount = restartCount
-		m.ExitCode = exitCode
+		m.Health = ir.health
+		m.StartedAt = ir.startedAt
+		m.RestartCount = ir.restartCount
+		m.ExitCode = ir.exitCode
+		m.CPULimit = ir.cpuLimit
+		m.DiskUsage = diskUsage
 		metrics = append(metrics, *m)
 	}
 
@@ -311,30 +335,43 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 			delete(d.inspectCache, id)
 		}
 	}
+	for id := range d.cachedSizes {
+		if !seen[id] {
+			delete(d.cachedSizes, id)
+		}
+	}
 
 	return metrics, tracked, nil
 }
 
 const maxHealthLen = 64
 
-// inspectContainer calls ContainerInspect and extracts health, startedAt, restartCount, exitCode.
-func (d *DockerCollector) inspectContainer(ctx context.Context, id string) (health string, startedAt int64, restartCount int, exitCode int) {
-	health = "none"
+// inspectContainer calls ContainerInspect and extracts health, startedAt, restartCount, exitCode, cpuLimit.
+func (d *DockerCollector) inspectContainer(ctx context.Context, id string) inspectResult {
+	r := inspectResult{health: "none"}
 	inspect, err := d.client.ContainerInspect(ctx, id)
 	if err != nil {
-		return
+		return r
 	}
 	if inspect.State != nil {
 		if inspect.State.Health != nil {
-			health = truncate(inspect.State.Health.Status, maxHealthLen)
+			r.health = truncate(inspect.State.Health.Status, maxHealthLen)
 		}
 		if t, err := time.Parse(time.RFC3339Nano, inspect.State.StartedAt); err == nil {
-			startedAt = t.Unix()
+			r.startedAt = t.Unix()
 		}
-		exitCode = inspect.State.ExitCode
+		r.exitCode = inspect.State.ExitCode
 	}
-	restartCount = inspect.RestartCount
-	return
+	r.restartCount = inspect.RestartCount
+	// CPU limit: NanoCPUs or CpuQuota/CpuPeriod → percentage (100 = 1 core).
+	if inspect.HostConfig != nil {
+		if inspect.HostConfig.NanoCPUs > 0 {
+			r.cpuLimit = float64(inspect.HostConfig.NanoCPUs) / 1e9 * 100
+		} else if inspect.HostConfig.CPUQuota > 0 && inspect.HostConfig.CPUPeriod > 0 {
+			r.cpuLimit = float64(inspect.HostConfig.CPUQuota) / float64(inspect.HostConfig.CPUPeriod) * 100
+		}
+	}
+	return r
 }
 
 func (d *DockerCollector) containerStats(ctx context.Context, id, name, image, state string) (*ContainerMetrics, error) {

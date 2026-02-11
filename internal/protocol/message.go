@@ -266,6 +266,8 @@ type ContainerMetrics struct {
 	BlockRead    uint64  `msgpack:"block_read"`
 	BlockWrite   uint64  `msgpack:"block_write"`
 	PIDs         uint64  `msgpack:"pids"`
+	DiskUsage    uint64  `msgpack:"disk_usage,omitempty"`
+	CPULimit     float64 `msgpack:"cpu_limit,omitempty"`
 }
 
 type TimedHostMetrics struct {
