@@ -48,9 +48,10 @@ func gridGraph(data []float64, value string, innerW, rows int, theme *Theme) []s
 }
 
 // limitGridGraph renders a braille graph with a fixed maxVal and grid lines at
-// 0/50/100% of maxVal. Labels show the actual values (not percentages). Used for
-// containers with explicit CPU or memory limits.
-func limitGridGraph(data []float64, value string, innerW, rows int, maxVal float64, theme *Theme) []string {
+// 0/50/100% of maxVal. topLabel and midLabel are displayed at the 100% and 50%
+// grid positions respectively (e.g. "7.6G" and "3.8G" for a memory limit).
+// Used for containers with explicit CPU or memory limits.
+func limitGridGraph(data []float64, value string, innerW, rows int, maxVal float64, topLabel, midLabel string, theme *Theme) []string {
 	if len(data) == 0 || maxVal <= 0 {
 		return nil
 	}
@@ -66,9 +67,9 @@ func limitGridGraph(data []float64, value string, innerW, rows int, maxVal float
 
 	midRow := int(float64(rows-1) * 0.5)
 	gridLabels := make(map[int]string)
-	gridLabels[0] = formatAutoLabel(maxVal)
+	gridLabels[0] = topLabel
 	if midRow > 0 && midRow < rows-1 {
-		gridLabels[midRow] = formatAutoLabel(maxVal / 2)
+		gridLabels[midRow] = midLabel
 	}
 
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
