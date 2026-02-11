@@ -242,13 +242,11 @@ func Graph(data []float64, width, rows int, maxVal float64, theme *Theme) string
 		return ""
 	}
 
-	// Each braille char covers 2 horizontal data points.
 	maxPoints := width * 2
 	if len(data) > maxPoints {
 		data = data[len(data)-maxPoints:]
 	}
 
-	// Auto-scale if maxVal not set.
 	if maxVal <= 0 {
 		for _, v := range data {
 			if v > maxVal {
@@ -260,9 +258,8 @@ func Graph(data []float64, width, rows int, maxVal float64, theme *Theme) string
 		maxVal = 1
 	}
 
-	totalDots := rows * 4 // total vertical dot positions
+	totalDots := rows * 4
 
-	// Normalize each value to [0, totalDots].
 	heights := make([]int, len(data))
 	for i, v := range data {
 		h := int(v / maxVal * float64(totalDots))
@@ -278,45 +275,31 @@ func Graph(data []float64, width, rows int, maxVal float64, theme *Theme) string
 		heights[i] = h
 	}
 
-	// Braille bit layout per character (2 cols × 4 rows):
-	//   Row 0: bit 0 (col 0), bit 3 (col 1)
-	//   Row 1: bit 1 (col 0), bit 4 (col 1)
-	//   Row 2: bit 2 (col 0), bit 5 (col 1)
-	//   Row 3: bit 6 (col 0), bit 7 (col 1)
-	leftBits := [4]byte{0x01, 0x02, 0x04, 0x40}  // row0, row1, row2, row3
-	rightBits := [4]byte{0x08, 0x10, 0x20, 0x80} // row0, row1, row2, row3
+	leftBits := [4]byte{0x40, 0x04, 0x02, 0x01}
+	rightBits := [4]byte{0x80, 0x20, 0x10, 0x08}
 
 	// Build row by row, top to bottom.
 	rowStrs := make([]string, rows)
 	for r := 0; r < rows; r++ {
-		// This braille row covers dot positions from bottomDot to bottomDot+3.
-		// Top row = r=0 covers the highest dots.
 		bottomDot := (rows - 1 - r) * 4
 
 		var chars []rune
 		for col := 0; col < len(heights); col += 2 {
 			var pattern byte
-
-			// Left column.
 			lh := heights[col]
 			for dot := 0; dot < 4; dot++ {
-				dotPos := bottomDot + dot
-				if lh > dotPos {
+				if lh > bottomDot+dot {
 					pattern |= leftBits[dot]
 				}
 			}
-
-			// Right column.
 			if col+1 < len(heights) {
 				rh := heights[col+1]
 				for dot := 0; dot < 4; dot++ {
-					dotPos := bottomDot + dot
-					if rh > dotPos {
+					if rh > bottomDot+dot {
 						pattern |= rightBits[dot]
 					}
 				}
 			}
-
 			chars = append(chars, rune(0x2800+int(pattern)))
 		}
 
@@ -383,8 +366,8 @@ func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []f
 		gridDots[dot] = true
 	}
 
-	leftBits := [4]byte{0x01, 0x02, 0x04, 0x40}
-	rightBits := [4]byte{0x08, 0x10, 0x20, 0x80}
+	leftBits := [4]byte{0x40, 0x04, 0x02, 0x01}
+	rightBits := [4]byte{0x80, 0x20, 0x10, 0x08}
 
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 
@@ -516,8 +499,8 @@ func GraphFixedColor(data []float64, width, rows int, maxVal float64, color lipg
 		heights[i] = h
 	}
 
-	leftBits := [4]byte{0x01, 0x02, 0x04, 0x40}
-	rightBits := [4]byte{0x08, 0x10, 0x20, 0x80}
+	leftBits := [4]byte{0x40, 0x04, 0x02, 0x01}
+	rightBits := [4]byte{0x80, 0x20, 0x10, 0x08}
 
 	style := lipgloss.NewStyle().Foreground(color)
 	rowStrs := make([]string, rows)

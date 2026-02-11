@@ -418,16 +418,16 @@ func TestGraph(t *testing.T) {
 		// 2 data points: [100, 50], width=1, rows=1, maxVal=100.
 		// totalDots=4. heights=[4, 2].
 		// bottomDot=0, row=0 (only row).
-		// Left: h=4, all 4 dots set: bits 0x01|0x02|0x04|0x40 = 0x47
-		// Right: h=2, dots 0,1: bits 0x08|0x10 = 0x18
-		// Pattern: 0x47|0x18 = 0x5F → U+285F
+		// Left: h=4, all 4 dots: 0x40|0x04|0x02|0x01 = 0x47
+		// Right: h=2, bottom 2 dots: 0x80|0x20 = 0xA0
+		// Pattern: 0x47|0xA0 = 0xE7 → U+28E7
 		data := []float64{100, 50}
 		got := Graph(data, 1, 1, 100, &theme)
 		runes := []rune(stripANSI(got))
 		if len(runes) != 1 {
 			t.Fatalf("expected 1 char, got %d", len(runes))
 		}
-		expected := rune(0x2800 + 0x5F)
+		expected := rune(0x2800 + 0xE7)
 		if runes[0] != expected {
 			t.Errorf("expected %U, got %U", expected, runes[0])
 		}

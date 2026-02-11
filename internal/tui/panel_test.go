@@ -71,44 +71,27 @@ func TestRenderMemPanel(t *testing.T) {
 		MemPercent: 50.0,
 		MemCached:  1 * 1024 * 1024 * 1024,
 		MemFree:    3 * 1024 * 1024 * 1024,
-		SwapTotal:  2 * 1024 * 1024 * 1024,
-		SwapUsed:   512 * 1024 * 1024,
-	}
-	hist := memHistories{
-		Used:      []float64{40, 45, 50},
-		Available: []float64{50, 55, 50},
-		Cached:    []float64{10, 12, 12.5},
-		Free:      []float64{30, 35, 37.5},
 	}
 
-	got := renderMemPanel(host, hist, 50, 20, &theme)
+	got := renderMemPanel(host, []float64{40, 45, 50}, 50, 14, &theme)
 	plain := stripANSI(got)
-	if !strings.Contains(plain, "Total") {
-		t.Error("should contain Total label")
-	}
 	if !strings.Contains(plain, "Used") {
 		t.Error("should contain Used label")
 	}
-	if !strings.Contains(plain, "Available") {
-		t.Error("should contain Available label")
+	if !strings.Contains(plain, "50.0%") {
+		t.Error("should contain memory percentage")
 	}
-	if !strings.Contains(plain, "Cached") {
-		t.Error("should contain Cached label")
+	if !strings.Contains(plain, "4.0G") {
+		t.Error("should contain used bytes")
 	}
-	if !strings.Contains(plain, "Free") {
-		t.Error("should contain Free label")
-	}
-	if !strings.Contains(plain, "Swap") {
-		t.Error("should contain Swap label")
-	}
-	if !strings.Contains(plain, "50%") {
-		t.Error("should contain Used percentage")
+	if !strings.Contains(plain, "8.0G") {
+		t.Error("should contain total bytes")
 	}
 }
 
 func TestRenderMemPanelNilHost(t *testing.T) {
 	theme := DefaultTheme()
-	got := renderMemPanel(nil, memHistories{}, 30, 8, &theme)
+	got := renderMemPanel(nil, nil, 30, 8, &theme)
 	if !strings.Contains(got, "waiting") {
 		t.Error("nil host should show waiting message")
 	}
@@ -121,7 +104,7 @@ func TestRenderDiskPanel(t *testing.T) {
 		{Mountpoint: "/home", Device: "sda2", Total: 200 * 1024 * 1024 * 1024, Used: 50 * 1024 * 1024 * 1024, Free: 150 * 1024 * 1024 * 1024, Percent: 25},
 	}
 
-	got := renderDiskPanel(disks, 50, 10, &theme)
+	got := renderDiskPanel(disks, 2*1024*1024*1024, 512*1024*1024, 50, 13, &theme)
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "Disks") {
 		t.Error("should contain Disks title")
@@ -138,11 +121,14 @@ func TestRenderDiskPanel(t *testing.T) {
 	if !strings.Contains(plain, "60%") {
 		t.Error("should contain 60% usage for /")
 	}
+	if !strings.Contains(plain, "Swap") {
+		t.Error("should contain Swap label")
+	}
 }
 
 func TestRenderDiskPanelEmpty(t *testing.T) {
 	theme := DefaultTheme()
-	got := renderDiskPanel(nil, 30, 5, &theme)
+	got := renderDiskPanel(nil, 0, 0, 30, 5, &theme)
 	if !strings.Contains(got, "no disks") {
 		t.Error("empty disks should show 'no disks'")
 	}

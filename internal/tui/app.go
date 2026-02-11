@@ -529,16 +529,12 @@ func (a *App) renderFooter() string {
 	return Truncate(footer, a.width)
 }
 
-// pushMemHistories pushes per-metric memory percentages to history buffers.
+// pushMemHistories pushes memory usage percentage to the history buffer.
 func pushMemHistories(s *Session, h *protocol.HostMetrics) {
 	if h.MemTotal == 0 {
 		return
 	}
-	total := float64(h.MemTotal)
 	s.HostMemUsedHistory.Push(h.MemPercent)
-	s.HostMemAvailHistory.Push(float64(h.MemFree+h.MemCached) / total * 100)
-	s.HostMemCachedHistory.Push(float64(h.MemCached) / total * 100)
-	s.HostMemFreeHistory.Push(float64(h.MemFree) / total * 100)
 }
 
 // containerEventToLog converts a container lifecycle event into a synthetic

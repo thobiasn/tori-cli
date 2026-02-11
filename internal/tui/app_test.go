@@ -332,29 +332,10 @@ func TestHandleMetricsBackfill(t *testing.T) {
 		t.Errorf("HostMemHistory.Len() = %d, want 3", s.HostMemHistory.Len())
 	}
 
-	// Per-metric memory histories populated.
+	// Memory usage history populated.
 	if s.HostMemUsedHistory.Len() != 3 {
 		t.Errorf("HostMemUsedHistory.Len() = %d, want 3", s.HostMemUsedHistory.Len())
 	}
-	if s.HostMemAvailHistory.Len() != 3 {
-		t.Errorf("HostMemAvailHistory.Len() = %d, want 3", s.HostMemAvailHistory.Len())
-	}
-	if s.HostMemCachedHistory.Len() != 3 {
-		t.Errorf("HostMemCachedHistory.Len() = %d, want 3", s.HostMemCachedHistory.Len())
-	}
-	if s.HostMemFreeHistory.Len() != 3 {
-		t.Errorf("HostMemFreeHistory.Len() = %d, want 3", s.HostMemFreeHistory.Len())
-	}
-	// Verify computed percentages for first entry: free=300/1000=30%, cached=200/1000=20%.
-	freeData := s.HostMemFreeHistory.Data()
-	if freeData[0] != 30 {
-		t.Errorf("HostMemFreeHistory[0] = %f, want 30", freeData[0])
-	}
-	cachedData := s.HostMemCachedHistory.Data()
-	if cachedData[0] != 20 {
-		t.Errorf("HostMemCachedHistory[0] = %f, want 20", cachedData[0])
-	}
-
 	// Container histories created and populated.
 	if s.CPUHistory["c1"].Len() != 2 {
 		t.Errorf("c1 CPUHistory.Len() = %d, want 2", s.CPUHistory["c1"].Len())

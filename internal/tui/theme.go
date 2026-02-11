@@ -11,11 +11,9 @@ type Theme struct {
 	Accent   lipgloss.Color // cyan
 	Muted    lipgloss.Color // gray
 
-	// Memory metric colors.
-	MemUsed      lipgloss.Color // green
-	MemAvailable lipgloss.Color // magenta
-	MemCached    lipgloss.Color // blue
-	MemFree      lipgloss.Color // yellow
+	// Memory / disk metric colors.
+	MemUsed lipgloss.Color // green
+	MemFree lipgloss.Color // yellow
 
 	// ContainerPalette is a set of distinct colors for per-container name coloring.
 	ContainerPalette []lipgloss.Color
@@ -29,10 +27,8 @@ func DefaultTheme() Theme {
 		Healthy:  lipgloss.Color("10"),
 		Accent:   lipgloss.Color("14"),
 		Muted:        lipgloss.Color("8"),
-		MemUsed:      lipgloss.Color("10"),
-		MemAvailable: lipgloss.Color("13"),
-		MemCached:    lipgloss.Color("12"),
-		MemFree:      lipgloss.Color("11"),
+		MemUsed: lipgloss.Color("10"),
+		MemFree: lipgloss.Color("11"),
 		ContainerPalette: []lipgloss.Color{
 			lipgloss.Color("14"), // cyan
 			lipgloss.Color("13"), // magenta
