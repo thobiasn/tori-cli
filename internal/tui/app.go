@@ -61,8 +61,16 @@ func NewApp(sessions map[string]*Session) App {
 	}
 }
 
-// subscribeAll subscribes to all streaming topics and queries containers.
+// subscribeAll subscribes to all streaming topics, queries containers, and
+// backfills graph history from the last 30 minutes of stored metrics.
 func subscribeAll(c *Client) tea.Cmd {
+	return tea.Batch(
+		subscribeAndQueryContainers(c),
+		backfillMetrics(c),
+	)
+}
+
+func subscribeAndQueryContainers(c *Client) tea.Cmd {
 	return func() tea.Msg {
 		if err := c.Subscribe(protocol.TypeSubscribeMetrics, nil); err != nil {
 			return ConnErrMsg{Err: fmt.Errorf("subscribe metrics: %w", err), Server: c.server}
@@ -86,9 +94,26 @@ func subscribeAll(c *Client) tea.Cmd {
 	}
 }
 
+func backfillMetrics(c *Client) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		now := time.Now().Unix()
+		resp, err := c.QueryMetrics(ctx, now-1800, now)
+		if err != nil {
+			return nil
+		}
+		return metricsBackfillMsg{server: c.server, resp: resp}
+	}
+}
+
 type sessionContainersMsg struct {
 	server     string
 	containers []protocol.ContainerInfo
+}
+type metricsBackfillMsg struct {
+	server string
+	resp   *protocol.QueryMetricsResp
 }
 type trackingDoneMsg struct {
 	server string
@@ -137,6 +162,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			s.ContInfo = msg.containers
 			// Rebuild groups so untracked containers appear as stubs immediately.
 			s.Dash.groups = buildGroups(s.Containers, s.ContInfo)
+		}
+		return a, nil
+
+	case metricsBackfillMsg:
+		if s := a.sessions[msg.server]; s != nil && msg.resp != nil {
+			handleMetricsBackfill(s, msg.resp)
 		}
 		return a, nil
 
@@ -259,6 +290,25 @@ func (a *App) handleSessionMetrics(s *Session, m *protocol.MetricsUpdate) tea.Cm
 	// Rebuild container groups for dashboard.
 	s.Dash.groups = buildGroups(m.Containers, s.ContInfo)
 	return nil
+}
+
+// handleMetricsBackfill populates ring buffers from historical metrics so
+// graphs show data immediately on connect rather than starting empty.
+func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp) {
+	for _, h := range resp.Host {
+		s.HostCPUHistory.Push(h.CPUPercent)
+		s.HostMemHistory.Push(h.MemPercent)
+	}
+	for _, c := range resp.Containers {
+		if _, ok := s.CPUHistory[c.ID]; !ok {
+			s.CPUHistory[c.ID] = NewRingBuffer[float64](180)
+		}
+		if _, ok := s.MemHistory[c.ID]; !ok {
+			s.MemHistory[c.ID] = NewRingBuffer[float64](180)
+		}
+		s.CPUHistory[c.ID].Push(c.CPUPercent)
+		s.MemHistory[c.ID].Push(c.MemPercent)
+	}
 }
 
 func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
