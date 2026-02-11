@@ -188,17 +188,23 @@ func (h *HostCollector) readUptime(m *HostMetrics) error {
 // mounts, and calls statfs. File bind-mounts are skipped. When a device has
 // multiple directory mounts, the shortest path is kept.
 //
-// Mountpoints are accessed through /proc/1/root/ so that statfs resolves to
-// the host filesystem even when running inside a container (requires pid:host).
-// When running directly on the host, /proc/1/root/ points to / so paths
-// resolve identically.
+// When /proc/1/root is traversable (bare metal, or container with SYS_PTRACE),
+// mountpoints are resolved through it for correct host filesystem stats.
+// Otherwise mountpoints are accessed directly — inside a container this still
+// shows correct stats for the root partition (overlay reports backing fs stats).
 func (h *HostCollector) readDisk() ([]DiskMetrics, error) {
 	// Prefer PID 1's mount table (host init's namespace, works in containers
 	// with pid:host). Fall back to /proc/mounts for test envs or restricted setups.
 	mountsPath := filepath.Join(h.proc, "1", "mounts")
 	rootPrefix := filepath.Join(h.proc, "1", "root")
+
 	if _, err := os.Stat(mountsPath); err != nil {
 		mountsPath = filepath.Join(h.proc, "mounts")
+		rootPrefix = ""
+	} else if _, err := os.Stat(rootPrefix); err != nil {
+		// /proc/1/mounts is readable but /proc/1/root is not (e.g. Docker
+		// without SYS_PTRACE). Use /proc/1/mounts for the mount list but
+		// access mountpoints directly.
 		rootPrefix = ""
 	}
 
