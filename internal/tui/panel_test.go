@@ -101,7 +101,6 @@ func TestRenderMemPanel(t *testing.T) {
 	if !strings.Contains(plain, "Swap") {
 		t.Error("should contain Swap label")
 	}
-	// Should contain percentage values.
 	if !strings.Contains(plain, "50%") {
 		t.Error("should contain Used percentage")
 	}
@@ -112,6 +111,40 @@ func TestRenderMemPanelNilHost(t *testing.T) {
 	got := renderMemPanel(nil, memHistories{}, 30, 8, &theme)
 	if !strings.Contains(got, "waiting") {
 		t.Error("nil host should show waiting message")
+	}
+}
+
+func TestRenderDiskPanel(t *testing.T) {
+	theme := DefaultTheme()
+	disks := []protocol.DiskMetrics{
+		{Mountpoint: "/", Device: "sda1", Total: 100 * 1024 * 1024 * 1024, Used: 60 * 1024 * 1024 * 1024, Free: 40 * 1024 * 1024 * 1024, Percent: 60},
+		{Mountpoint: "/home", Device: "sda2", Total: 200 * 1024 * 1024 * 1024, Used: 50 * 1024 * 1024 * 1024, Free: 150 * 1024 * 1024 * 1024, Percent: 25},
+	}
+
+	got := renderDiskPanel(disks, 50, 10, &theme)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "Disks") {
+		t.Error("should contain Disks title")
+	}
+	if !strings.Contains(plain, "/home") {
+		t.Error("should contain /home mountpoint")
+	}
+	if !strings.Contains(plain, "Used") {
+		t.Error("should contain Used label")
+	}
+	if !strings.Contains(plain, "Free") {
+		t.Error("should contain Free label")
+	}
+	if !strings.Contains(plain, "60%") {
+		t.Error("should contain 60% usage for /")
+	}
+}
+
+func TestRenderDiskPanelEmpty(t *testing.T) {
+	theme := DefaultTheme()
+	got := renderDiskPanel(nil, 30, 5, &theme)
+	if !strings.Contains(got, "no disks") {
+		t.Error("empty disks should show 'no disks'")
 	}
 }
 

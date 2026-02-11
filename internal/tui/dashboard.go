@@ -163,8 +163,24 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 			Cached:    s.HostMemCachedHistory.Data(),
 			Free:      s.HostMemFreeHistory.Data(),
 		}
-		memPanel := renderMemPanel(s.Host, memHist, rightW, cpuH, theme)
-		topRow := lipgloss.JoinHorizontal(lipgloss.Top, cpuPanel, memPanel)
+		// Split right column: memory on top, disks on bottom.
+		diskH := len(s.Disks)*3 + 2 // 3 lines per disk (divider + used + free) + borders
+		if diskH < 3 {
+			diskH = 3
+		}
+		if diskH > cpuH/2 {
+			diskH = cpuH / 2
+		}
+		memH := cpuH - diskH
+		if memH < 8 {
+			memH = 8
+			diskH = cpuH - memH
+		}
+
+		memPanel := renderMemPanel(s.Host, memHist, rightW, memH, theme)
+		diskPanel := renderDiskPanel(s.Disks, rightW, diskH, theme)
+		rightCol := lipgloss.JoinVertical(lipgloss.Left, memPanel, diskPanel)
+		topRow := lipgloss.JoinHorizontal(lipgloss.Top, cpuPanel, rightCol)
 
 		halfW := width / 2
 		midRightW := width - halfW
@@ -195,10 +211,18 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		Free:      s.HostMemFreeHistory.Data(),
 	}
 	memPanel := renderMemPanel(s.Host, memHist, width, memH, theme)
+	diskH := len(s.Disks)*3 + 2
+	if diskH < 3 {
+		diskH = 3
+	}
+	if diskH > 11 {
+		diskH = 11
+	}
+	diskPanel := renderDiskPanel(s.Disks, width, diskH, theme)
 	contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, width, contH, theme)
 	selPanel := renderSelectedPanel(a, s, width, selH, theme)
 
-	return strings.Join([]string{alertPanel, cpuPanel, memPanel, contPanel, selPanel, logPanel}, "\n")
+	return strings.Join([]string{alertPanel, cpuPanel, memPanel, diskPanel, contPanel, selPanel, logPanel}, "\n")
 }
 
 // updateDashboard handles keys for the dashboard view.

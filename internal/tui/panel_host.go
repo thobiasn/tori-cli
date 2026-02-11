@@ -172,6 +172,45 @@ func renderMemPanel(host *protocol.HostMetrics, hist memHistories, width, height
 	return Box("Memory", strings.Join(lines, "\n"), width, height, theme)
 }
 
+// renderDiskPanel renders a btop-style disk panel with per-mountpoint Used/Free bars.
+func renderDiskPanel(disks []protocol.DiskMetrics, width, height int, theme *Theme) string {
+	if len(disks) == 0 {
+		return Box("Disks", "  no disks", width, height, theme)
+	}
+
+	innerW := width - 2
+
+	var lines []string
+	for _, d := range disks {
+		// Divider: ─mountpoint──────totalSize─
+		lines = append(lines, memDivider(d.Mountpoint, FormatBytes(d.Total), innerW, theme.Accent, theme))
+
+		usedPct := d.Percent
+		freePct := 100 - d.Percent
+		usedVal := FormatBytes(d.Used)
+		freeVal := FormatBytes(d.Free)
+
+		// "Used:" and "Free:" lines with colored bar + value.
+		// Format: " Used: XX% [████░░░░] XX.XG"
+		addDiskMetric := func(label string, pct float64, val string, color lipgloss.Color) {
+			pctStr := fmt.Sprintf("%3.0f%%", pct)
+			prefix := " " + label + ":" + pctStr + " "
+			suffix := " " + val
+			barW := innerW - lipgloss.Width(prefix) - len(suffix)
+			if barW < 4 {
+				barW = 4
+			}
+			bar := ProgressBarFixedColor(pct, barW, color, theme)
+			lines = append(lines, prefix+bar+suffix)
+		}
+
+		addDiskMetric("Used", usedPct, usedVal, theme.MemUsed)
+		addDiskMetric("Free", freePct, freeVal, theme.MemFree)
+	}
+
+	return Box("Disks", strings.Join(lines, "\n"), width, height, theme)
+}
+
 func highestUsageDisk(disks []protocol.DiskMetrics) protocol.DiskMetrics {
 	best := disks[0]
 	for _, d := range disks[1:] {

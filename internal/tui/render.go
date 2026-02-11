@@ -135,6 +135,32 @@ func ProgressBarSimple(percent float64, width int, theme *Theme) string {
 	return "[" + filledStr + emptyStr + "]"
 }
 
+// ProgressBarFixedColor renders a horizontal bar like [████░░░░] in a single fixed color.
+func ProgressBarFixedColor(percent float64, width int, color lipgloss.Color, theme *Theme) string {
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+
+	barW := width - 2 // subtract []
+	if barW < 1 {
+		barW = 1
+	}
+
+	filled := int(float64(barW) * percent / 100)
+	if filled > barW {
+		filled = barW
+	}
+
+	style := lipgloss.NewStyle().Foreground(color)
+	filledStr := style.Render(strings.Repeat("█", filled))
+	emptyStr := lipgloss.NewStyle().Foreground(theme.Muted).Render(strings.Repeat("░", barW-filled))
+
+	return "[" + filledStr + emptyStr + "]"
+}
+
 // Sparkline renders a single row of braille characters representing data points.
 // Each braille character encodes two data points (left and right columns).
 // Values are normalized to 0–4 dots high in the 2×4 braille grid.
