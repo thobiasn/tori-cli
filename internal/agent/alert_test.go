@@ -24,6 +24,13 @@ func TestParseCondition(t *testing.T) {
 		{"container.state == 'exited'", "container", "state", "==", 0, "exited", true, false},
 		{"container.cpu_percent > 80", "container", "cpu_percent", ">", 80, "", false, false},
 		{"container.state != 'running'", "container", "state", "!=", 0, "running", true, false},
+		{"host.load1 > 4", "host", "load1", ">", 4, "", false, false},
+		{"host.load5 >= 2.5", "host", "load5", ">=", 2.5, "", false, false},
+		{"host.load15 < 1", "host", "load15", "<", 1, "", false, false},
+		{"host.swap_percent > 80", "host", "swap_percent", ">", 80, "", false, false},
+		{"container.health == 'unhealthy'", "container", "health", "==", 0, "unhealthy", true, false},
+		{"container.restart_count > 5", "container", "restart_count", ">", 5, "", false, false},
+		{"container.exit_code != 0", "container", "exit_code", "!=", 0, "", false, false},
 
 		// Invalid cases.
 		{"", "", "", "", 0, "", false, true},
@@ -33,7 +40,7 @@ func TestParseCondition(t *testing.T) {
 		{"host.cpu_percent ~ 90", "", "", "", 0, "", false, true},       // bad operator
 		{"host.cpu_percent > abc", "", "", "", 0, "", false, true},      // bad numeric
 		{"unknown.cpu_percent > 90", "", "", "", 0, "", false, true},    // bad scope
-		{"host.load1 > 2", "", "", "", 0, "", false, true},             // unknown field
+		{"host.unknown_field > 2", "", "", "", 0, "", false, true},      // unknown field
 		{"container.image == 'nginx'", "", "", "", 0, "", false, true},  // unknown field
 		{"container.state > 'exited'", "", "", "", 0, "", false, true},  // string field with > op
 		{"container.state >= 'a'", "", "", "", 0, "", false, true},      // string field with >= op
@@ -1192,5 +1199,198 @@ func TestNilDiskSnapshotDoesNotFalseResolve(t *testing.T) {
 	a.Evaluate(ctx, &MetricSnapshot{Disks: nil})
 	if a.instances["disk_full:/"].state != stateFiring {
 		t.Error("nil disks should not resolve active disk alert")
+	}
+}
+
+func TestHostLoadAlert(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"high_load": {
+			Condition: "host.load1 > 4",
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+	a.now = func() time.Time { return time.Now() }
+
+	// Load below threshold — no alert.
+	a.Evaluate(ctx, &MetricSnapshot{Host: &HostMetrics{Load1: 2.0}})
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("alert rows = %d, want 0", count)
+	}
+
+	// Load above threshold — fires.
+	a.Evaluate(ctx, &MetricSnapshot{Host: &HostMetrics{Load1: 5.0}})
+	inst := a.instances["high_load"]
+	if inst == nil || inst.state != stateFiring {
+		t.Fatal("expected firing")
+	}
+}
+
+func TestHostSwapAlert(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"high_swap": {
+			Condition: "host.swap_percent > 80",
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+	a.now = func() time.Time { return time.Now() }
+
+	// SwapTotal=0 — swap_percent should be 0, no alert.
+	a.Evaluate(ctx, &MetricSnapshot{Host: &HostMetrics{SwapTotal: 0, SwapUsed: 0}})
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("alert rows = %d, want 0 (SwapTotal=0)", count)
+	}
+
+	// 90% swap used — fires.
+	a.Evaluate(ctx, &MetricSnapshot{Host: &HostMetrics{SwapTotal: 1000, SwapUsed: 900}})
+	inst := a.instances["high_swap"]
+	if inst == nil || inst.state != stateFiring {
+		t.Fatal("expected firing with 90% swap")
+	}
+
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("alert rows = %d, want 1", count)
+	}
+}
+
+func TestContainerHealthAlert(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"unhealthy": {
+			Condition: "container.health == 'unhealthy'",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Healthy container — no fire.
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", Health: "healthy"}},
+	})
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("alert rows = %d, want 0", count)
+	}
+
+	// Unhealthy — fires.
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", Health: "unhealthy"}},
+	})
+	inst := a.instances["unhealthy:aaa"]
+	if inst == nil || inst.state != stateFiring {
+		t.Fatal("expected firing")
+	}
+
+	// Back to healthy — resolves.
+	now = now.Add(10 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", Health: "healthy"}},
+	})
+	inst = a.instances["unhealthy:aaa"]
+	if inst != nil && inst.state != stateInactive {
+		t.Errorf("expected resolved, got state %d", inst.state)
+	}
+}
+
+func TestContainerRestartCountAlert(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"restarts": {
+			Condition: "container.restart_count > 3",
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+	a.now = func() time.Time { return time.Now() }
+
+	// Low restart count — no fire.
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", RestartCount: 1}},
+	})
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("alert rows = %d, want 0", count)
+	}
+
+	// High restart count — fires.
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", RestartCount: 5}},
+	})
+	inst := a.instances["restarts:aaa"]
+	if inst == nil || inst.state != stateFiring {
+		t.Fatal("expected firing")
+	}
+}
+
+func TestContainerExitCodeAlert(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"nonzero_exit": {
+			Condition: "container.exit_code != 0",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Exit code 0 — no fire.
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited", ExitCode: 0}},
+	})
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("alert rows = %d, want 0", count)
+	}
+
+	// Exit code 137 — fires.
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited", ExitCode: 137}},
+	})
+	inst := a.instances["nonzero_exit:aaa"]
+	if inst == nil || inst.state != stateFiring {
+		t.Fatal("expected firing with exit code 137")
+	}
+
+	// Back to exit code 0 — resolves.
+	now = now.Add(10 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "running", ExitCode: 0}},
+	})
+	inst = a.instances["nonzero_exit:aaa"]
+	if inst != nil && inst.state != stateInactive {
+		t.Errorf("expected resolved, got state %d", inst.state)
 	}
 }

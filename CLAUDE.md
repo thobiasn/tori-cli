@@ -117,7 +117,8 @@ Code is a liability, not an asset. Every line we write is a line we have to main
 
 ### Alert system
 - Conditions are 3-token strings: `scope.field op value` (e.g., `host.cpu_percent > 90`, `container.state == 'exited'`).
-- Field names are validated against a whitelist in `parseCondition`. String fields only allow `==`/`!=`.
+- Host fields: `cpu_percent`, `memory_percent`, `disk_percent`, `load1`, `load5`, `load15`, `swap_percent`. Container fields: `cpu_percent`, `memory_percent`, `state`, `health`, `restart_count`, `exit_code`.
+- Field names are validated against a whitelist in `parseCondition`. String fields (`state`, `health`) only allow `==`/`!=`.
 - Alerter instances are keyed: `rulename` for host, `rulename:containerID` for container, `rulename:mountpoint` for disk.
 - State machine: inactive → pending (if `for > 0`) → firing → resolved → inactive. `for = 0` skips pending.
 - Inactive unseen instances are GC'd from the map to prevent unbounded growth with ephemeral containers.

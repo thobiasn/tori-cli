@@ -239,7 +239,7 @@ func TestLoadConfigAlertUnknownField(t *testing.T) {
 	path := filepath.Join(dir, "config.toml")
 	os.WriteFile(path, []byte(`
 [alerts.bad]
-condition = "host.load1 > 2"
+condition = "host.unknown_field > 2"
 severity = "warning"
 actions = ["notify"]
 `), 0644)

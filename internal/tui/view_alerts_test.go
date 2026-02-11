@@ -139,6 +139,184 @@ func TestAlertViewRenderWithAlerts(t *testing.T) {
 	}
 }
 
+func TestAlertViewFilterSeverity(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	a.active = viewAlerts
+	s.Alertv.alerts = []protocol.AlertMsg{
+		{ID: 1, RuleName: "a", Severity: "warning", FiredAt: 100},
+		{ID: 2, RuleName: "b", Severity: "critical", FiredAt: 200},
+		{ID: 3, RuleName: "c", Severity: "warning", FiredAt: 300},
+	}
+
+	// Initially no filter — all visible.
+	filtered := s.Alertv.filteredAlerts()
+	if len(filtered) != 3 {
+		t.Errorf("no filter: got %d, want 3", len(filtered))
+	}
+
+	// Press f → warning.
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	if s.Alertv.filterSeverity != "warning" {
+		t.Errorf("filterSeverity = %q, want warning", s.Alertv.filterSeverity)
+	}
+	filtered = s.Alertv.filteredAlerts()
+	if len(filtered) != 2 {
+		t.Errorf("warning filter: got %d, want 2", len(filtered))
+	}
+
+	// Press f → critical.
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	if s.Alertv.filterSeverity != "critical" {
+		t.Errorf("filterSeverity = %q, want critical", s.Alertv.filterSeverity)
+	}
+	filtered = s.Alertv.filteredAlerts()
+	if len(filtered) != 1 {
+		t.Errorf("critical filter: got %d, want 1", len(filtered))
+	}
+	if filtered[0].RuleName != "b" {
+		t.Errorf("filtered[0].RuleName = %q, want b", filtered[0].RuleName)
+	}
+
+	// Press f → back to all.
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	if s.Alertv.filterSeverity != "" {
+		t.Errorf("filterSeverity = %q, want empty", s.Alertv.filterSeverity)
+	}
+}
+
+func TestAlertViewFilterState(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	a.active = viewAlerts
+	s.Alertv.alerts = []protocol.AlertMsg{
+		{ID: 1, RuleName: "a", Severity: "warning", FiredAt: 100},                         // active
+		{ID: 2, RuleName: "b", Severity: "critical", FiredAt: 200, Acknowledged: true},     // acknowledged
+		{ID: 3, RuleName: "c", Severity: "warning", FiredAt: 300, ResolvedAt: 400},         // resolved
+		{ID: 4, RuleName: "d", Severity: "critical", FiredAt: 500},                         // active
+	}
+
+	// F → active.
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	if s.Alertv.filterState != "active" {
+		t.Errorf("filterState = %q, want active", s.Alertv.filterState)
+	}
+	filtered := s.Alertv.filteredAlerts()
+	if len(filtered) != 2 {
+		t.Errorf("active filter: got %d, want 2", len(filtered))
+	}
+
+	// F → acknowledged.
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	if s.Alertv.filterState != "acknowledged" {
+		t.Errorf("filterState = %q, want acknowledged", s.Alertv.filterState)
+	}
+	filtered = s.Alertv.filteredAlerts()
+	if len(filtered) != 1 {
+		t.Errorf("acknowledged filter: got %d, want 1", len(filtered))
+	}
+
+	// F → resolved.
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	if s.Alertv.filterState != "resolved" {
+		t.Errorf("filterState = %q, want resolved", s.Alertv.filterState)
+	}
+	filtered = s.Alertv.filteredAlerts()
+	if len(filtered) != 1 {
+		t.Errorf("resolved filter: got %d, want 1", len(filtered))
+	}
+
+	// F → back to all.
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	if s.Alertv.filterState != "" {
+		t.Errorf("filterState = %q, want empty", s.Alertv.filterState)
+	}
+}
+
+func TestAlertViewFilterCombined(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	a.active = viewAlerts
+	s.Alertv.alerts = []protocol.AlertMsg{
+		{ID: 1, RuleName: "a", Severity: "warning", FiredAt: 100},                     // active warning
+		{ID: 2, RuleName: "b", Severity: "critical", FiredAt: 200},                    // active critical
+		{ID: 3, RuleName: "c", Severity: "warning", FiredAt: 300, ResolvedAt: 400},    // resolved warning
+		{ID: 4, RuleName: "d", Severity: "critical", FiredAt: 500, ResolvedAt: 600},   // resolved critical
+	}
+
+	// Set severity=critical, state=active.
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")}) // warning
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")}) // critical
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}}) // active
+
+	filtered := s.Alertv.filteredAlerts()
+	if len(filtered) != 1 {
+		t.Errorf("combined filter: got %d, want 1", len(filtered))
+	}
+	if filtered[0].RuleName != "b" {
+		t.Errorf("filtered[0].RuleName = %q, want b", filtered[0].RuleName)
+	}
+}
+
+func TestAlertViewFilterResetsCursor(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	a.active = viewAlerts
+	s.Alertv.alerts = []protocol.AlertMsg{
+		{ID: 1, RuleName: "a", Severity: "warning"},
+		{ID: 2, RuleName: "b", Severity: "critical"},
+	}
+	s.Alertv.cursor = 1
+	s.Alertv.scroll = 1
+	s.Alertv.expanded = 1
+
+	// Pressing f should reset cursor/scroll/expanded.
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	if s.Alertv.cursor != 0 {
+		t.Errorf("cursor = %d, want 0", s.Alertv.cursor)
+	}
+	if s.Alertv.scroll != 0 {
+		t.Errorf("scroll = %d, want 0", s.Alertv.scroll)
+	}
+	if s.Alertv.expanded != -1 {
+		t.Errorf("expanded = %d, want -1", s.Alertv.expanded)
+	}
+}
+
+func TestAlertViewRenderFilterTitle(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	s.Alertv.alerts = []protocol.AlertMsg{
+		{ID: 1, RuleName: "a", Severity: "warning", FiredAt: 100},
+		{ID: 2, RuleName: "b", Severity: "critical", FiredAt: 200},
+	}
+	s.Alertv.filterSeverity = "critical"
+
+	got := renderAlertView(&a, s, 100, 20)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "1/2") {
+		t.Error("title should show filtered/total count")
+	}
+	if !strings.Contains(plain, "[critical]") {
+		t.Error("title should show active filter label")
+	}
+}
+
+func TestAlertViewRenderNoMatchFilter(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	s.Alertv.alerts = []protocol.AlertMsg{
+		{ID: 1, RuleName: "a", Severity: "warning", FiredAt: 100},
+	}
+	s.Alertv.filterSeverity = "critical"
+
+	got := renderAlertView(&a, s, 100, 20)
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "No alerts match") {
+		t.Error("should show no-match message when filter excludes all")
+	}
+}
+
 func TestAlertViewRenderSilencePicker(t *testing.T) {
 	a := newTestApp()
 	s := a.session()

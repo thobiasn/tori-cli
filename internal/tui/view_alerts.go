@@ -19,6 +19,10 @@ type AlertViewState struct {
 	expanded int // -1 = none
 	stale    bool
 
+	// Filters (empty string = show all).
+	filterSeverity string // "", "warning", "critical"
+	filterState    string // "", "active", "acknowledged", "resolved"
+
 	// Silence picker.
 	silenceMode    bool
 	silenceCursor  int
@@ -45,6 +49,37 @@ var silenceDurations = []struct {
 
 func newAlertViewState() AlertViewState {
 	return AlertViewState{stale: true, expanded: -1}
+}
+
+// filteredAlerts returns alerts matching the current severity and state filters.
+func (s *AlertViewState) filteredAlerts() []protocol.AlertMsg {
+	if s.filterSeverity == "" && s.filterState == "" {
+		return s.alerts
+	}
+	var out []protocol.AlertMsg
+	for _, a := range s.alerts {
+		if s.filterSeverity != "" && a.Severity != s.filterSeverity {
+			continue
+		}
+		if s.filterState != "" {
+			switch s.filterState {
+			case "active":
+				if a.ResolvedAt != 0 || a.Acknowledged {
+					continue
+				}
+			case "acknowledged":
+				if !a.Acknowledged {
+					continue
+				}
+			case "resolved":
+				if a.ResolvedAt == 0 {
+					continue
+				}
+			}
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 func (s *AlertViewState) onSwitch(c *Client) tea.Cmd {
@@ -75,10 +110,14 @@ func renderAlertView(a *App, s *Session, width, height int) string {
 	innerW := width - 2
 
 	// Determine visible slice.
-	alerts := av.alerts
+	alerts := av.filteredAlerts()
 	if len(alerts) == 0 {
-		content := "  No alerts in the last 24 hours"
-		return Box("Alerts", content, width, height-1, theme) + "\n" + renderAlertFooter(av, width, theme)
+		msg := "  No alerts in the last 24 hours"
+		if len(av.alerts) > 0 {
+			msg = "  No alerts match the current filter"
+		}
+		title := alertTitle(av, alerts)
+		return Box(title, msg, width, height-1, theme) + "\n" + renderAlertFooter(av, width, theme)
 	}
 
 	start := av.scroll
@@ -162,7 +201,7 @@ func renderAlertView(a *App, s *Session, width, height int) string {
 		}
 	}
 
-	title := fmt.Sprintf("Alerts (%d)", len(alerts))
+	title := alertTitle(av, alerts)
 	boxH := height - 1
 	content := strings.Join(lines, "\n")
 	box := Box(title, content, width, boxH, theme)
@@ -173,6 +212,20 @@ func renderAlertView(a *App, s *Session, width, height int) string {
 	}
 
 	return box + "\n" + renderAlertFooter(av, width, theme)
+}
+
+func alertTitle(av *AlertViewState, filtered []protocol.AlertMsg) string {
+	if av.filterSeverity == "" && av.filterState == "" {
+		return fmt.Sprintf("Alerts (%d)", len(filtered))
+	}
+	title := fmt.Sprintf("Alerts (%d/%d)", len(filtered), len(av.alerts))
+	if av.filterSeverity != "" {
+		title += " [" + av.filterSeverity + "]"
+	}
+	if av.filterState != "" {
+		title += " [" + av.filterState + "]"
+	}
+	return title
 }
 
 func renderSilencePicker(s *AlertViewState, width, height int, theme *Theme) string {
@@ -197,7 +250,7 @@ func renderAlertFooter(s *AlertViewState, width int, theme *Theme) string {
 	if s.silenceMode {
 		return Truncate(" j/k navigate  Enter confirm  Esc cancel", width)
 	}
-	return Truncate(" j/k navigate  a ack  s silence  Enter expand  Esc back  ? Help", width)
+	return Truncate(" j/k navigate  f filter  a ack  s silence  Enter expand  Esc back  ? Help", width)
 }
 
 // updateAlertView handles keys in the alert view.
@@ -209,9 +262,11 @@ func updateAlertView(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		return updateSilencePicker(s, av, key)
 	}
 
+	filtered := av.filteredAlerts()
+
 	switch key {
 	case "j", "down":
-		if av.cursor < len(av.alerts)-1 {
+		if av.cursor < len(filtered)-1 {
 			av.cursor++
 			av.expanded = -1
 		}
@@ -231,25 +286,53 @@ func updateAlertView(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		if av.cursor < av.scroll {
 			av.scroll = av.cursor
 		}
+	case "f":
+		// Cycle severity filter: all → warning → critical → all.
+		switch av.filterSeverity {
+		case "":
+			av.filterSeverity = "warning"
+		case "warning":
+			av.filterSeverity = "critical"
+		default:
+			av.filterSeverity = ""
+		}
+		av.cursor = 0
+		av.scroll = 0
+		av.expanded = -1
+	case "F":
+		// Cycle state filter: all → active → acknowledged → resolved → all.
+		switch av.filterState {
+		case "":
+			av.filterState = "active"
+		case "active":
+			av.filterState = "acknowledged"
+		case "acknowledged":
+			av.filterState = "resolved"
+		default:
+			av.filterState = ""
+		}
+		av.cursor = 0
+		av.scroll = 0
+		av.expanded = -1
 	case "a":
 		// Acknowledge selected alert.
-		if av.cursor < len(av.alerts) {
-			alert := av.alerts[av.cursor]
+		if av.cursor < len(filtered) {
+			alert := filtered[av.cursor]
 			if alert.ResolvedAt == 0 && !alert.Acknowledged {
 				return ackAlertCmd(s.Client, alert.ID)
 			}
 		}
 	case "s":
 		// Open silence picker.
-		if av.cursor < len(av.alerts) {
-			alert := av.alerts[av.cursor]
+		if av.cursor < len(filtered) {
+			alert := filtered[av.cursor]
 			av.silenceMode = true
 			av.silenceCursor = 0
 			av.silenceAlertID = alert.ID
 			av.silenceRule = alert.RuleName
 		}
 	case "enter":
-		if av.cursor < len(av.alerts) {
+		if av.cursor < len(filtered) {
 			if av.expanded == av.cursor {
 				av.expanded = -1
 			} else {

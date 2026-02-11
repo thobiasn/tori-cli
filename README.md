@@ -55,7 +55,7 @@ Existing tools either require a full monitoring stack (Grafana + Prometheus + Lo
 - Connects to the agent via SSH-forwarded Unix socket
 - Dashboard view: container status, host metrics, resource usage
 - Log viewer: tail and filter logs by container, compose group, stream (stdout/stderr), text search, and time range
-- Alert history: view past alerts, acknowledge, silence
+- Alert history: view past alerts, acknowledge, silence, filter by severity and state
 - Multi-server: switch between multiple configured servers
 
 ## Project Structure
@@ -133,6 +133,37 @@ for = "0s"
 severity = "critical"
 actions = ["notify"]
 
+[alerts.high_load]
+condition = "host.load1 > 4"
+for = "5m"
+severity = "warning"
+actions = ["notify"]
+
+[alerts.high_swap]
+condition = "host.swap_percent > 80"
+for = "2m"
+severity = "warning"
+actions = ["notify"]
+
+[alerts.unhealthy]
+condition = "container.health == 'unhealthy'"
+for = "30s"
+severity = "critical"
+actions = ["notify", "restart"]
+max_restarts = 3
+
+[alerts.restart_loop]
+condition = "container.restart_count > 5"
+for = "0s"
+severity = "critical"
+actions = ["notify"]
+
+[alerts.bad_exit]
+condition = "container.exit_code != 0"
+for = "0s"
+severity = "warning"
+actions = ["notify"]
+
 [notify.email]
 enabled = true
 smtp_host = "smtp.example.com"
@@ -144,6 +175,26 @@ to = ["you@example.com"]
 enabled = false
 url = "https://hooks.slack.com/services/..."
 ```
+
+Alert conditions use the format `scope.field op value`. Available fields:
+
+| Field | Scope | Type | Description |
+|---|---|---|---|
+| `host.cpu_percent` | host | numeric | CPU usage percentage |
+| `host.memory_percent` | host | numeric | Memory usage percentage |
+| `host.disk_percent` | host | numeric | Disk usage percentage (per-mountpoint) |
+| `host.load1` | host | numeric | 1-minute load average |
+| `host.load5` | host | numeric | 5-minute load average |
+| `host.load15` | host | numeric | 15-minute load average |
+| `host.swap_percent` | host | numeric | Swap usage percentage |
+| `container.cpu_percent` | container | numeric | Container CPU usage |
+| `container.memory_percent` | container | numeric | Container memory usage |
+| `container.state` | container | string | Container state (e.g. `'running'`, `'exited'`) |
+| `container.health` | container | string | Container health (e.g. `'healthy'`, `'unhealthy'`) |
+| `container.restart_count` | container | numeric | Container restart count |
+| `container.exit_code` | container | numeric | Container exit code |
+
+Numeric fields support `>`, `<`, `>=`, `<=`, `==`, `!=`. String fields support `==` and `!=` only, with values in single quotes.
 
 ## Client Config
 

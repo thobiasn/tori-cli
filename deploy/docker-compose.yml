@@ -36,5 +36,22 @@ services:
         severity = "critical"
         actions = ["notify"]
 
+        [alerts.unhealthy]
+        condition = "container.health == 'unhealthy'"
+        for = "30s"
+        severity = "critical"
+        actions = ["notify"]
+
+        [alerts.restart_loop]
+        condition = "container.restart_count > 5"
+        severity = "critical"
+        actions = ["notify"]
+
+        [alerts.high_load]
+        condition = "host.load1 > 4"
+        for = "5m"
+        severity = "warning"
+        actions = ["notify"]
+
 volumes:
   rook-data:

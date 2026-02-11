@@ -17,17 +17,25 @@ var validFields = map[string]map[string]bool{
 		"cpu_percent":    true,
 		"memory_percent": true,
 		"disk_percent":   true,
+		"load1":          true,
+		"load5":          true,
+		"load15":         true,
+		"swap_percent":   true,
 	},
 	"container": {
 		"cpu_percent":    true,
 		"memory_percent": true,
 		"state":          true,
+		"health":         true,
+		"restart_count":  true,
+		"exit_code":      true,
 	},
 }
 
 // String-only fields that only support == and != operators.
 var stringFields = map[string]bool{
-	"state": true,
+	"state":  true,
+	"health": true,
 }
 
 // Condition represents a parsed alert condition like "host.cpu_percent > 90".
@@ -542,6 +550,17 @@ func hostFieldValue(m *HostMetrics, field string) float64 {
 		return m.CPUPercent
 	case "memory_percent":
 		return m.MemPercent
+	case "load1":
+		return m.Load1
+	case "load5":
+		return m.Load5
+	case "load15":
+		return m.Load15
+	case "swap_percent":
+		if m.SwapTotal == 0 {
+			return 0
+		}
+		return float64(m.SwapUsed) / float64(m.SwapTotal) * 100
 	}
 	return 0
 }
@@ -552,6 +571,10 @@ func containerFieldNum(c *ContainerMetrics, field string) float64 {
 		return c.CPUPercent
 	case "memory_percent":
 		return c.MemPercent
+	case "restart_count":
+		return float64(c.RestartCount)
+	case "exit_code":
+		return float64(c.ExitCode)
 	}
 	return 0
 }
@@ -560,6 +583,8 @@ func containerFieldStr(c *ContainerMetrics, field string) string {
 	switch field {
 	case "state":
 		return c.State
+	case "health":
+		return c.Health
 	}
 	return ""
 }
