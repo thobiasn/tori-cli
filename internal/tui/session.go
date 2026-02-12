@@ -57,9 +57,9 @@ func NewSession(name string, client *Client, tunnel *Tunnel) *Session {
 		Rates:                NewRateCalc(),
 		CPUHistory:           make(map[string]*RingBuffer[float64]),
 		MemHistory:           make(map[string]*RingBuffer[float64]),
-		HostCPUHistory:       NewRingBuffer[float64](600),
-		HostMemHistory:       NewRingBuffer[float64](600),
-		HostMemUsedHistory: NewRingBuffer[float64](600),
+		HostCPUHistory:       NewRingBuffer[float64](ringBufSize),
+		HostMemHistory:       NewRingBuffer[float64](ringBufSize),
+		HostMemUsedHistory: NewRingBuffer[float64](ringBufSize),
 		Dash:                 newDashboardState(),
 		Alertv:               newAlertViewState(),
 	}

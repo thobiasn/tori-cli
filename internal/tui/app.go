@@ -125,7 +125,7 @@ func backfillMetrics(c *Client, seconds int64) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		now := time.Now().Unix()
-		rangeSec := int64(1800)
+		rangeSec := int64(ringBufSize * 10) // 600 points × 10s default interval
 		points := 0
 		if seconds > 0 {
 			rangeSec = seconds
@@ -298,10 +298,10 @@ func (a *App) handleSessionMetrics(s *Session, m *protocol.MetricsUpdate) tea.Cm
 	for _, c := range m.Containers {
 		current[c.ID] = true
 		if _, ok := s.CPUHistory[c.ID]; !ok {
-			s.CPUHistory[c.ID] = NewRingBuffer[float64](600)
+			s.CPUHistory[c.ID] = NewRingBuffer[float64](ringBufSize)
 		}
 		if _, ok := s.MemHistory[c.ID]; !ok {
-			s.MemHistory[c.ID] = NewRingBuffer[float64](600)
+			s.MemHistory[c.ID] = NewRingBuffer[float64](ringBufSize)
 		}
 		s.CPUHistory[c.ID].Push(c.CPUPercent)
 		s.MemHistory[c.ID].Push(float64(c.MemUsage))
@@ -329,10 +329,10 @@ func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp) {
 	}
 	for _, c := range resp.Containers {
 		if _, ok := s.CPUHistory[c.ID]; !ok {
-			s.CPUHistory[c.ID] = NewRingBuffer[float64](600)
+			s.CPUHistory[c.ID] = NewRingBuffer[float64](ringBufSize)
 		}
 		if _, ok := s.MemHistory[c.ID]; !ok {
-			s.MemHistory[c.ID] = NewRingBuffer[float64](600)
+			s.MemHistory[c.ID] = NewRingBuffer[float64](ringBufSize)
 		}
 		s.CPUHistory[c.ID].Push(c.CPUPercent)
 		s.MemHistory[c.ID].Push(float64(c.MemUsage))
