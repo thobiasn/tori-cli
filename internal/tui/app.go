@@ -270,8 +270,24 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ContainerEventMsg:
 		if s := a.sessions[msg.Server]; s != nil {
+			var cmds []tea.Cmd
+
+			// Auto-switch detail view BEFORE processing the log entry
+			// so the "start" event is captured in the new container's logs.
+			if a.active == viewDetail && msg.State == "running" {
+				if cmd := a.handleDetailAutoSwitch(s, msg.ContainerEvent); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			}
+
 			entry := containerEventToLog(msg.ContainerEvent)
 			s.Detail.onStreamEntry(entry)
+
+			// Re-query ContInfo so the dashboard shows correct project
+			// grouping and tracked state for new/removed containers.
+			cmds = append(cmds, queryContainersCmd(s.Client))
+
+			return a, tea.Batch(cmds...)
 		}
 		return a, nil
 
@@ -553,6 +569,36 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, updateDetail(&a, s, msg)
 	}
 	return a, nil
+}
+
+// handleDetailAutoSwitch detects when a new container starts with the same
+// service identity as the one currently viewed in the detail view. If so, it
+// switches the detail view to the new container and re-triggers backfills.
+func (a *App) handleDetailAutoSwitch(s *Session, evt protocol.ContainerEvent) tea.Cmd {
+	det := &s.Detail
+	if det.containerID == "" || det.containerID == evt.ContainerID {
+		return nil
+	}
+	if det.svcService == "" {
+		return nil
+	}
+
+	// Compute the event's service identity using the same logic as the agent.
+	evtProject, evtService := evt.Project, evt.Service
+	if evtProject == "" || evtService == "" {
+		// Non-compose fallback: use container name.
+		evtProject = ""
+		evtService = evt.Name
+	}
+
+	if evtProject != det.svcProject || evtService != det.svcService {
+		return nil
+	}
+
+	// Match — switch to the new container.
+	det.containerID = evt.ContainerID
+	det.reset()
+	return det.onSwitch(s.Client)
 }
 
 // handleZoom adjusts the time window and triggers a backfill.

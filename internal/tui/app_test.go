@@ -490,3 +490,99 @@ func TestHandleDetailMetricsBackfill(t *testing.T) {
 		t.Errorf("CPU data = %v, want [10 20 30 40]", cpuData)
 	}
 }
+
+func TestHandleDetailAutoSwitch(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	a.active = viewDetail
+
+	// Viewing container "old-c" with a compose service identity.
+	s.Detail.containerID = "old-c"
+	s.Detail.svcProject = "myapp"
+	s.Detail.svcService = "web"
+	s.Detail.reset()
+
+	// A new container starts with the same service identity.
+	evt := protocol.ContainerEvent{
+		ContainerID: "new-c",
+		Name:        "web",
+		State:       "running",
+		Action:      "start",
+		Project:     "myapp",
+		Service:     "web",
+	}
+	cmd := a.handleDetailAutoSwitch(s, evt)
+
+	// Should have switched to the new container.
+	if s.Detail.containerID != "new-c" {
+		t.Errorf("containerID = %q, want new-c", s.Detail.containerID)
+	}
+	// Should return a non-nil cmd (onSwitch triggers backfills).
+	if cmd == nil {
+		t.Error("expected non-nil cmd from auto-switch")
+	}
+	// Backfill flags should be reset.
+	if s.Detail.backfilled {
+		t.Error("backfilled should be false after reset")
+	}
+	if s.Detail.metricsBackfilled {
+		t.Error("metricsBackfilled should be false after reset")
+	}
+}
+
+func TestHandleDetailAutoSwitchNoMatch(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	a.active = viewDetail
+
+	s.Detail.containerID = "old-c"
+	s.Detail.svcProject = "myapp"
+	s.Detail.svcService = "web"
+	s.Detail.reset()
+
+	// Different service — should NOT auto-switch.
+	evt := protocol.ContainerEvent{
+		ContainerID: "new-c",
+		Name:        "api",
+		State:       "running",
+		Action:      "start",
+		Project:     "myapp",
+		Service:     "api",
+	}
+	cmd := a.handleDetailAutoSwitch(s, evt)
+
+	if s.Detail.containerID != "old-c" {
+		t.Errorf("containerID = %q, should still be old-c", s.Detail.containerID)
+	}
+	if cmd != nil {
+		t.Error("should return nil cmd for non-matching service")
+	}
+}
+
+func TestHandleDetailAutoSwitchNonCompose(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	a.active = viewDetail
+
+	// Non-compose container: svcProject="" svcService="myapp"
+	s.Detail.containerID = "old-c"
+	s.Detail.svcProject = ""
+	s.Detail.svcService = "myapp"
+	s.Detail.reset()
+
+	// New container with same name, no compose labels.
+	evt := protocol.ContainerEvent{
+		ContainerID: "new-c",
+		Name:        "myapp",
+		State:       "running",
+		Action:      "start",
+	}
+	cmd := a.handleDetailAutoSwitch(s, evt)
+
+	if s.Detail.containerID != "new-c" {
+		t.Errorf("containerID = %q, want new-c", s.Detail.containerID)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd for non-compose auto-switch")
+	}
+}

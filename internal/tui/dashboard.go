@@ -44,6 +44,9 @@ func buildGroups(containers []protocol.ContainerMetrics, contInfo []protocol.Con
 	for _, c := range containers {
 		seen[c.ID] = true
 		proj := projectOf[c.ID]
+		if proj == "" && c.Project != "" {
+			proj = c.Project // fallback to service identity from metrics
+		}
 		if proj == "" {
 			proj = "other"
 		}
