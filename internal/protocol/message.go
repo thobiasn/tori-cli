@@ -186,8 +186,8 @@ type SetTrackingReq struct {
 
 // QueryTrackingResp is the response for TypeQueryTracking.
 type QueryTrackingResp struct {
-	UntrackedContainers []string `msgpack:"untracked_containers"`
-	UntrackedProjects   []string `msgpack:"untracked_projects"`
+	TrackedContainers []string `msgpack:"tracked_containers"`
+	TrackedProjects   []string `msgpack:"tracked_projects"`
 }
 
 // AckAlertReq is the body for TypeActionAckAlert.

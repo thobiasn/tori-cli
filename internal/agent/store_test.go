@@ -590,7 +590,7 @@ func TestSchemaCreation(t *testing.T) {
 	s := testStore(t)
 
 	// Verify all tables exist
-	tables := []string{"host_metrics", "disk_metrics", "net_metrics", "container_metrics", "logs", "alerts"}
+	tables := []string{"host_metrics", "disk_metrics", "net_metrics", "container_metrics", "logs", "alerts", "tracking_state"}
 	for _, table := range tables {
 		var name string
 		err := s.db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)
@@ -1024,5 +1024,67 @@ func TestLogStorageScaling(t *testing.T) {
 		bytesPerEntry := float64(dbSize) / float64(target)
 		t.Logf("%5d entries: DB = %d bytes (%.2f MB), %.0f bytes/entry",
 			target, dbSize, float64(dbSize)/(1024*1024), bytesPerEntry)
+	}
+}
+
+func TestSaveAndLoadTracking(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	// Save tracking state.
+	if err := s.SaveTracking(ctx, []string{"web", "api"}, []string{"myapp"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Load it back.
+	containers, projects, err := s.LoadTracking(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(containers) != 2 {
+		t.Errorf("containers = %d, want 2", len(containers))
+	}
+	if len(projects) != 1 || projects[0] != "myapp" {
+		t.Errorf("projects = %v, want [myapp]", projects)
+	}
+}
+
+func TestSaveTrackingOverwrites(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	// Save initial state.
+	s.SaveTracking(ctx, []string{"web", "api"}, []string{"myapp"})
+
+	// Overwrite with different state.
+	if err := s.SaveTracking(ctx, []string{"db"}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	containers, projects, err := s.LoadTracking(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(containers) != 1 || containers[0] != "db" {
+		t.Errorf("containers = %v, want [db]", containers)
+	}
+	if len(projects) != 0 {
+		t.Errorf("projects = %v, want []", projects)
+	}
+}
+
+func TestLoadTrackingEmpty(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	containers, projects, err := s.LoadTracking(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(containers) != 0 {
+		t.Errorf("containers = %v, want empty", containers)
+	}
+	if len(projects) != 0 {
+		t.Errorf("projects = %v, want empty", projects)
 	}
 }

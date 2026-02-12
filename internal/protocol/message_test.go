@@ -411,8 +411,8 @@ func TestSetTrackingReqRoundtrip(t *testing.T) {
 
 func TestQueryTrackingRespRoundtrip(t *testing.T) {
 	orig := QueryTrackingResp{
-		UntrackedContainers: []string{"web", "api"},
-		UntrackedProjects:   []string{"myapp"},
+		TrackedContainers: []string{"web", "api"},
+		TrackedProjects:   []string{"myapp"},
 	}
 	env, err := NewEnvelope(TypeResult, 1, &orig)
 	if err != nil {
@@ -433,11 +433,11 @@ func TestQueryTrackingRespRoundtrip(t *testing.T) {
 	if err := DecodeBody(got.Body, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if len(decoded.UntrackedContainers) != 2 || decoded.UntrackedContainers[0] != "web" {
-		t.Errorf("containers = %v, want [web api]", decoded.UntrackedContainers)
+	if len(decoded.TrackedContainers) != 2 || decoded.TrackedContainers[0] != "web" {
+		t.Errorf("containers = %v, want [web api]", decoded.TrackedContainers)
 	}
-	if len(decoded.UntrackedProjects) != 1 || decoded.UntrackedProjects[0] != "myapp" {
-		t.Errorf("projects = %v, want [myapp]", decoded.UntrackedProjects)
+	if len(decoded.TrackedProjects) != 1 || decoded.TrackedProjects[0] != "myapp" {
+		t.Errorf("projects = %v, want [myapp]", decoded.TrackedProjects)
 	}
 }
 

@@ -288,72 +288,102 @@ func TestInspectCacheStaleEviction(t *testing.T) {
 
 func TestSetTrackingContainer(t *testing.T) {
 	d := &DockerCollector{
-		prevCPU:           make(map[string]cpuPrev),
-		untracked:         make(map[string]bool),
-		untrackedProjects: make(map[string]bool),
+		prevCPU:         make(map[string]cpuPrev),
+		tracked:         make(map[string]bool),
+		trackedProjects: make(map[string]bool),
 	}
 
-	// Initially tracked.
-	if !d.IsTracked("web", "myapp") {
-		t.Error("should be tracked by default")
-	}
-
-	// Untrack by name.
-	d.SetTracking("web", "", false)
+	// Initially untracked (nothing in tracked set).
 	if d.IsTracked("web", "myapp") {
-		t.Error("web should be untracked after SetTracking(false)")
+		t.Error("should be untracked by default")
 	}
 
-	// Other containers still tracked.
-	if !d.IsTracked("api", "myapp") {
-		t.Error("api should still be tracked")
-	}
-
-	// Re-track.
+	// Track by name.
 	d.SetTracking("web", "", true)
 	if !d.IsTracked("web", "myapp") {
-		t.Error("web should be tracked again")
+		t.Error("web should be tracked after SetTracking(true)")
+	}
+
+	// Other containers still untracked.
+	if d.IsTracked("api", "myapp") {
+		t.Error("api should still be untracked")
+	}
+
+	// Untrack.
+	d.SetTracking("web", "", false)
+	if d.IsTracked("web", "myapp") {
+		t.Error("web should be untracked again")
 	}
 }
 
 func TestSetTrackingProject(t *testing.T) {
 	d := &DockerCollector{
-		prevCPU:           make(map[string]cpuPrev),
-		untracked:         make(map[string]bool),
-		untrackedProjects: make(map[string]bool),
+		prevCPU:         make(map[string]cpuPrev),
+		tracked:         make(map[string]bool),
+		trackedProjects: make(map[string]bool),
 	}
 
-	d.SetTracking("", "myapp", false)
+	// Initially untracked.
 	if d.IsTracked("web", "myapp") {
-		t.Error("web in myapp should be untracked")
-	}
-	if !d.IsTracked("cache", "other") {
-		t.Error("cache in other project should still be tracked")
+		t.Error("web in myapp should be untracked by default")
 	}
 
+	// Track project.
 	d.SetTracking("", "myapp", true)
 	if !d.IsTracked("web", "myapp") {
-		t.Error("web in myapp should be tracked again")
+		t.Error("web in myapp should be tracked")
+	}
+	if d.IsTracked("cache", "other") {
+		t.Error("cache in other project should still be untracked")
+	}
+
+	// Untrack project.
+	d.SetTracking("", "myapp", false)
+	if d.IsTracked("web", "myapp") {
+		t.Error("web in myapp should be untracked again")
 	}
 }
 
 func TestGetTrackingState(t *testing.T) {
 	d := &DockerCollector{
-		prevCPU:           make(map[string]cpuPrev),
-		untracked:         make(map[string]bool),
-		untrackedProjects: make(map[string]bool),
+		prevCPU:         make(map[string]cpuPrev),
+		tracked:         make(map[string]bool),
+		trackedProjects: make(map[string]bool),
 	}
 
-	d.SetTracking("web", "", false)
-	d.SetTracking("api", "", false)
-	d.SetTracking("", "myapp", false)
+	d.SetTracking("web", "", true)
+	d.SetTracking("api", "", true)
+	d.SetTracking("", "myapp", true)
 
 	containers, projects := d.GetTrackingState()
 	if len(containers) != 2 {
-		t.Errorf("untracked containers = %d, want 2", len(containers))
+		t.Errorf("tracked containers = %d, want 2", len(containers))
 	}
 	if len(projects) != 1 {
-		t.Errorf("untracked projects = %d, want 1", len(projects))
+		t.Errorf("tracked projects = %d, want 1", len(projects))
+	}
+}
+
+func TestLoadTrackingState(t *testing.T) {
+	d := &DockerCollector{
+		prevCPU:         make(map[string]cpuPrev),
+		tracked:         make(map[string]bool),
+		trackedProjects: make(map[string]bool),
+	}
+
+	d.LoadTrackingState([]string{"web", "api"}, []string{"myapp"})
+
+	if !d.IsTracked("web", "") {
+		t.Error("web should be tracked after load")
+	}
+	if !d.IsTracked("api", "") {
+		t.Error("api should be tracked after load")
+	}
+	if !d.IsTracked("anything", "myapp") {
+		t.Error("anything in myapp should be tracked after load")
+	}
+	if d.IsTracked("db", "other") {
+		t.Error("db in other should still be untracked")
 	}
 }
 

@@ -330,5 +330,5 @@ func isContainerTracked(id string, contInfo []protocol.ContainerInfo) bool {
 			return ci.Tracked
 		}
 	}
-	return true
+	return false
 }

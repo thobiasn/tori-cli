@@ -326,8 +326,8 @@ func TestIsContainerTracked(t *testing.T) {
 	if isContainerTracked("c2", info) {
 		t.Error("c2 should not be tracked")
 	}
-	if !isContainerTracked("c3", info) {
-		t.Error("unknown container should default to tracked")
+	if isContainerTracked("c3", info) {
+		t.Error("unknown container should default to untracked")
 	}
 }
 

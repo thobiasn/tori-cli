@@ -22,8 +22,8 @@ func testSocketServer(t *testing.T, store *Store) (*SocketServer, *Hub, string) 
 			{ID: "def456", Name: "api", Image: "node", State: "running", Project: "myapp"},
 			{ID: "ghi789", Name: "db", Image: "postgres", State: "running", Project: "other"},
 		},
-		untracked:         make(map[string]bool),
-		untrackedProjects: make(map[string]bool),
+		tracked:         make(map[string]bool),
+		trackedProjects: make(map[string]bool),
 	}
 	ss := NewSocketServer(hub, store, dc, nil, 7)
 	path := filepath.Join(t.TempDir(), "test.sock")
@@ -43,8 +43,8 @@ func testSocketServerWithAlerter(t *testing.T, store *Store, alerter *Alerter) (
 		lastContainers: []Container{
 			{ID: "abc123", Name: "web", Image: "nginx", State: "running", Project: "myapp"},
 		},
-		untracked:         make(map[string]bool),
-		untrackedProjects: make(map[string]bool),
+		tracked:         make(map[string]bool),
+		trackedProjects: make(map[string]bool),
 	}
 	ss := NewSocketServer(hub, store, dc, alerter, 7)
 	path := filepath.Join(t.TempDir(), "test.sock")
@@ -890,8 +890,8 @@ func TestSocketConnectionLimit(t *testing.T) {
 	dc := &DockerCollector{
 		prevCPU:           make(map[string]cpuPrev),
 		lastContainers:    []Container{},
-		untracked:         make(map[string]bool),
-		untrackedProjects: make(map[string]bool),
+		tracked:         make(map[string]bool),
+		trackedProjects: make(map[string]bool),
 	}
 	// Create a server with a small semaphore for testing.
 	ss := &SocketServer{
@@ -1001,8 +1001,8 @@ func TestSocketSetTracking(t *testing.T) {
 	ss, _, path := testSocketServer(t, s)
 	conn := dial(t, path)
 
-	// Untrack a container.
-	req := protocol.SetTrackingReq{Container: "web", Tracked: false}
+	// Track a container (default is untracked).
+	req := protocol.SetTrackingReq{Container: "web", Tracked: true}
 	env, err := protocol.NewEnvelope(protocol.TypeActionSetTracking, 1, &req)
 	if err != nil {
 		t.Fatal(err)
@@ -1021,11 +1021,24 @@ func TestSocketSetTracking(t *testing.T) {
 	}
 
 	// Verify via IsTracked.
-	if ss.docker.IsTracked("web", "myapp") {
-		t.Error("web should be untracked")
+	if !ss.docker.IsTracked("web", "myapp") {
+		t.Error("web should be tracked")
 	}
-	if !ss.docker.IsTracked("api", "myapp") {
-		t.Error("api should still be tracked")
+	if ss.docker.IsTracked("api", "myapp") {
+		t.Error("api should still be untracked")
+	}
+
+	// Verify persisted to DB.
+	ctx := t.Context()
+	containers, projects, err := s.LoadTracking(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(containers) != 1 || containers[0] != "web" {
+		t.Errorf("persisted containers = %v, want [web]", containers)
+	}
+	if len(projects) != 0 {
+		t.Errorf("persisted projects = %v, want []", projects)
 	}
 }
 
@@ -1058,9 +1071,9 @@ func TestSocketQueryTracking(t *testing.T) {
 	s := testStore(t)
 	ss, _, path := testSocketServer(t, s)
 
-	// Untrack some things.
-	ss.docker.SetTracking("web", "", false)
-	ss.docker.SetTracking("", "myapp", false)
+	// Track some things.
+	ss.docker.SetTracking("web", "", true)
+	ss.docker.SetTracking("", "myapp", true)
 
 	conn := dial(t, path)
 	env := protocol.NewEnvelopeNoBody(protocol.TypeQueryTracking, 1)
@@ -1081,11 +1094,11 @@ func TestSocketQueryTracking(t *testing.T) {
 	if err := protocol.DecodeBody(resp.Body, &tracking); err != nil {
 		t.Fatal(err)
 	}
-	if len(tracking.UntrackedContainers) != 1 || tracking.UntrackedContainers[0] != "web" {
-		t.Errorf("untracked containers = %v, want [web]", tracking.UntrackedContainers)
+	if len(tracking.TrackedContainers) != 1 || tracking.TrackedContainers[0] != "web" {
+		t.Errorf("tracked containers = %v, want [web]", tracking.TrackedContainers)
 	}
-	if len(tracking.UntrackedProjects) != 1 || tracking.UntrackedProjects[0] != "myapp" {
-		t.Errorf("untracked projects = %v, want [myapp]", tracking.UntrackedProjects)
+	if len(tracking.TrackedProjects) != 1 || tracking.TrackedProjects[0] != "myapp" {
+		t.Errorf("tracked projects = %v, want [myapp]", tracking.TrackedProjects)
 	}
 }
 
@@ -1093,8 +1106,8 @@ func TestSocketQueryContainersTracked(t *testing.T) {
 	s := testStore(t)
 	ss, _, path := testSocketServer(t, s)
 
-	// Untrack "web".
-	ss.docker.SetTracking("web", "", false)
+	// Track only "web" (default is untracked).
+	ss.docker.SetTracking("web", "", true)
 
 	conn := dial(t, path)
 	env := protocol.NewEnvelopeNoBody(protocol.TypeQueryContainers, 1)
@@ -1114,11 +1127,11 @@ func TestSocketQueryContainersTracked(t *testing.T) {
 	}
 
 	for _, c := range containers.Containers {
-		if c.Name == "web" && c.Tracked {
-			t.Error("web should have Tracked=false")
+		if c.Name == "web" && !c.Tracked {
+			t.Error("web should have Tracked=true")
 		}
-		if c.Name == "api" && !c.Tracked {
-			t.Error("api should have Tracked=true")
+		if c.Name == "api" && c.Tracked {
+			t.Error("api should have Tracked=false")
 		}
 	}
 }
@@ -1338,7 +1351,7 @@ func TestDownsampleContainers(t *testing.T) {
 func TestSocketFileCleanedUpOnStop(t *testing.T) {
 	s := testStore(t)
 	hub := NewHub()
-	dc := &DockerCollector{prevCPU: make(map[string]cpuPrev), untracked: make(map[string]bool), untrackedProjects: make(map[string]bool)}
+	dc := &DockerCollector{prevCPU: make(map[string]cpuPrev), tracked: make(map[string]bool), trackedProjects: make(map[string]bool)}
 	ss := NewSocketServer(hub, s, dc, nil, 7)
 
 	path := filepath.Join(t.TempDir(), "test.sock")

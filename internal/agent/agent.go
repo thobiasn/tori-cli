@@ -39,6 +39,15 @@ func New(cfg *Config, cfgPath string) (*Agent, error) {
 		return nil, fmt.Errorf("docker collector: %w", err)
 	}
 
+	// Load persisted tracking state. Non-fatal if it fails.
+	containers, projects, err := store.LoadTracking(context.Background())
+	if err != nil {
+		slog.Warn("failed to load tracking state", "error", err)
+	} else if len(containers) > 0 || len(projects) > 0 {
+		docker.LoadTrackingState(containers, projects)
+		slog.Info("loaded tracking state", "containers", len(containers), "projects", len(projects))
+	}
+
 	hub := NewHub()
 	lt := NewLogTailer(docker.Client(), store)
 	lt.onEntry = func(e LogEntry) {

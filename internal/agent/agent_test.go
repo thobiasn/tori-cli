@@ -113,8 +113,8 @@ func TestApplyConfigUpdatesFields(t *testing.T) {
 		include:           []string{"web-*"},
 		exclude:           nil,
 		prevCPU:           make(map[string]cpuPrev),
-		untracked:         make(map[string]bool),
-		untrackedProjects: make(map[string]bool),
+		tracked:         make(map[string]bool),
+		trackedProjects: make(map[string]bool),
 	}
 
 	hub := NewHub()
@@ -176,8 +176,8 @@ func TestApplyConfigRebuildsAlerter(t *testing.T) {
 
 	docker := &DockerCollector{
 		prevCPU:           make(map[string]cpuPrev),
-		untracked:         make(map[string]bool),
-		untrackedProjects: make(map[string]bool),
+		tracked:         make(map[string]bool),
+		trackedProjects: make(map[string]bool),
 	}
 
 	hub := NewHub()

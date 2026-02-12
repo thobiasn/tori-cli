@@ -29,9 +29,9 @@ type DockerCollector struct {
 	// Cached inspect results for non-running containers to avoid redundant API calls.
 	inspectCache map[string]inspectResult
 
-	// Runtime tracking state: names/projects that are untracked.
-	untracked         map[string]bool // container names
-	untrackedProjects map[string]bool // compose project names
+	// Runtime tracking state: names/projects that are tracked (positive list).
+	tracked         map[string]bool // container names
+	trackedProjects map[string]bool // compose project names
 
 	// Periodic container disk size collection (Size: true is expensive).
 	sizeCollectN int            // counter for periodic size requests
@@ -60,14 +60,14 @@ func NewDockerCollector(cfg *DockerConfig) (*DockerCollector, error) {
 		return nil, fmt.Errorf("docker client: %w", err)
 	}
 	return &DockerCollector{
-		client:            c,
-		include:           cfg.Include,
-		exclude:           cfg.Exclude,
-		prevCPU:           make(map[string]cpuPrev),
-		inspectCache:      make(map[string]inspectResult),
-		untracked:         make(map[string]bool),
-		untrackedProjects: make(map[string]bool),
-		cachedSizes:       make(map[string]int64),
+		client:          c,
+		include:         cfg.Include,
+		exclude:         cfg.Exclude,
+		prevCPU:         make(map[string]cpuPrev),
+		inspectCache:    make(map[string]inspectResult),
+		tracked:         make(map[string]bool),
+		trackedProjects: make(map[string]bool),
+		cachedSizes:     make(map[string]int64),
 	}, nil
 }
 
@@ -103,44 +103,57 @@ func (d *DockerCollector) SetTracking(name, project string, tracked bool) {
 	defer d.mu.Unlock()
 	if name != "" {
 		if tracked {
-			delete(d.untracked, name)
+			d.tracked[name] = true
 		} else {
-			d.untracked[name] = true
+			delete(d.tracked, name)
 		}
 	}
 	if project != "" {
 		if tracked {
-			delete(d.untrackedProjects, project)
+			d.trackedProjects[project] = true
 		} else {
-			d.untrackedProjects[project] = true
+			delete(d.trackedProjects, project)
 		}
 	}
 }
 
 // IsTracked returns whether a container should be tracked (metrics, logs, alerts).
+// A container is tracked if its name or its project is in the tracked set.
 func (d *DockerCollector) IsTracked(name, project string) bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	if d.untracked[name] {
-		return false
+	if d.tracked[name] {
+		return true
 	}
-	if project != "" && d.untrackedProjects[project] {
-		return false
+	if project != "" && d.trackedProjects[project] {
+		return true
 	}
-	return true
+	return false
 }
 
-// GetTrackingState returns the lists of untracked container names and project names.
+// GetTrackingState returns the lists of tracked container names and project names.
 func (d *DockerCollector) GetTrackingState() (containers, projects []string) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	for name := range d.untracked {
+	for name := range d.tracked {
 		containers = append(containers, name)
 	}
-	for name := range d.untrackedProjects {
+	for name := range d.trackedProjects {
 		projects = append(projects, name)
 	}
 	return
+}
+
+// LoadTrackingState bulk-loads persisted tracking state into the maps.
+func (d *DockerCollector) LoadTrackingState(containers, projects []string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, name := range containers {
+		d.tracked[name] = true
+	}
+	for _, name := range projects {
+		d.trackedProjects[name] = true
+	}
 }
 
 // Container represents a discovered container with basic info.

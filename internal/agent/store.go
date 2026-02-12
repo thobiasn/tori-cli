@@ -96,6 +96,12 @@ CREATE TABLE IF NOT EXISTS alerts (
 	acknowledged INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_fired ON alerts(fired_at);
+
+CREATE TABLE IF NOT EXISTS tracking_state (
+	kind TEXT NOT NULL,
+	name TEXT NOT NULL,
+	UNIQUE(kind, name)
+);
 `
 
 // Store manages SQLite persistence for metrics and logs.
@@ -590,6 +596,60 @@ func (s *Store) AckAlert(ctx context.Context, id int64) error {
 		return fmt.Errorf("alert %d not found", id)
 	}
 	return nil
+}
+
+// SaveTracking persists the current tracking state (full snapshot).
+func (s *Store) SaveTracking(ctx context.Context, containers, projects []string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM tracking_state"); err != nil {
+		return err
+	}
+
+	stmt, err := tx.PrepareContext(ctx, "INSERT INTO tracking_state (kind, name) VALUES (?, ?)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, name := range containers {
+		if _, err := stmt.ExecContext(ctx, "container", name); err != nil {
+			return err
+		}
+	}
+	for _, name := range projects {
+		if _, err := stmt.ExecContext(ctx, "project", name); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// LoadTracking loads the persisted tracking state, split by kind.
+func (s *Store) LoadTracking(ctx context.Context) (containers, projects []string, err error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT kind, name FROM tracking_state")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var kind, name string
+		if err := rows.Scan(&kind, &name); err != nil {
+			return nil, nil, err
+		}
+		switch kind {
+		case "container":
+			containers = append(containers, name)
+		case "project":
+			projects = append(projects, name)
+		}
+	}
+	return containers, projects, rows.Err()
 }
 
 // Prune deletes data older than the retention period.

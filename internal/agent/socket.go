@@ -576,20 +576,27 @@ func (c *connState) setTracking(env *protocol.Envelope) {
 	name := truncate(req.Container, maxNameLen)
 	project := truncate(req.Project, maxLabelLen)
 	c.ss.docker.SetTracking(name, project, req.Tracked)
+
+	// Persist tracking state. Best-effort — log error but don't fail the request.
+	containers, projects := c.ss.docker.GetTrackingState()
+	if err := c.ss.store.SaveTracking(c.ctx, containers, projects); err != nil {
+		slog.Warn("failed to persist tracking state", "error", err)
+	}
+
 	c.sendResult(env.ID, &protocol.Result{OK: true, Message: "tracking updated"})
 }
 
 func (c *connState) queryTracking(env *protocol.Envelope) {
 	containers, projects := c.ss.docker.GetTrackingState()
 	resp := protocol.QueryTrackingResp{
-		UntrackedContainers: containers,
-		UntrackedProjects:   projects,
+		TrackedContainers: containers,
+		TrackedProjects:   projects,
 	}
-	if resp.UntrackedContainers == nil {
-		resp.UntrackedContainers = []string{}
+	if resp.TrackedContainers == nil {
+		resp.TrackedContainers = []string{}
 	}
-	if resp.UntrackedProjects == nil {
-		resp.UntrackedProjects = []string{}
+	if resp.TrackedProjects == nil {
+		resp.TrackedProjects = []string{}
 	}
 	c.sendResponse(env.ID, &resp)
 }

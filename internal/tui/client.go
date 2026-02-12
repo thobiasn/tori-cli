@@ -300,7 +300,7 @@ func (c *Client) SetTracking(ctx context.Context, container, project string, tra
 	return err
 }
 
-// QueryTracking returns the current untracked containers and projects.
+// QueryTracking returns the currently tracked containers and projects.
 func (c *Client) QueryTracking(ctx context.Context) (*protocol.QueryTrackingResp, error) {
 	resp, err := c.Request(ctx, protocol.TypeQueryTracking, nil)
 	if err != nil {
