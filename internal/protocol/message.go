@@ -24,7 +24,6 @@ const (
 	TypeQueryContainers    MsgType = "query:containers"
 	TypeActionAckAlert     MsgType = "action:ack_alert"
 	TypeActionSilence      MsgType = "action:silence_alert"
-	TypeActionRestart      MsgType = "action:restart_container"
 	TypeActionSetTracking  MsgType = "action:set_tracking"
 	TypeQueryTracking      MsgType = "query:tracking"
 	TypeResult             MsgType = "result"
@@ -199,11 +198,6 @@ type AckAlertReq struct {
 type SilenceAlertReq struct {
 	RuleName string `msgpack:"rule_name"`
 	Duration int64  `msgpack:"duration"` // seconds
-}
-
-// RestartContainerReq is the body for TypeActionRestart.
-type RestartContainerReq struct {
-	ContainerID string `msgpack:"container_id"`
 }
 
 // Result is the generic success response.

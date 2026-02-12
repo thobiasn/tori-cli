@@ -36,11 +36,10 @@ type Config struct {
 }
 
 type AlertConfig struct {
-	Condition   string   `toml:"condition"`
-	For         Duration `toml:"for"`
-	Severity    string   `toml:"severity"`
-	Actions     []string `toml:"actions"`
-	MaxRestarts int      `toml:"max_restarts"`
+	Condition string   `toml:"condition"`
+	For       Duration `toml:"for"`
+	Severity  string   `toml:"severity"`
+	Actions   []string `toml:"actions"`
 }
 
 type NotifyConfig struct {
@@ -194,13 +193,8 @@ func validateAlert(name string, ac *AlertConfig) error {
 		return fmt.Errorf("alert %q: at least one action required", name)
 	}
 	for _, a := range ac.Actions {
-		switch a {
-		case "notify", "restart":
-		default:
-			return fmt.Errorf("alert %q: unknown action %q (must be \"notify\" or \"restart\")", name, a)
-		}
-		if a == "restart" && ac.MaxRestarts < 1 {
-			return fmt.Errorf("alert %q: restart action requires max_restarts > 0", name)
+		if a != "notify" {
+			return fmt.Errorf("alert %q: unknown action %q (must be \"notify\")", name, a)
 		}
 	}
 	return nil

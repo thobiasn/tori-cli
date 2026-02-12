@@ -150,16 +150,14 @@ type alertInstance struct {
 	pendingSince time.Time
 	firedAt      time.Time
 	dbID         int64
-	restarts     int
 }
 
 type alertRule struct {
-	name        string
-	condition   Condition
-	forDur      time.Duration
-	severity    string
-	actions     []string
-	maxRestarts int
+	name      string
+	condition Condition
+	forDur    time.Duration
+	severity  string
+	actions   []string
 }
 
 // Alerter evaluates alert rules against metric snapshots.
@@ -170,9 +168,7 @@ type Alerter struct {
 	deferred  []func()   // slow side effects collected under mu, executed after release
 	store     *Store
 	notifier  *Notifier
-	docker    *DockerCollector
 	now       func() time.Time
-	restartFn func(ctx context.Context, containerID string) error // injectable for tests
 
 	onStateChange func(a *Alert, state string) // called on "firing" / "resolved"
 
@@ -181,13 +177,12 @@ type Alerter struct {
 }
 
 // NewAlerter creates an Alerter from the config's alert rules.
-func NewAlerter(alerts map[string]AlertConfig, store *Store, notifier *Notifier, docker *DockerCollector) (*Alerter, error) {
+func NewAlerter(alerts map[string]AlertConfig, store *Store, notifier *Notifier) (*Alerter, error) {
 	a := &Alerter{
 		instances: make(map[string]*alertInstance),
 		deferred:  make([]func(), 0, 8),
 		store:     store,
 		notifier:  notifier,
-		docker:    docker,
 		now:       time.Now,
 		silences:  make(map[string]time.Time),
 	}
@@ -206,12 +201,11 @@ func NewAlerter(alerts map[string]AlertConfig, store *Store, notifier *Notifier,
 			return nil, fmt.Errorf("alert %q: %w", name, err)
 		}
 		a.rules = append(a.rules, alertRule{
-			name:        name,
-			condition:   cond,
-			forDur:      ac.For.Duration,
-			severity:    ac.Severity,
-			actions:     ac.Actions,
-			maxRestarts: ac.MaxRestarts,
+			name:      name,
+			condition: cond,
+			forDur:    ac.For.Duration,
+			severity:  ac.Severity,
+			actions:   ac.Actions,
 		})
 	}
 	return a, nil
@@ -417,21 +411,13 @@ func (a *Alerter) fire(ctx context.Context, r *alertRule, key string, inst *aler
 		a.onStateChange(alert, "firing")
 	}
 
-	// Defer slow side effects (notify, restart) to execute after mutex release.
+	// Defer slow side effects (notify) to execute after mutex release.
 	silenced := a.isSilenced(r.name)
 	for _, action := range r.actions {
-		switch action {
-		case "notify":
-			if !silenced {
-				ruleName := r.name
-				a.deferred = append(a.deferred, func() {
-					a.notifier.Send(ctx, "Alert: "+ruleName, msg)
-				})
-			}
-		case "restart":
-			rule := r
+		if action == "notify" && !silenced {
+			ruleName := r.name
 			a.deferred = append(a.deferred, func() {
-				a.doRestart(ctx, rule, inst, containerID)
+				a.notifier.Send(ctx, "Alert: "+ruleName, msg)
 			})
 		}
 	}
@@ -466,7 +452,6 @@ func (a *Alerter) resolve(ctx context.Context, r *alertRule, key string, inst *a
 		}
 	}
 
-	inst.restarts = 0
 	inst.dbID = 0
 }
 
@@ -478,32 +463,6 @@ func (a *Alerter) ruleForKey(key string) *alertRule {
 		}
 	}
 	return nil
-}
-
-func (a *Alerter) doRestart(ctx context.Context, r *alertRule, inst *alertInstance, containerID string) {
-	if containerID == "" {
-		return
-	}
-	if a.restartFn == nil && a.docker == nil {
-		return
-	}
-	if inst.restarts >= r.maxRestarts {
-		slog.Warn("restart limit reached", "rule", r.name, "container", containerID, "restarts", inst.restarts)
-		return
-	}
-
-	var err error
-	if a.restartFn != nil {
-		err = a.restartFn(ctx, containerID)
-	} else {
-		err = a.docker.RestartContainer(ctx, containerID)
-	}
-	if err != nil {
-		slog.Error("restart container", "container", containerID, "error", err)
-		return
-	}
-	inst.restarts++
-	slog.Info("restarted container", "rule", r.name, "container", containerID, "restarts", inst.restarts)
 }
 
 // ResolveAll resolves all firing alerts. Called before replacing the alerter on config reload.

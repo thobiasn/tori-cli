@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
     pid: host
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro  # remove :ro if using self-healing actions
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /run/rook:/run/rook

@@ -284,12 +284,6 @@ func (c *Client) SilenceAlert(ctx context.Context, rule string, dur int64) error
 	return err
 }
 
-// RestartContainer asks the agent to restart a container.
-func (c *Client) RestartContainer(ctx context.Context, containerID string) error {
-	_, err := c.Request(ctx, protocol.TypeActionRestart, &protocol.RestartContainerReq{ContainerID: containerID})
-	return err
-}
-
 // SetTracking toggles tracking for a container name or compose project.
 func (c *Client) SetTracking(ctx context.Context, container, project string, tracked bool) error {
 	_, err := c.Request(ctx, protocol.TypeActionSetTracking, &protocol.SetTrackingReq{

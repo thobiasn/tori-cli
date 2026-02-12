@@ -73,7 +73,7 @@ func New(cfg *Config, cfgPath string) (*Agent, error) {
 
 	if len(cfg.Alerts) > 0 {
 		notifier := NewNotifier(&cfg.Notify)
-		alerter, err := NewAlerter(cfg.Alerts, store, notifier, docker)
+		alerter, err := NewAlerter(cfg.Alerts, store, notifier)
 		if err != nil {
 			store.Close()
 			docker.Close()
@@ -172,7 +172,7 @@ func (a *Agent) applyConfig(newCfg *Config) {
 	// Rebuild alerter + notifier if alert/notify config changed.
 	if len(newCfg.Alerts) > 0 {
 		notifier := NewNotifier(&newCfg.Notify)
-		alerter, err := NewAlerter(newCfg.Alerts, a.store, notifier, a.docker)
+		alerter, err := NewAlerter(newCfg.Alerts, a.store, notifier)
 		if err != nil {
 			slog.Error("config reload: failed to create alerter, keeping old", "error", err)
 			return

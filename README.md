@@ -45,7 +45,6 @@ Existing tools either require a full monitoring stack (Grafana + Prometheus + Lo
 - Per-container and per-group tracking toggle — untracked containers are visible but dimmed (no metrics, logs, or alerts)
 - Tails container logs via the Docker log API
 - Evaluates alert rules defined in config and sends notifications (email/SMTP, webhook, Slack)
-- Executes self-healing actions (restart container, run command) on alert triggers
 - Stores metrics and logs in SQLite with configurable retention
 - Exposes a Unix socket for client connections
 - Runs as a systemd service or Docker container
@@ -112,8 +111,7 @@ interval = "10s"
 condition = "container.state == 'exited'"
 for = "30s"
 severity = "critical"
-actions = ["notify", "restart"]
-max_restarts = 3
+actions = ["notify"]
 
 [alerts.high_cpu]
 condition = "host.cpu_percent > 90"
@@ -149,8 +147,7 @@ actions = ["notify"]
 condition = "container.health == 'unhealthy'"
 for = "30s"
 severity = "critical"
-actions = ["notify", "restart"]
-max_restarts = 3
+actions = ["notify"]
 
 [alerts.restart_loop]
 condition = "container.restart_count > 5"
@@ -272,8 +269,6 @@ interval = "10s"' \
   rook
 ```
 
-Remove `:ro` from the Docker socket mount if using self-healing actions (container restart).
-
 A ready-to-use Docker Compose file is provided at `deploy/docker-compose.yml` with `ROOK_CONFIG` pre-filled with sensible defaults.
 
 When running via Docker, set the host paths in your config to the mounted locations:
@@ -306,9 +301,7 @@ When connected to multiple servers, press `S` to open the server picker and swit
 
 ## Security
 
-**Docker socket access:** Rook requires access to the Docker socket (`/var/run/docker.sock`). This is effectively root access to the host — any process that can talk to the Docker daemon can do anything. This is the same trust model as Portainer, LogForge, lazydocker, and every other Docker management tool. In the Docker Compose deployment, mount it read-only (`:ro`) if you don't need self-healing actions (container restart). Remove the `:ro` flag only if you enable self-healing in your alert config.
-
-**Self-healing actions:** When an alert rule includes `actions = ["restart"]`, Rook will restart containers via the Docker API. This means the agent needs write access to the Docker socket. Be deliberate about which alert rules include restart actions and set `max_restarts` to prevent restart loops.
+**Docker socket access:** Rook requires read-only access to the Docker socket (`/var/run/docker.sock`) for container monitoring. This is the same trust model as lazydocker, ctop, and other Docker monitoring tools. The socket is always mounted `:ro` — Rook never writes to Docker.
 
 **Unix socket permissions:** The Rook socket at `/run/rook/rook.sock` is the only way to interact with the agent. The default file mode is `0666` because SSH is the real auth gate — anyone who can reach the socket already has shell access to the server. Rook doesn't expand the attack surface.
 
@@ -337,7 +330,6 @@ The TUI client communicates with the agent over a Unix socket using msgpack-enco
 - `query:containers` — current container list and status, grouped by compose project
 - `action:ack_alert` — acknowledge an alert
 - `action:silence_alert` — silence an alert rule for a duration
-- `action:restart_container` — manually restart a container
 - `action:set_tracking` — enable/disable metric collection, log tailing, and alerting for a container or compose group
 
 ## Milestone Plan
@@ -346,7 +338,7 @@ The TUI client communicates with the agent over a Unix socket using msgpack-enco
 Host metric collection, Docker container discovery and stats, SQLite storage, config loading.
 
 **M2 — Alerting** (done):
-Alert rule evaluation, email/SMTP notifications, self-healing actions (container restart), alert persistence.
+Alert rule evaluation, email/SMTP notifications, alert persistence.
 
 **M3 — Protocol + socket** (done):
 Unix socket server, msgpack protocol, streaming and request-response handlers.

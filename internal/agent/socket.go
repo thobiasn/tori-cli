@@ -241,8 +241,6 @@ func (c *connState) dispatch(env *protocol.Envelope) {
 		c.ackAlert(env)
 	case protocol.TypeActionSilence:
 		c.silenceAlert(env)
-	case protocol.TypeActionRestart:
-		c.restartContainer(env)
 	case protocol.TypeActionSetTracking:
 		c.setTracking(env)
 	case protocol.TypeQueryTracking:
@@ -599,34 +597,6 @@ func (c *connState) queryTracking(env *protocol.Envelope) {
 		resp.TrackedProjects = []string{}
 	}
 	c.sendResponse(env.ID, &resp)
-}
-
-func (c *connState) restartContainer(env *protocol.Envelope) {
-	var req protocol.RestartContainerReq
-	if err := protocol.DecodeBody(env.Body, &req); err != nil {
-		c.sendError(env.ID, "invalid body")
-		return
-	}
-	// Validate container is being monitored.
-	if !c.isMonitoredContainer(req.ContainerID) {
-		c.sendError(env.ID, "container not found")
-		return
-	}
-	if err := c.ss.docker.RestartContainer(c.ctx, req.ContainerID); err != nil {
-		slog.Error("restart container", "container", req.ContainerID, "error", err)
-		c.sendError(env.ID, "restart failed")
-		return
-	}
-	c.sendResult(env.ID, &protocol.Result{OK: true, Message: "restarted"})
-}
-
-func (c *connState) isMonitoredContainer(id string) bool {
-	for _, ctr := range c.ss.docker.Containers() {
-		if ctr.ID == id {
-			return true
-		}
-	}
-	return false
 }
 
 // --- Downsampling ---

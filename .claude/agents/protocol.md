@@ -10,7 +10,7 @@ Design a new protocol message or modify an existing one for agent-client communi
    - **Streaming subscription** — agent continuously pushes data to client. Use for live/realtime data (metrics, logs, alerts).
    - **Request-response** — client asks, agent replies once. Use for historical queries, actions, and state lookups.
 4. **Define the message** with:
-   - Message type name (e.g., `query:logs`, `subscribe:metrics`, `action:restart_container`)
+   - Message type name (e.g., `query:logs`, `subscribe:metrics`, `action:set_tracking`)
    - Request fields (what the client sends)
    - Response fields (what the agent returns)
    - For streaming: what triggers a push, what the payload looks like per update

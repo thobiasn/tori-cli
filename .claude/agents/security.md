@@ -10,10 +10,9 @@ Rook runs with elevated access: Docker socket (effectively root), host `/proc` a
 
 ### Docker Socket
 
-- Is the Docker socket ever exposed beyond the agent process? It should only be used by the collector and self-healing action handler.
-- Are self-healing actions (container restart, command execution) gated by explicit config? The agent must never restart or modify containers unless the user configured it.
-- If running in Docker, is the socket mounted `:ro` when self-healing is disabled?
-- Could a crafted TUI request trigger unintended Docker operations? Validate that only the explicitly defined protocol actions (`action:restart_container`) can write to Docker, and that they check against the alert config.
+- Is the Docker socket ever exposed beyond the agent process? It should only be used by the collector for read-only monitoring.
+- Is the Docker socket always mounted `:ro`? Rook should never write to Docker.
+- Could a crafted TUI request trigger unintended Docker operations? Validate that no protocol action can write to Docker.
 
 ### Unix Socket
 

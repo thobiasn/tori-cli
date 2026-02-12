@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -133,39 +132,11 @@ func testAlerter(t *testing.T, alerts map[string]AlertConfig) (*Alerter, *Store)
 	t.Helper()
 	s := testStore(t)
 	n := NewNotifier(&NotifyConfig{})
-	a, err := NewAlerter(alerts, s, n, nil)
+	a, err := NewAlerter(alerts, s, n)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return a, s
-}
-
-// fakeDocker implements just enough to test RestartContainer.
-type fakeDocker struct {
-	restarted []string
-	err       error
-}
-
-func (f *fakeDocker) restart(containerID string) {
-	f.restarted = append(f.restarted, containerID)
-}
-
-// testAlerterWithDocker creates an Alerter with a fake docker restart hook.
-func testAlerterWithDocker(t *testing.T, alerts map[string]AlertConfig) (*Alerter, *Store, *fakeDocker) {
-	t.Helper()
-	s := testStore(t)
-	n := NewNotifier(&NotifyConfig{})
-	a, err := NewAlerter(alerts, s, n, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fd := &fakeDocker{}
-	// Inject a custom doRestart that records calls without needing a real Docker client.
-	a.restartFn = func(ctx context.Context, containerID string) error {
-		fd.restart(containerID)
-		return fd.err
-	}
-	return a, s, fd
 }
 
 func TestAlertStateTransitions(t *testing.T) {
@@ -589,95 +560,6 @@ func TestNilSnapshotDoesNotFalseResolve(t *testing.T) {
 	}
 }
 
-func TestRestartAction(t *testing.T) {
-	alerts := map[string]AlertConfig{
-		"exited": {
-			Condition:   "container.state == 'exited'",
-			Severity:    "critical",
-			Actions:     []string{"restart"},
-			MaxRestarts: 2,
-		},
-	}
-	a, _, fd := testAlerterWithDocker(t, alerts)
-	ctx := context.Background()
-
-	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-	a.now = func() time.Time { return now }
-
-	// Fire — should restart.
-	a.Evaluate(ctx, &MetricSnapshot{
-		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
-	})
-
-	if len(fd.restarted) != 1 || fd.restarted[0] != "aaa" {
-		t.Errorf("expected 1 restart of aaa, got %v", fd.restarted)
-	}
-	if a.instances["exited:aaa"].restarts != 1 {
-		t.Errorf("restart count = %d, want 1", a.instances["exited:aaa"].restarts)
-	}
-}
-
-func TestRestartMaxLimit(t *testing.T) {
-	alerts := map[string]AlertConfig{
-		"exited": {
-			Condition:   "container.state == 'exited'",
-			Severity:    "critical",
-			Actions:     []string{"restart"},
-			MaxRestarts: 1,
-		},
-	}
-	a, _, fd := testAlerterWithDocker(t, alerts)
-	ctx := context.Background()
-
-	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-	a.now = func() time.Time { return now }
-
-	// First fire — restarts.
-	a.Evaluate(ctx, &MetricSnapshot{
-		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
-	})
-	if len(fd.restarted) != 1 {
-		t.Fatalf("expected 1 restart, got %d", len(fd.restarted))
-	}
-
-	// Resolve.
-	now = now.Add(10 * time.Second)
-	a.Evaluate(ctx, &MetricSnapshot{
-		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "running"}},
-	})
-
-	// Re-fire — restarts again (counter reset on resolve).
-	now = now.Add(10 * time.Second)
-	a.Evaluate(ctx, &MetricSnapshot{
-		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
-	})
-	if len(fd.restarted) != 2 {
-		t.Fatalf("expected 2 total restarts, got %d", len(fd.restarted))
-	}
-
-	// Resolve and re-fire twice without resolving — second should be blocked.
-	now = now.Add(10 * time.Second)
-	a.Evaluate(ctx, &MetricSnapshot{
-		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "running"}},
-	})
-	now = now.Add(10 * time.Second)
-	a.Evaluate(ctx, &MetricSnapshot{
-		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
-	})
-	if len(fd.restarted) != 3 {
-		t.Fatalf("expected 3 total restarts, got %d", len(fd.restarted))
-	}
-
-	// Still firing, resolve and fire again to hit max_restarts=1 in a single firing period.
-	// Actually the restart happens on fire transition, so max=1 means 1 restart per fire.
-	// The limit is already reached at 1 (restarts == maxRestarts after first restart).
-	// Verify by direct instance check.
-	inst := a.instances["exited:aaa"]
-	if inst.restarts != 1 {
-		t.Errorf("restart count = %d, want 1", inst.restarts)
-	}
-}
-
 func TestInstancesGarbageCollected(t *testing.T) {
 	alerts := map[string]AlertConfig{
 		"exited": {
@@ -785,16 +667,15 @@ func TestAlertStateChangeCallback(t *testing.T) {
 	}
 }
 
-func TestAlertSilenceOnlySuppressesNotify(t *testing.T) {
+func TestAlertSilenceSuppressesNotify(t *testing.T) {
 	alerts := map[string]AlertConfig{
 		"exited": {
-			Condition:   "container.state == 'exited'",
-			Severity:    "critical",
-			Actions:     []string{"notify", "restart"},
-			MaxRestarts: 3,
+			Condition: "container.state == 'exited'",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
 		},
 	}
-	a, _, fd := testAlerterWithDocker(t, alerts)
+	a, s := testAlerter(t, alerts)
 	ctx := context.Background()
 
 	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -803,16 +684,23 @@ func TestAlertSilenceOnlySuppressesNotify(t *testing.T) {
 	// Silence the rule.
 	a.Silence("exited", 5*time.Minute)
 
-	// Fire — notify should be suppressed, but restart should still happen.
+	// Fire — notify should be suppressed, but alert should still be created.
 	a.Evaluate(ctx, &MetricSnapshot{
 		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
 	})
 
-	if len(fd.restarted) != 1 {
-		t.Errorf("expected 1 restart even when silenced, got %d", len(fd.restarted))
+	inst := a.instances["exited:aaa"]
+	if inst == nil || inst.state != stateFiring {
+		t.Fatal("expected exited:aaa to be firing even when silenced")
 	}
-	if fd.restarted[0] != "aaa" {
-		t.Errorf("restarted = %v, want [aaa]", fd.restarted)
+
+	// Alert should still be recorded in DB.
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts WHERE rule_name = 'exited'").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("alert rows = %d, want 1 (alert should be recorded even when silenced)", count)
 	}
 }
 
@@ -1350,52 +1238,6 @@ func TestContainerRestartCountAlert(t *testing.T) {
 	}
 }
 
-func TestRestartFailureDoesNotIncrementCounter(t *testing.T) {
-	alerts := map[string]AlertConfig{
-		"exited": {
-			Condition:   "container.state == 'exited'",
-			Severity:    "critical",
-			Actions:     []string{"restart"},
-			MaxRestarts: 3,
-		},
-	}
-	a, _, fd := testAlerterWithDocker(t, alerts)
-	ctx := context.Background()
-
-	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-	a.now = func() time.Time { return now }
-
-	// Simulate Docker failure.
-	fd.err = fmt.Errorf("docker unavailable")
-
-	// Fire — restart attempt should fail, counter stays at 0.
-	a.Evaluate(ctx, &MetricSnapshot{
-		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
-	})
-	inst := a.instances["exited:aaa"]
-	if inst == nil || inst.state != stateFiring {
-		t.Fatal("expected firing")
-	}
-	if inst.restarts != 0 {
-		t.Errorf("restarts = %d, want 0 (restart failed)", inst.restarts)
-	}
-
-	// Clear error, resolve and re-fire — restart should succeed now.
-	fd.err = nil
-	now = now.Add(10 * time.Second)
-	a.Evaluate(ctx, &MetricSnapshot{
-		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "running"}},
-	})
-	now = now.Add(10 * time.Second)
-	a.Evaluate(ctx, &MetricSnapshot{
-		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
-	})
-	inst = a.instances["exited:aaa"]
-	if inst.restarts != 1 {
-		t.Errorf("restarts = %d, want 1 (restart succeeded)", inst.restarts)
-	}
-}
-
 func TestDiskMountpointDisappears(t *testing.T) {
 	alerts := map[string]AlertConfig{
 		"disk_full": {
@@ -1435,41 +1277,6 @@ func TestDiskMountpointDisappears(t *testing.T) {
 	}
 	if resolvedAt == nil {
 		t.Error("resolved_at should be set for disappeared mountpoint")
-	}
-}
-
-func TestContainerEventFiresRestart(t *testing.T) {
-	alerts := map[string]AlertConfig{
-		"exited": {
-			Condition:   "container.state == 'exited'",
-			Severity:    "critical",
-			Actions:     []string{"restart"},
-			MaxRestarts: 2,
-		},
-	}
-	a, _, fd := testAlerterWithDocker(t, alerts)
-	ctx := context.Background()
-	a.now = func() time.Time { return time.Now() }
-
-	// Container dies — EvaluateContainerEvent should fire and restart.
-	a.EvaluateContainerEvent(ctx, ContainerMetrics{
-		ID:    "aaa",
-		Name:  "web",
-		State: "exited",
-	})
-
-	a.mu.Lock()
-	inst := a.instances["exited:aaa"]
-	a.mu.Unlock()
-
-	if inst == nil || inst.state != stateFiring {
-		t.Fatal("expected exited:aaa to be firing")
-	}
-	if len(fd.restarted) != 1 || fd.restarted[0] != "aaa" {
-		t.Errorf("expected 1 restart of aaa, got %v", fd.restarted)
-	}
-	if inst.restarts != 1 {
-		t.Errorf("restarts = %d, want 1", inst.restarts)
 	}
 }
 

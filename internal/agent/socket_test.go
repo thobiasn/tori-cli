@@ -500,35 +500,6 @@ func TestSocketSilenceValidation(t *testing.T) {
 	}
 }
 
-func TestSocketRestartUnknownContainer(t *testing.T) {
-	s := testStore(t)
-	_, _, path := testSocketServer(t, s)
-	conn := dial(t, path)
-
-	req := protocol.RestartContainerReq{ContainerID: "unknown_container"}
-	env, err := protocol.NewEnvelope(protocol.TypeActionRestart, 1, &req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := protocol.WriteMsg(conn, env); err != nil {
-		t.Fatal(err)
-	}
-
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	resp, err := protocol.ReadMsg(conn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.Type != protocol.TypeError {
-		t.Fatalf("expected error for unknown container, got %q", resp.Type)
-	}
-	var errResult protocol.ErrorResult
-	protocol.DecodeBody(resp.Body, &errResult)
-	if !strings.Contains(errResult.Error, "not found") {
-		t.Errorf("error = %q, want containing 'not found'", errResult.Error)
-	}
-}
-
 func TestSocketStreamMetrics(t *testing.T) {
 	s := testStore(t)
 	_, hub, path := testSocketServer(t, s)

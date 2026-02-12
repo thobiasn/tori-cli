@@ -90,12 +90,6 @@ func (d *DockerCollector) Containers() []Container {
 	return out
 }
 
-// RestartContainer restarts a container by ID with a 10-second timeout.
-func (d *DockerCollector) RestartContainer(ctx context.Context, containerID string) error {
-	timeout := 10
-	return d.client.ContainerRestart(ctx, containerID, container.StopOptions{Timeout: &timeout})
-}
-
 // SetTracking updates the runtime tracking state for a container name or project.
 // Exactly one of name or project should be non-empty.
 func (d *DockerCollector) SetTracking(name, project string, tracked bool) {

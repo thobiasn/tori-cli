@@ -44,7 +44,7 @@ agent.go       — Agent struct, Run() loop, collect() orchestration, shutdown, 
 config.go      — Config types (storage, host, docker, collect, alerts, notify), TOML loading, validation
 store.go       — SQLite schema, Store struct, all Insert/Query/Prune methods, metric+alert types
 host.go        — HostCollector: reads /proc (cpu, memory, loadavg, uptime, disk, network)
-docker.go      — DockerCollector: container list, stats, CPU/mem/net/block calc, RestartContainer, UpdateContainerState, runtime tracking toggle
+docker.go      — DockerCollector: container list, stats, CPU/mem/net/block calc, UpdateContainerState, runtime tracking toggle
 logs.go        — LogTailer: per-container goroutines, Docker log demux via stdcopy, batched insert
 alert.go       — Condition parser, Alerter state machine (inactive→pending→firing→resolved), Evaluate(), EvaluateContainerEvent()
 notify.go      — Notifier: Channel interface (email + multiple webhooks with custom headers/templates)
@@ -55,7 +55,7 @@ socket.go      — SocketServer: Unix socket listener, per-client connection han
 
 **Critical import rule:** `internal/protocol` is the contract between agent and client. Both `agent` and `tui` import `protocol` but never import each other. This enables splitting into separate binaries later.
 
-The agent is the source of truth. It collects, stores, evaluates, and alerts independently. The TUI is a view — it should never mutate agent state except through explicit protocol actions (ack alert, restart container, etc).
+The agent is the source of truth. It collects, stores, evaluates, and alerts independently. The TUI is a view — it should never mutate agent state except through explicit protocol actions (ack alert, silence alert, set tracking, etc).
 
 ## Key Design Decisions
 
@@ -65,7 +65,7 @@ The agent is the source of truth. It collects, stores, evaluates, and alerts ind
 - **Config:** TOML format. Agent config at `/etc/rook/config.toml`, client config at `~/.config/rook/config.toml`. Paths in config are absolute. Defaults are sane for bare metal (`/proc`, `/sys`). Docker deployment overrides them (`/host/proc`, `/host/sys`). No detection logic.
 - **TUI:** Bubbletea + Lipgloss + Bubbles (Charm ecosystem). See `.claude/tui-design.md` for the complete visual design language (layout, colors, graphs, responsive rules). All colors must be defined in a single `Theme` struct in `internal/tui/theme.go` — views reference theme fields, never raw color values.
 - **Host metrics:** Read directly from `/proc` and `/sys` (no cgo, no external deps).
-- **Docker:** Monitor via Docker socket (`/var/run/docker.sock`). Containers are grouped by compose project via `com.docker.compose.project` label. Tracking (metrics, logs, alerts) can be toggled per-container or per-group at runtime. Needs write access only for self-healing (container restart).
+- **Docker:** Monitor via Docker socket (`/var/run/docker.sock`), read-only. Containers are grouped by compose project via `com.docker.compose.project` label. Tracking (metrics, logs, alerts) can be toggled per-container or per-group at runtime.
 
 ## Development Philosophy
 
@@ -104,7 +104,7 @@ Code is a liability, not an asset. Every line we write is a line we have to main
 
 - **`testStore(t)`** helper in `store_test.go` — creates a temp SQLite DB, registers cleanup. Reuse for any test needing a store.
 - **Injectable time** — Alerter has a `now func() time.Time` field. Set it in tests for deterministic time-based assertions. Never use `time.Sleep` in tests.
-- **Injectable functions** — Alerter has `restartFn` for testing restart without a real Docker client. Use this pattern for any external I/O that needs test isolation.
+- **Injectable functions** — Use injectable `func()` fields for any external I/O that needs test isolation (e.g., `now func() time.Time` on Alerter).
 - **Real SQLite, no mocks** — all store tests use real SQLite via temp dirs. Query the DB directly to verify state (e.g., `SELECT COUNT(*) FROM alerts`).
 - **Always check `err` from Scan** — `s.db.QueryRow(...).Scan(&val)` errors must be checked in tests, not ignored.
 
@@ -122,7 +122,6 @@ Code is a liability, not an asset. Every line we write is a line we have to main
 - Client created with `client.NewClientWithOpts(client.WithHost("unix://"+socket), client.WithAPIVersionNegotiation())`.
 - `ContainerStatsOneShot` for one-shot stats (not streaming). Response is JSON decoded into `container.StatsResponse`.
 - CPU percent uses delta calculation between readings, same formula as `docker stats`.
-- `ContainerRestart` takes `container.StopOptions{Timeout: &timeout}` — timeout is `*int`, not `int`.
 - Container names from the API are prefixed with `/` — strip it.
 - Non-running containers still get a `ContainerMetrics` entry (with zero stats) so alerting can see state changes.
 
@@ -135,10 +134,9 @@ Code is a liability, not an asset. Every line we write is a line we have to main
 - State machine: inactive → pending (if `for > 0`) → firing → resolved → inactive. `for = 0` skips pending.
 - Inactive unseen instances are GC'd from the map to prevent unbounded growth with ephemeral containers.
 - When collection fails (nil snapshot field), existing instances are marked as `seen` to avoid false resolution.
-- `restartFn` field allows test injection. Production path uses `docker.RestartContainer`.
-- `Alerter.mu` protects `instances` and `deferred` — held during `Evaluate()` and `EvaluateContainerEvent()`. Slow side effects (notify, restart) are collected into `deferred` under the lock, then executed after release.
+- `Alerter.mu` protects `instances` and `deferred` — held during `Evaluate()` and `EvaluateContainerEvent()`. Slow side effects (notify) are collected into `deferred` under the lock, then executed after release.
 - `EvaluateContainerEvent()` evaluates only container-scoped rules for a single container. It does NOT do stale cleanup — that stays in the regular `Evaluate()` cycle.
-- `Silence(ruleName, duration)` suppresses notifications only (not restart actions). Per-rule, checked in `fire()`. Socket server enforces max 30-day duration.
+- `Silence(ruleName, duration)` suppresses notifications. Per-rule, checked in `fire()`. Socket server enforces max 30-day duration.
 - `HasRule(name)` validates rule exists (used by socket silence command). `ResolveAll()` resolves all firing alerts (used during config reload).
 
 ### Config

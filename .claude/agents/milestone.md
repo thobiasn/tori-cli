@@ -23,7 +23,7 @@ Assess current project state and determine what to build next.
    **M2 — Alerting:**
    - [ ] Alert rule evaluation from config
    - [ ] Email/SMTP notifications
-   - [ ] Self-healing actions (container restart)
+   - [ ] ~~Self-healing actions~~ (removed — Docker socket is read-only)
    - [ ] Alert persistence in SQLite
 
    **M3 — Protocol + socket:**

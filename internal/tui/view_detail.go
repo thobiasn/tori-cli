@@ -31,8 +31,7 @@ type DetailState struct {
 	searchText        string
 	searchMode        bool
 
-	confirmRestart bool
-	backfilled     bool
+	backfilled bool
 }
 
 type detailLogQueryMsg struct {
@@ -50,7 +49,6 @@ func (s *DetailState) reset() {
 	s.filterStream = ""
 	s.searchText = ""
 	s.searchMode = false
-	s.confirmRestart = false
 	s.backfilled = false
 }
 
@@ -312,11 +310,6 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 	var logBox string
 	if det.logs != nil && logH > 3 {
 		logBox = renderDetailLogs(det, containerName, width, logH, theme)
-	}
-
-	// Restart confirmation overlay.
-	if det.confirmRestart {
-		return metricsBox + "\n" + renderRestartConfirm(cm, width, logH, theme)
 	}
 
 	return metricsBox + "\n" + logBox
@@ -689,48 +682,16 @@ func renderDetailLogFooter(s *DetailState, width int, theme *Theme) string {
 	}
 	parts = append(parts, searchPart)
 
-	if s.containerID != "" {
-		parts = append(parts, "r restart")
-	}
 	parts = append(parts, "Esc clear")
 
 	footer := " " + strings.Join(parts, " | ")
 	return Truncate(footer, width)
 }
 
-func renderRestartConfirm(cm *protocol.ContainerMetrics, width, height int, theme *Theme) string {
-	name := ""
-	if cm != nil {
-		name = cm.Name
-	}
-	content := fmt.Sprintf("\n  Restart container %s?\n\n  Press y to confirm, n to cancel", name)
-	return Box("Confirm Restart", content, width, height, theme)
-}
-
-type restartDoneMsg struct{}
-
 // updateDetail handles keys in the detail view.
 func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	det := &s.Detail
 	key := msg.String()
-
-	if det.confirmRestart {
-		switch key {
-		case "y":
-			det.confirmRestart = false
-			id := det.containerID
-			client := s.Client
-			return func() tea.Msg {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				client.RestartContainer(ctx, id)
-				return restartDoneMsg{}
-			}
-		case "n", "esc":
-			det.confirmRestart = false
-		}
-		return nil
-	}
 
 	// Search mode captures all keys.
 	if det.searchMode {
@@ -776,10 +737,6 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	}
 
 	switch key {
-	case "r":
-		if det.containerID != "" {
-			det.confirmRestart = true
-		}
 	case "c":
 		det.cycleContainerFilter(s.ContInfo)
 		det.logScroll = 0

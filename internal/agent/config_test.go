@@ -202,7 +202,7 @@ actions = ["notify"]
 	}
 }
 
-func TestLoadConfigAlertRestartRequiresMaxRestarts(t *testing.T) {
+func TestLoadConfigAlertInvalidAction(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	os.WriteFile(path, []byte(`
@@ -214,7 +214,7 @@ actions = ["restart"]
 
 	_, err := LoadConfig(path)
 	if err == nil {
-		t.Fatal("expected error for restart without max_restarts")
+		t.Fatal("expected error for invalid action")
 	}
 }
 

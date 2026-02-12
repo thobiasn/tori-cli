@@ -42,52 +42,6 @@ func TestDetailStreamEntryFiltersByContainer(t *testing.T) {
 	}
 }
 
-func TestDetailRestartConfirmationFlow(t *testing.T) {
-	a := newTestApp()
-	s := a.session()
-	s.Detail.containerID = "c1"
-	s.Detail.reset()
-
-	// Press 'r' to initiate restart.
-	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
-	if !s.Detail.confirmRestart {
-		t.Fatal("'r' should trigger confirm restart")
-	}
-
-	// Press 'n' to cancel.
-	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
-	if s.Detail.confirmRestart {
-		t.Error("'n' should cancel confirm restart")
-	}
-
-	// Press 'r' again, then 'y' to confirm.
-	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
-	if !s.Detail.confirmRestart {
-		t.Fatal("'r' should trigger confirm restart")
-	}
-	cmd := updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
-	if s.Detail.confirmRestart {
-		t.Error("'y' should clear confirm restart")
-	}
-	if cmd == nil {
-		t.Error("'y' should return a restart command")
-	}
-}
-
-func TestDetailRestartNotInGroupMode(t *testing.T) {
-	a := newTestApp()
-	s := a.session()
-	s.Detail.project = "myapp"
-	s.Detail.projectIDs = []string{"c1", "c2"}
-	s.Detail.reset()
-
-	// Press 'r' in group mode should not trigger restart.
-	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
-	if s.Detail.confirmRestart {
-		t.Error("'r' in group mode should not trigger confirm restart")
-	}
-}
-
 func TestDetailCursorBounded(t *testing.T) {
 	a := newTestApp()
 	s := a.session()
@@ -134,9 +88,6 @@ func TestDetailReset(t *testing.T) {
 	}
 	if s.backfilled {
 		t.Error("should not be backfilled after reset")
-	}
-	if s.confirmRestart {
-		t.Error("confirmRestart should be false")
 	}
 	if s.logCursor != -1 {
 		t.Errorf("logCursor = %d, want -1", s.logCursor)

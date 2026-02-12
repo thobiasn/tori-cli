@@ -281,9 +281,6 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
-	case restartDoneMsg:
-		return a, nil
-
 	case trackingDoneMsg:
 		if s := a.sessions[msg.server]; s != nil {
 			return a, queryContainersCmd(s.Client)
@@ -659,7 +656,7 @@ func (a *App) viewHints() string {
 	case viewAlerts:
 		return "j/k Move  a Ack  s Silence"
 	case viewDetail:
-		return "j/k Scroll  c Container  g Group  s Stream  / Search  r Restart"
+		return "j/k Scroll  c Container  g Group  s Stream  / Search"
 	}
 	return ""
 }
