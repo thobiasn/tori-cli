@@ -23,6 +23,12 @@ const defaultMaxQueryRange = 24 * 60 * 60
 // maxSilenceDuration is the maximum silence duration (30 days in seconds).
 const maxSilenceDuration = 30 * 24 * 60 * 60
 
+// maxDownsamplePoints caps the Points parameter in downsampled queries.
+const maxDownsamplePoints = 4096
+
+// maxLogLimit caps the Limit parameter in log queries.
+const maxLogLimit = 10000
+
 // SocketServer serves protocol messages over a Unix domain socket.
 type SocketServer struct {
 	hub           *Hub
@@ -56,6 +62,15 @@ func (ss *SocketServer) SetAlerter(a *Alerter) {
 	ss.alerterMu.Lock()
 	defer ss.alerterMu.Unlock()
 	ss.alerter = a
+}
+
+// maxQueryRange returns the maximum allowed query range in seconds.
+func (ss *SocketServer) maxQueryRange() int64 {
+	r := int64(ss.retentionDays) * 86400
+	if r <= 0 {
+		return defaultMaxQueryRange
+	}
+	return r
 }
 
 // Start begins listening on the given Unix socket path.
@@ -210,6 +225,25 @@ func (c *connState) sendResponse(id uint32, body any) {
 		return
 	}
 	c.writeMsg(env)
+}
+
+// checkTimeRange validates start <= end and range <= maxQueryRange.
+// Returns true if valid; sends an error response and returns false otherwise.
+func (c *connState) checkTimeRange(id uint32, start, end int64) bool {
+	if start > end {
+		c.sendError(id, "start must be <= end")
+		return false
+	}
+	maxRange := c.ss.maxQueryRange()
+	if end-start > maxRange {
+		days := maxRange / 86400
+		if days <= 0 {
+			days = 1
+		}
+		c.sendError(id, fmt.Sprintf("time range too large (max %dd)", days))
+		return false
+	}
+	return true
 }
 
 func (c *connState) dispatch(env *protocol.Envelope) {
@@ -383,17 +417,13 @@ func (c *connState) queryMetrics(env *protocol.Envelope) {
 		c.sendError(env.ID, "invalid query body")
 		return
 	}
-	if req.Start > req.End {
-		c.sendError(env.ID, "start must be <= end")
+	if !c.checkTimeRange(env.ID, req.Start, req.End) {
 		return
 	}
-	maxRange := int64(c.ss.retentionDays) * 86400
-	if maxRange <= 0 {
-		maxRange = defaultMaxQueryRange
-	}
-	if req.End-req.Start > maxRange {
-		c.sendError(env.ID, fmt.Sprintf("time range too large (max %dd)", c.ss.retentionDays))
-		return
+
+	// Cap downsampling points to prevent OOM from oversized allocations.
+	if req.Points > maxDownsamplePoints {
+		req.Points = maxDownsamplePoints
 	}
 
 	host, err := c.ss.store.QueryHostMetrics(c.ctx, req.Start, req.End)
@@ -404,7 +434,10 @@ func (c *connState) queryMetrics(env *protocol.Envelope) {
 	}
 	var cmFilter []ContainerMetricsFilter
 	if req.Service != "" || req.Project != "" {
-		cmFilter = append(cmFilter, ContainerMetricsFilter{Project: req.Project, Service: req.Service})
+		cmFilter = append(cmFilter, ContainerMetricsFilter{
+			Project: truncate(req.Project, maxLabelLen),
+			Service: truncate(req.Service, maxLabelLen),
+		})
 	}
 	containers, err := c.ss.store.QueryContainerMetrics(c.ctx, req.Start, req.End, cmFilter...)
 	if err != nil {
@@ -452,16 +485,20 @@ func (c *connState) queryLogs(env *protocol.Envelope) {
 		c.sendError(env.ID, "invalid query body")
 		return
 	}
-	if req.Start > req.End {
-		c.sendError(env.ID, "start must be <= end")
+	if !c.checkTimeRange(env.ID, req.Start, req.End) {
 		return
+	}
+
+	// Cap log limit to prevent oversized result sets.
+	if req.Limit > maxLogLimit {
+		req.Limit = maxLogLimit
 	}
 
 	filter := LogFilter{
 		Start:   req.Start,
 		End:     req.End,
-		Project: req.Project,
-		Service: req.Service,
+		Project: truncate(req.Project, maxLabelLen),
+		Service: truncate(req.Service, maxLabelLen),
 		Stream:  req.Stream,
 		Search:  req.Search,
 		Limit:   req.Limit,
@@ -491,8 +528,7 @@ func (c *connState) queryAlerts(env *protocol.Envelope) {
 		c.sendError(env.ID, "invalid query body")
 		return
 	}
-	if req.Start > req.End {
-		c.sendError(env.ID, "start must be <= end")
+	if !c.checkTimeRange(env.ID, req.Start, req.End) {
 		return
 	}
 
@@ -606,226 +642,6 @@ func (c *connState) queryTracking(env *protocol.Envelope) {
 		resp.TrackedProjects = []string{}
 	}
 	c.sendResponse(env.ID, &resp)
-}
-
-// --- Downsampling ---
-
-// downsampleHost reduces a host metric slice to exactly n points using
-// time-aware max-per-bucket aggregation. The [start, end] time range is
-// divided into n equal buckets; data points are assigned by timestamp.
-// Empty buckets produce zero-value entries so partial data doesn't stretch
-// across the full graph width.
-func downsampleHost(data []protocol.TimedHostMetrics, n int, start, end int64) []protocol.TimedHostMetrics {
-	if n <= 0 || len(data) == 0 {
-		return data
-	}
-	bucketDur := float64(end-start) / float64(n)
-	if bucketDur <= 0 {
-		return data
-	}
-	out := make([]protocol.TimedHostMetrics, n)
-	filled := make([]bool, n)
-	for i := range out {
-		out[i].Timestamp = start + int64(float64(i+1)*bucketDur)
-	}
-	for _, d := range data {
-		idx := int(float64(d.Timestamp-start) / bucketDur)
-		if idx < 0 {
-			idx = 0
-		}
-		if idx >= n {
-			idx = n - 1
-		}
-		if !filled[idx] {
-			filled[idx] = true
-			out[idx].HostMetrics = d.HostMetrics
-			out[idx].Timestamp = start + int64(float64(idx+1)*bucketDur)
-		} else {
-			b := &out[idx]
-			if d.CPUPercent > b.CPUPercent {
-				b.CPUPercent = d.CPUPercent
-			}
-			if d.MemPercent > b.MemPercent {
-				b.MemPercent = d.MemPercent
-			}
-			if d.MemUsed > b.MemUsed {
-				b.MemUsed = d.MemUsed
-			}
-			if d.Load1 > b.Load1 {
-				b.Load1 = d.Load1
-			}
-			if d.Load5 > b.Load5 {
-				b.Load5 = d.Load5
-			}
-			if d.Load15 > b.Load15 {
-				b.Load15 = d.Load15
-			}
-		}
-	}
-	return out
-}
-
-// downsampleContainers reduces container metrics to at most n points per
-// container using time-aware max-per-bucket aggregation. Containers with
-// <= n data points are returned as-is to keep the response small (the TUI
-// handles time-aware zero-fill locally for short series).
-func downsampleContainers(data []protocol.TimedContainerMetrics, n int, start, end int64) []protocol.TimedContainerMetrics {
-	if n <= 0 || len(data) == 0 {
-		return data
-	}
-	bucketDur := float64(end-start) / float64(n)
-	if bucketDur <= 0 {
-		return data
-	}
-	// Group by container ID.
-	byID := make(map[string][]protocol.TimedContainerMetrics)
-	var order []string
-	for _, m := range data {
-		if _, seen := byID[m.ID]; !seen {
-			order = append(order, m.ID)
-		}
-		byID[m.ID] = append(byID[m.ID], m)
-	}
-	var out []protocol.TimedContainerMetrics
-	for _, id := range order {
-		series := byID[id]
-		if len(series) <= n {
-			out = append(out, series...)
-			continue
-		}
-		buckets := make([]protocol.TimedContainerMetrics, n)
-		filled := make([]bool, n)
-		for i := range buckets {
-			buckets[i].Timestamp = start + int64(float64(i+1)*bucketDur)
-			buckets[i].ID = id
-		}
-		for _, d := range series {
-			idx := int(float64(d.Timestamp-start) / bucketDur)
-			if idx < 0 {
-				idx = 0
-			}
-			if idx >= n {
-				idx = n - 1
-			}
-			if !filled[idx] {
-				filled[idx] = true
-				buckets[idx].ContainerMetrics = d.ContainerMetrics
-				buckets[idx].Timestamp = start + int64(float64(idx+1)*bucketDur)
-			} else {
-				b := &buckets[idx]
-				if d.CPUPercent > b.CPUPercent {
-					b.CPUPercent = d.CPUPercent
-				}
-				if d.MemUsage > b.MemUsage {
-					b.MemUsage = d.MemUsage
-				}
-				if d.MemPercent > b.MemPercent {
-					b.MemPercent = d.MemPercent
-				}
-			}
-		}
-		out = append(out, buckets...)
-	}
-	return out
-}
-
-// --- Converters: agent types -> protocol types ---
-
-func convertTimedHost(src []TimedHostMetrics) []protocol.TimedHostMetrics {
-	out := make([]protocol.TimedHostMetrics, len(src))
-	for i, s := range src {
-		out[i] = protocol.TimedHostMetrics{
-			Timestamp: s.Timestamp.Unix(),
-			HostMetrics: protocol.HostMetrics{
-				CPUPercent: s.CPUPercent, MemTotal: s.MemTotal, MemUsed: s.MemUsed, MemPercent: s.MemPercent,
-				MemCached: s.MemCached, MemFree: s.MemFree,
-				SwapTotal: s.SwapTotal, SwapUsed: s.SwapUsed,
-				Load1: s.Load1, Load5: s.Load5, Load15: s.Load15, Uptime: s.Uptime,
-			},
-		}
-	}
-	return out
-}
-
-func convertTimedDisk(src []TimedDiskMetrics) []protocol.TimedDiskMetrics {
-	out := make([]protocol.TimedDiskMetrics, len(src))
-	for i, s := range src {
-		out[i] = protocol.TimedDiskMetrics{
-			Timestamp: s.Timestamp.Unix(),
-			DiskMetrics: protocol.DiskMetrics{
-				Mountpoint: s.Mountpoint, Device: s.Device,
-				Total: s.Total, Used: s.Used, Free: s.Free, Percent: s.Percent,
-			},
-		}
-	}
-	return out
-}
-
-func convertTimedNet(src []TimedNetMetrics) []protocol.TimedNetMetrics {
-	out := make([]protocol.TimedNetMetrics, len(src))
-	for i, s := range src {
-		out[i] = protocol.TimedNetMetrics{
-			Timestamp: s.Timestamp.Unix(),
-			NetMetrics: protocol.NetMetrics{
-				Iface: s.Iface, RxBytes: s.RxBytes, TxBytes: s.TxBytes,
-				RxPackets: s.RxPackets, TxPackets: s.TxPackets,
-				RxErrors: s.RxErrors, TxErrors: s.TxErrors,
-			},
-		}
-	}
-	return out
-}
-
-func convertTimedContainer(src []TimedContainerMetrics) []protocol.TimedContainerMetrics {
-	out := make([]protocol.TimedContainerMetrics, len(src))
-	for i, s := range src {
-		out[i] = protocol.TimedContainerMetrics{
-			Timestamp: s.Timestamp.Unix(),
-			ContainerMetrics: protocol.ContainerMetrics{
-				ID: s.ID, Name: s.Name, Image: s.Image, State: s.State,
-				Project: s.Project, Service: s.Service,
-				Health: s.Health, StartedAt: s.StartedAt, RestartCount: s.RestartCount, ExitCode: s.ExitCode,
-				CPUPercent: s.CPUPercent, MemUsage: s.MemUsage, MemLimit: s.MemLimit, MemPercent: s.MemPercent,
-				NetRx: s.NetRx, NetTx: s.NetTx, BlockRead: s.BlockRead, BlockWrite: s.BlockWrite, PIDs: s.PIDs,
-				DiskUsage: s.DiskUsage,
-			},
-		}
-	}
-	return out
-}
-
-func convertLogEntries(src []LogEntry) []protocol.LogEntryMsg {
-	out := make([]protocol.LogEntryMsg, len(src))
-	for i, s := range src {
-		out[i] = protocol.LogEntryMsg{
-			Timestamp:     s.Timestamp.Unix(),
-			ContainerID:   s.ContainerID,
-			ContainerName: s.ContainerName,
-			Stream:        s.Stream,
-			Message:       s.Message,
-		}
-	}
-	return out
-}
-
-func convertAlerts(src []Alert) []protocol.AlertMsg {
-	out := make([]protocol.AlertMsg, len(src))
-	for i, s := range src {
-		out[i] = protocol.AlertMsg{
-			ID:           s.ID,
-			RuleName:     s.RuleName,
-			Severity:     s.Severity,
-			Condition:    s.Condition,
-			InstanceKey:  s.InstanceKey,
-			FiredAt:      s.FiredAt.Unix(),
-			Message:      s.Message,
-			Acknowledged: s.Acknowledged,
-		}
-		if s.ResolvedAt != nil {
-			out[i].ResolvedAt = s.ResolvedAt.Unix()
-		}
-	}
-	return out
 }
 
 func isClosedErr(err error) bool {

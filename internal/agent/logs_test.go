@@ -117,7 +117,7 @@ func TestLogBatchFlushAtSize(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		scanLines(r, "chatty", "chatty", "", "", "stdout", lines)
+		scanLines(r, containerInfo{id: "chatty", name: "chatty"}, "stdout", lines)
 	}()
 
 	wg.Wait()
@@ -161,7 +161,7 @@ func TestScannerLineLengthLimit(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		scanLines(strings.NewReader(input), "test", "test", "", "", "stdout", lines)
+		scanLines(strings.NewReader(input), containerInfo{id: "test", name: "test"}, "stdout", lines)
 	}()
 
 	wg.Wait()

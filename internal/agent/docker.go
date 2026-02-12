@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -164,27 +163,17 @@ type Container struct {
 	ExitCode     int
 }
 
-// serviceIdentity returns a stable (project, service) pair for cross-container
-// history queries. Compose containers use their labels; non-compose named
-// containers use ("", name) so queries match by name across recreations.
-func serviceIdentity(project, service, name string) (identProject, identService string) {
-	if project != "" && service != "" {
-		return project, service
-	}
-	return "", name
-}
-
 // UpdateContainerState updates a single container's state in the cached list.
-// If state is empty (destroy), the container is removed. If the container
+// If c.State is empty (destroy), the container is removed. If the container
 // isn't in the list yet (event before first collect), it is appended.
-func (d *DockerCollector) UpdateContainerState(id, state, name, image, project, service string) {
+func (d *DockerCollector) UpdateContainerState(c Container) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if state == "" {
+	if c.State == "" {
 		// Destroy: remove from list.
-		for i, c := range d.lastContainers {
-			if c.ID == id {
+		for i, existing := range d.lastContainers {
+			if existing.ID == c.ID {
 				d.lastContainers = append(d.lastContainers[:i], d.lastContainers[i+1:]...)
 				return
 			}
@@ -192,22 +181,19 @@ func (d *DockerCollector) UpdateContainerState(id, state, name, image, project, 
 		return
 	}
 
-	for i, c := range d.lastContainers {
-		if c.ID == id {
-			d.lastContainers[i].State = state
+	for i, existing := range d.lastContainers {
+		if existing.ID == c.ID {
+			d.lastContainers[i].State = c.State
+			d.lastContainers[i].Name = c.Name
+			d.lastContainers[i].Image = c.Image
+			d.lastContainers[i].Project = c.Project
+			d.lastContainers[i].Service = c.Service
 			return
 		}
 	}
 
 	// Not found — event arrived before first collect.
-	d.lastContainers = append(d.lastContainers, Container{
-		ID:      id,
-		Name:    name,
-		Image:   image,
-		State:   state,
-		Project: project,
-		Service: service,
-	})
+	d.lastContainers = append(d.lastContainers, c)
 }
 
 // SetFilters updates the include/exclude filter lists at runtime.
@@ -444,115 +430,4 @@ func (d *DockerCollector) calcCPUPercent(id string, stats *container.StatsRespon
 	}
 
 	return CalcCPUPercentDelta(prev.containerCPU, cpuTotal, prev.systemCPU, systemCPU, stats.CPUStats.OnlineCPUs)
-}
-
-// CalcCPUPercentDelta computes CPU percent from counter deltas.
-// Returns 0 if counters have reset (e.g. container restart).
-func CalcCPUPercentDelta(prevContainer, curContainer, prevSystem, curSystem uint64, onlineCPUs uint32) float64 {
-	// Guard against counter resets (container restart, system reboot).
-	// Unsigned subtraction would wrap to a huge value.
-	if curContainer < prevContainer || curSystem < prevSystem {
-		return 0
-	}
-
-	containerDelta := float64(curContainer - prevContainer)
-	systemDelta := float64(curSystem - prevSystem)
-
-	if systemDelta <= 0 || containerDelta <= 0 {
-		return 0
-	}
-
-	cpus := float64(onlineCPUs)
-	if cpus == 0 {
-		cpus = 1
-	}
-
-	return (containerDelta / systemDelta) * cpus * 100
-}
-
-// calcMemUsage returns memory usage, limit, and percent.
-// Handles both cgroup v1 (stats.usage - inactive_file in stats) and v2 (usage_in_bytes from stats).
-func calcMemUsage(stats *container.StatsResponse) (usage, limit uint64, pct float64) {
-	limit = stats.MemoryStats.Limit
-	usage = stats.MemoryStats.Usage
-
-	// Subtract inactive file cache (cgroup v1 has it in Stats, v2 in Stats directly)
-	if v, ok := stats.MemoryStats.Stats["inactive_file"]; ok && v > 0 {
-		if usage > v {
-			usage -= v
-		}
-	} else if v, ok := stats.MemoryStats.Stats["total_inactive_file"]; ok && v > 0 {
-		if usage > v {
-			usage -= v
-		}
-	}
-
-	if limit > 0 {
-		pct = float64(usage) / float64(limit) * 100
-	}
-	return
-}
-
-// calcNetIO sums rx/tx bytes across all container network interfaces.
-func calcNetIO(stats *container.StatsResponse) (rx, tx uint64) {
-	for _, n := range stats.Networks {
-		rx += n.RxBytes
-		tx += n.TxBytes
-	}
-	return
-}
-
-// calcBlockIO sums read/write bytes from block I/O stats.
-func calcBlockIO(stats *container.StatsResponse) (read, write uint64) {
-	for _, entry := range stats.BlkioStats.IoServiceBytesRecursive {
-		switch entry.Op {
-		case "read", "Read":
-			read += entry.Value
-		case "write", "Write":
-			write += entry.Value
-		}
-	}
-	return
-}
-
-// containerName extracts a clean name from Docker's name list.
-func containerName(names []string) string {
-	if len(names) == 0 {
-		return ""
-	}
-	// Docker prefixes names with "/", strip it.
-	name := names[0]
-	if len(name) > 0 && name[0] == '/' {
-		name = name[1:]
-	}
-	return name
-}
-
-// matchFilter checks if a container name matches include/exclude patterns.
-func (d *DockerCollector) matchFilter(name string) bool {
-	d.mu.RLock()
-	include := d.include
-	exclude := d.exclude
-	d.mu.RUnlock()
-
-	if len(include) > 0 {
-		matched := false
-		for _, pattern := range include {
-			if ok, _ := filepath.Match(pattern, name); ok {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			return false
-		}
-	}
-
-	for _, pattern := range exclude {
-		if ok, _ := filepath.Match(pattern, name); ok {
-			return false
-		}
-	}
-
-	return true
 }

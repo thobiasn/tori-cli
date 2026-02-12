@@ -5,130 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
-
-// Known fields per scope, used for validation.
-var validFields = map[string]map[string]bool{
-	"host": {
-		"cpu_percent":    true,
-		"memory_percent": true,
-		"disk_percent":   true,
-		"load1":          true,
-		"load5":          true,
-		"load15":         true,
-		"swap_percent":   true,
-	},
-	"container": {
-		"cpu_percent":    true,
-		"memory_percent": true,
-		"state":          true,
-		"health":         true,
-		"restart_count":  true,
-		"exit_code":      true,
-	},
-}
-
-// String-only fields that only support == and != operators.
-var stringFields = map[string]bool{
-	"state":  true,
-	"health": true,
-}
-
-// Condition represents a parsed alert condition like "host.cpu_percent > 90".
-type Condition struct {
-	Scope  string  // "host" or "container"
-	Field  string  // "cpu_percent", "memory_percent", "disk_percent", "state"
-	Op     string  // ">", "<", ">=", "<=", "==", "!="
-	NumVal float64 // numeric threshold (when IsStr is false)
-	StrVal string  // string value (when IsStr is true)
-	IsStr  bool
-}
-
-func parseCondition(s string) (Condition, error) {
-	tokens := strings.Fields(s)
-	if len(tokens) != 3 {
-		return Condition{}, fmt.Errorf("condition must be 3 tokens (got %d): %q", len(tokens), s)
-	}
-
-	parts := strings.SplitN(tokens[0], ".", 2)
-	if len(parts) != 2 {
-		return Condition{}, fmt.Errorf("condition target must be scope.field: %q", tokens[0])
-	}
-
-	c := Condition{
-		Scope: parts[0],
-		Field: parts[1],
-		Op:    tokens[1],
-	}
-
-	switch c.Scope {
-	case "host", "container":
-	default:
-		return Condition{}, fmt.Errorf("unknown scope %q (must be host or container)", c.Scope)
-	}
-
-	fields, ok := validFields[c.Scope]
-	if !ok || !fields[c.Field] {
-		return Condition{}, fmt.Errorf("unknown field %q for scope %q", c.Field, c.Scope)
-	}
-
-	switch c.Op {
-	case ">", "<", ">=", "<=", "==", "!=":
-	default:
-		return Condition{}, fmt.Errorf("unknown operator %q", c.Op)
-	}
-
-	val := tokens[2]
-	if strings.HasPrefix(val, "'") && strings.HasSuffix(val, "'") && len(val) >= 2 {
-		c.IsStr = true
-		c.StrVal = val[1 : len(val)-1]
-	} else {
-		v, err := strconv.ParseFloat(val, 64)
-		if err != nil {
-			return Condition{}, fmt.Errorf("invalid numeric value %q: %w", val, err)
-		}
-		c.NumVal = v
-	}
-
-	// String fields only support == and !=.
-	if stringFields[c.Field] && c.Op != "==" && c.Op != "!=" {
-		return Condition{}, fmt.Errorf("field %q only supports == and != operators, got %q", c.Field, c.Op)
-	}
-
-	return c, nil
-}
-
-func compareNum(actual float64, op string, threshold float64) bool {
-	switch op {
-	case ">":
-		return actual > threshold
-	case "<":
-		return actual < threshold
-	case ">=":
-		return actual >= threshold
-	case "<=":
-		return actual <= threshold
-	case "==":
-		return actual == threshold
-	case "!=":
-		return actual != threshold
-	}
-	return false
-}
-
-func compareStr(actual, op, expected string) bool {
-	switch op {
-	case "==":
-		return actual == expected
-	case "!=":
-		return actual != expected
-	}
-	return false
-}
 
 // MetricSnapshot holds the data collected in one cycle, passed to the alerter.
 type MetricSnapshot struct {
@@ -158,6 +38,14 @@ type alertRule struct {
 	forDur    time.Duration
 	severity  string
 	actions   []string
+}
+
+// evalContext bundles the per-evaluation arguments shared by transition and fire.
+type evalContext struct {
+	rule        *alertRule
+	key         string
+	containerID string
+	label       string
 }
 
 // Alerter evaluates alert rules against metric snapshots.
@@ -264,14 +152,19 @@ func (a *Alerter) EvaluateContainerEvent(ctx context.Context, cm ContainerMetric
 		if r.condition.Scope != "container" {
 			continue
 		}
-		key := r.name + ":" + cm.ID
+		ec := &evalContext{
+			rule:        r,
+			key:         r.name + ":" + cm.ID,
+			containerID: cm.ID,
+			label:       cm.Name,
+		}
 		var matched bool
 		if r.condition.IsStr {
 			matched = compareStr(containerFieldStr(&cm, r.condition.Field), r.condition.Op, r.condition.StrVal)
 		} else {
 			matched = compareNum(containerFieldNum(&cm, r.condition.Field), r.condition.Op, r.condition.NumVal)
 		}
-		a.transition(ctx, r, key, matched, now, cm.ID, cm.Name)
+		a.transition(ctx, ec, matched, now)
 	}
 
 	a.runDeferred()
@@ -301,7 +194,7 @@ func (a *Alerter) evalHostRule(ctx context.Context, r *alertRule, snap *MetricSn
 	key := r.name
 	seen[key] = true
 	matched := compareNum(val, r.condition.Op, r.condition.NumVal)
-	a.transition(ctx, r, key, matched, now, "", "")
+	a.transition(ctx, &evalContext{rule: r, key: key}, matched, now)
 }
 
 func (a *Alerter) evalDiskRule(ctx context.Context, r *alertRule, snap *MetricSnapshot, now time.Time, seen map[string]bool) {
@@ -320,7 +213,7 @@ func (a *Alerter) evalDiskRule(ctx context.Context, r *alertRule, snap *MetricSn
 		key := r.name + ":" + d.Mountpoint
 		seen[key] = true
 		matched := compareNum(d.Percent, r.condition.Op, r.condition.NumVal)
-		a.transition(ctx, r, key, matched, now, "", d.Mountpoint)
+		a.transition(ctx, &evalContext{rule: r, key: key, label: d.Mountpoint}, matched, now)
 	}
 }
 
@@ -346,23 +239,23 @@ func (a *Alerter) evalContainerRule(ctx context.Context, r *alertRule, snap *Met
 		} else {
 			matched = compareNum(containerFieldNum(&c, r.condition.Field), r.condition.Op, r.condition.NumVal)
 		}
-		a.transition(ctx, r, key, matched, now, c.ID, c.Name)
+		a.transition(ctx, &evalContext{rule: r, key: key, containerID: c.ID, label: c.Name}, matched, now)
 	}
 }
 
-func (a *Alerter) transition(ctx context.Context, r *alertRule, key string, matched bool, now time.Time, containerID, label string) {
-	inst := a.instances[key]
+func (a *Alerter) transition(ctx context.Context, ec *evalContext, matched bool, now time.Time) {
+	inst := a.instances[ec.key]
 	if inst == nil {
 		inst = &alertInstance{}
-		a.instances[key] = inst
+		a.instances[ec.key] = inst
 	}
 
 	switch inst.state {
 	case stateInactive:
 		if matched {
-			if r.forDur == 0 {
+			if ec.rule.forDur == 0 {
 				inst.state = stateFiring
-				a.fire(ctx, r, key, inst, now, containerID, label)
+				a.fire(ctx, ec, inst, now)
 			} else {
 				inst.state = statePending
 				inst.pendingSince = now
@@ -371,32 +264,33 @@ func (a *Alerter) transition(ctx context.Context, r *alertRule, key string, matc
 	case statePending:
 		if !matched {
 			inst.state = stateInactive
-		} else if now.Sub(inst.pendingSince) >= r.forDur {
+		} else if now.Sub(inst.pendingSince) >= ec.rule.forDur {
 			inst.state = stateFiring
-			a.fire(ctx, r, key, inst, now, containerID, label)
+			a.fire(ctx, ec, inst, now)
 		}
 	case stateFiring:
 		if !matched {
-			a.resolve(ctx, r, key, inst, now)
+			a.resolve(ctx, ec.rule, ec.key, inst, now)
 		}
 	}
 }
 
-func (a *Alerter) fire(ctx context.Context, r *alertRule, key string, inst *alertInstance, now time.Time, containerID, label string) {
+func (a *Alerter) fire(ctx context.Context, ec *evalContext, inst *alertInstance, now time.Time) {
 	inst.firedAt = now
+	r := ec.rule
 
 	condStr := r.condition.Scope + "." + r.condition.Field + " " + r.condition.Op + " " + conditionValue(&r.condition)
 	msg := fmt.Sprintf("[%s] %s: %s", r.severity, r.name, r.condition.Scope+"."+r.condition.Field)
-	if label != "" {
-		msg += " (" + label + ")"
+	if ec.label != "" {
+		msg += " (" + ec.label + ")"
 	}
-	slog.Warn("alert firing", "rule", r.name, "key", key)
+	slog.Warn("alert firing", "rule", r.name, "key", ec.key)
 
 	alert := &Alert{
 		RuleName:    r.name,
 		Severity:    r.severity,
 		Condition:   condStr,
-		InstanceKey: key,
+		InstanceKey: ec.key,
 		FiredAt:     now,
 		Message:     msg,
 	}
@@ -506,56 +400,4 @@ func (a *Alerter) isSilenced(ruleName string) bool {
 		return false
 	}
 	return true
-}
-
-func conditionValue(c *Condition) string {
-	if c.IsStr {
-		return "'" + c.StrVal + "'"
-	}
-	return strconv.FormatFloat(c.NumVal, 'f', -1, 64)
-}
-
-func hostFieldValue(m *HostMetrics, field string) float64 {
-	switch field {
-	case "cpu_percent":
-		return m.CPUPercent
-	case "memory_percent":
-		return m.MemPercent
-	case "load1":
-		return m.Load1
-	case "load5":
-		return m.Load5
-	case "load15":
-		return m.Load15
-	case "swap_percent":
-		if m.SwapTotal == 0 {
-			return 0
-		}
-		return float64(m.SwapUsed) / float64(m.SwapTotal) * 100
-	}
-	return 0
-}
-
-func containerFieldNum(c *ContainerMetrics, field string) float64 {
-	switch field {
-	case "cpu_percent":
-		return c.CPUPercent
-	case "memory_percent":
-		return c.MemPercent
-	case "restart_count":
-		return float64(c.RestartCount)
-	case "exit_code":
-		return float64(c.ExitCode)
-	}
-	return 0
-}
-
-func containerFieldStr(c *ContainerMetrics, field string) string {
-	switch field {
-	case "state":
-		return c.State
-	case "health":
-		return c.Health
-	}
-	return ""
 }

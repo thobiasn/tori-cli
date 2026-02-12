@@ -82,6 +82,8 @@ func (h *HostCollector) readCPU(m *HostMetrics) error {
 	}
 
 	// fields: cpu user nice system idle iowait irq softirq [steal guest guest_nice]
+	// Parse errors are safe to ignore: /proc/stat is kernel-generated with
+	// guaranteed numeric fields.
 	var vals [10]uint64
 	for i := 1; i < len(fields) && i <= 10; i++ {
 		vals[i-1], _ = strconv.ParseUint(fields[i], 10, 64)
@@ -162,6 +164,7 @@ func (h *HostCollector) readLoadAvg(m *HostMetrics) error {
 		return fmt.Errorf("/proc/loadavg too short: %d fields", len(fields))
 	}
 
+	// Parse errors safe to ignore: /proc/loadavg is kernel-generated.
 	m.Load1, _ = strconv.ParseFloat(fields[0], 64)
 	m.Load5, _ = strconv.ParseFloat(fields[1], 64)
 	m.Load15, _ = strconv.ParseFloat(fields[2], 64)
@@ -180,6 +183,7 @@ func (h *HostCollector) readUptime(m *HostMetrics) error {
 		return fmt.Errorf("/proc/uptime empty")
 	}
 
+	// Parse error safe to ignore: /proc/uptime is kernel-generated.
 	m.Uptime, _ = strconv.ParseFloat(fields[0], 64)
 	return nil
 }
@@ -313,6 +317,7 @@ func (h *HostCollector) readNetwork() ([]NetMetrics, error) {
 
 		// Receive: bytes packets errs drop fifo frame compressed multicast
 		// Transmit: bytes packets errs drop fifo colls carrier compressed
+		// Parse errors safe to ignore: /proc/net/dev is kernel-generated.
 		rxBytes, _ := strconv.ParseUint(fields[0], 10, 64)
 		rxPackets, _ := strconv.ParseUint(fields[1], 10, 64)
 		rxErrors, _ := strconv.ParseUint(fields[2], 10, 64)

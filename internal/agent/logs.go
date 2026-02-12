@@ -131,13 +131,14 @@ func (lt *LogTailer) tail(ctx context.Context, containerID, containerName, proje
 	var readerWg sync.WaitGroup
 	readerWg.Add(2)
 
+	ci := containerInfo{id: containerID, name: containerName, project: project, service: service}
 	go func() {
 		defer readerWg.Done()
-		scanLines(stdoutR, containerID, containerName, project, service, "stdout", lines)
+		scanLines(stdoutR, ci, "stdout", lines)
 	}()
 	go func() {
 		defer readerWg.Done()
-		scanLines(stderrR, containerID, containerName, project, service, "stderr", lines)
+		scanLines(stderrR, ci, "stderr", lines)
 	}()
 
 	go func() {
@@ -170,7 +171,12 @@ func (lt *LogTailer) tail(ctx context.Context, containerID, containerName, proje
 	}
 }
 
-func scanLines(r io.Reader, containerID, containerName, project, service, stream string, out chan<- LogEntry) {
+// containerInfo bundles the identity fields passed through log tailing.
+type containerInfo struct {
+	id, name, project, service string
+}
+
+func scanLines(r io.Reader, ci containerInfo, stream string, out chan<- LogEntry) {
 	scanner := bufio.NewScanner(r)
 	// Allow log lines up to 64KB.
 	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
@@ -180,10 +186,10 @@ func scanLines(r io.Reader, containerID, containerName, project, service, stream
 		ts, msg := parseTimestamp(line)
 		out <- LogEntry{
 			Timestamp:     ts,
-			ContainerID:   containerID,
-			ContainerName: containerName,
-			Project:       project,
-			Service:       service,
+			ContainerID:   ci.id,
+			ContainerName: ci.name,
+			Project:       ci.project,
+			Service:       ci.service,
 			Stream:        stream,
 			Message:       msg,
 		}
