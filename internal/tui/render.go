@@ -561,10 +561,9 @@ func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []f
 				}
 			}
 
-			// Grid infrastructure (vlines and hlines) — dashed pattern.
-			vDash := isVCol && r%2 == 0 // vertical: every other row
-			hDash := isGridRow && i%2 == 0 // horizontal: every other column
-			if vDash && hDash {
+			// Grid infrastructure (vlines and hlines).
+			vDash := isVCol && r%3 == 0 // vertical: every 3rd row
+			if vDash && isGridRow {
 				cells[i] = cell{'┼', kindGrid}
 				continue
 			}
@@ -575,10 +574,8 @@ func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []f
 			if isGridRow && !isVCol {
 				if hasData[i] {
 					cells[i] = cell{dataChars[i], kindData}
-				} else if hDash {
-					cells[i] = cell{'─', kindGrid}
 				} else {
-					cells[i] = cell{' ', kindGrid}
+					cells[i] = cell{'─', kindGrid}
 				}
 				continue
 			}

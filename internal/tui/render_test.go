@@ -556,7 +556,7 @@ func TestGraphWithGridVLines(t *testing.T) {
 
 	t.Run("vline uses box drawing", func(t *testing.T) {
 		vlines := []VLine{{Frac: 0.5, Label: "-3h"}}
-		got := GraphWithGrid(data, 20, 6, 100, []float64{0, 100}, vlines, &theme)
+		got := GraphWithGrid(data, 20, 10, 100, []float64{0, 100}, vlines, &theme)
 		plain := stripANSI(got)
 		if !strings.Contains(plain, "│") {
 			t.Errorf("expected vline character │ in output, got:\n%s", plain)
