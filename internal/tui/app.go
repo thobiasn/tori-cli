@@ -311,10 +311,16 @@ func (a *App) handleSessionMetrics(s *Session, m *protocol.MetricsUpdate) tea.Cm
 		current[c.ID] = true
 		if live {
 			if _, ok := s.CPUHistory[c.ID]; !ok {
-				s.CPUHistory[c.ID] = NewRingBuffer[float64](ringBufSize)
-			}
-			if _, ok := s.MemHistory[c.ID]; !ok {
-				s.MemHistory[c.ID] = NewRingBuffer[float64](ringBufSize)
+				// Transfer buffer from a previous container with the same service identity.
+				if old := findServicePredecessor(c, s); old != "" {
+					s.CPUHistory[c.ID] = s.CPUHistory[old]
+					s.MemHistory[c.ID] = s.MemHistory[old]
+					delete(s.CPUHistory, old)
+					delete(s.MemHistory, old)
+				} else {
+					s.CPUHistory[c.ID] = NewRingBuffer[float64](ringBufSize)
+					s.MemHistory[c.ID] = NewRingBuffer[float64](ringBufSize)
+				}
 			}
 			s.CPUHistory[c.ID].Push(c.CPUPercent)
 			s.MemHistory[c.ID].Push(float64(c.MemUsage))
@@ -447,7 +453,6 @@ func (a *App) handleZoom(key string) tea.Cmd {
 	if a.windowIdx == prev {
 		return nil
 	}
-	s.resetHistories()
 	s.Detail.metricsBackfilled = false
 	s.Detail.deployTimestamps = nil
 	var cmds []tea.Cmd
@@ -522,6 +527,28 @@ func (a *App) onViewSwitch() tea.Cmd {
 		return s.Detail.onSwitch(s.Client, a.windowSeconds())
 	}
 	return nil
+}
+
+// findServicePredecessor looks for an existing buffer entry with the same
+// compose {project, service} identity as the new container. Returns the old
+// container ID if found, empty string otherwise. This enables graph continuity
+// across container restarts/redeploys.
+func findServicePredecessor(c protocol.ContainerMetrics, s *Session) string {
+	if c.Service == "" {
+		return ""
+	}
+	// Check ContInfo for old containers matching the same service identity.
+	for _, ci := range s.ContInfo {
+		if ci.ID == c.ID {
+			continue
+		}
+		if ci.Project == c.Project && ci.Service == c.Service {
+			if _, ok := s.CPUHistory[ci.ID]; ok {
+				return ci.ID
+			}
+		}
+	}
+	return ""
 }
 
 // Err returns the application-level error (e.g. connection lost), if any.

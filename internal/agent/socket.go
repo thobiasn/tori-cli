@@ -449,8 +449,12 @@ func (c *connState) queryMetrics(env *protocol.Envelope) {
 	hostOut := convertTimedHost(host)
 	containerOut := convertTimedContainer(containers)
 
+	// Merge cross-deploy container data by service identity before downsampling.
+	containerOut, deployMarkers := mergeContainersByService(containerOut)
+
 	resp := protocol.QueryMetricsResp{
 		RetentionDays: c.ss.retentionDays,
+		DeployMarkers: deployMarkers,
 	}
 
 	if req.Points > 0 {

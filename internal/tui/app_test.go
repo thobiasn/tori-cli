@@ -348,130 +348,39 @@ func TestHandleMetricsBackfill(t *testing.T) {
 	}
 }
 
-func TestHandleMetricsBackfillTimeAlign(t *testing.T) {
+func TestHandleMetricsBackfillHistorical(t *testing.T) {
 	s := newTestSession()
-	// Simulate a 10-second window with 5 buckets. Data only in the last 2 seconds.
+	// Pre-populate with some existing data.
+	s.HostCPUHistory.Push(99)
+	s.CPUHistory["old"] = NewRingBuffer[float64](ringBufSize)
+	s.CPUHistory["old"].Push(50)
+	s.MemHistory["old"] = NewRingBuffer[float64](ringBufSize)
+
+	// Historical backfill: agent sends pre-bucketed data (e.g. 3 points).
 	resp := &protocol.QueryMetricsResp{
+		Host: []protocol.TimedHostMetrics{
+			{Timestamp: 1, HostMetrics: protocol.HostMetrics{CPUPercent: 10, MemPercent: 20}},
+			{Timestamp: 2, HostMetrics: protocol.HostMetrics{CPUPercent: 30, MemPercent: 40}},
+		},
 		Containers: []protocol.TimedContainerMetrics{
-			{Timestamp: 8, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 10, MemUsage: 100}},
-			{Timestamp: 9, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 20, MemUsage: 200}},
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 5}},
+			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 15}},
 		},
 	}
 	handleMetricsBackfill(s, resp, 0, 10, true)
 
-	// With rangeHist=true and sparse data, the TUI should produce
-	// ringBufSize entries with zero-fill for empty buckets.
-	if s.CPUHistory["c1"].Len() != ringBufSize {
-		t.Fatalf("c1 CPUHistory.Len() = %d, want %d", s.CPUHistory["c1"].Len(), ringBufSize)
+	// Host buffers should be replaced atomically (not appended).
+	if s.HostCPUHistory.Len() != 2 {
+		t.Errorf("HostCPUHistory.Len() = %d, want 2 (replaced)", s.HostCPUHistory.Len())
 	}
-	cpu := s.CPUHistory["c1"].Data()
-	// Data at ts 8,9 in a 0-10 window with 600 buckets:
-	// bucket duration = 10/600 = 0.01667s per bucket
-	// ts=8 → bucket 480, ts=9 → bucket 540
-	// Most buckets should be zero.
-	var nonZero int
-	for _, v := range cpu {
-		if v > 0 {
-			nonZero++
-		}
+	cpu := s.HostCPUHistory.Data()
+	if cpu[0] != 10 || cpu[1] != 30 {
+		t.Errorf("HostCPUHistory = %v, want [10 30]", cpu)
 	}
-	if nonZero != 2 {
-		t.Errorf("nonzero buckets = %d, want 2", nonZero)
-	}
-}
 
-func TestMergeByServiceIdentity(t *testing.T) {
-	s := newTestSession()
-	// Old container (stopped) and new container (running) for same service.
-	resp := &protocol.QueryMetricsResp{
-		Containers: []protocol.TimedContainerMetrics{
-			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "old1", CPUPercent: 10, MemUsage: 100, Project: "myapp", Service: "web", State: "exited"}},
-			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "old1", CPUPercent: 20, MemUsage: 200, Project: "myapp", Service: "web", State: "exited"}},
-			{Timestamp: 3, ContainerMetrics: protocol.ContainerMetrics{ID: "new1", CPUPercent: 30, MemUsage: 300, Project: "myapp", Service: "web", State: "running"}},
-		},
-	}
-	handleMetricsBackfill(s, resp, 0, 0, false)
-
-	// Old container's buffer should not exist — merged into new1.
-	if _, ok := s.CPUHistory["old1"]; ok {
-		t.Error("old1 should be merged into new1, but CPUHistory[old1] exists")
-	}
-	// New container should have all 3 data points.
-	if s.CPUHistory["new1"].Len() != 3 {
-		t.Errorf("new1 CPUHistory.Len() = %d, want 3", s.CPUHistory["new1"].Len())
-	}
-	cpu := s.CPUHistory["new1"].Data()
-	if cpu[0] != 10 || cpu[1] != 20 || cpu[2] != 30 {
-		t.Errorf("new1 CPUHistory = %v, want [10 20 30]", cpu)
-	}
-}
-
-func TestMergeByServiceIdentityScaledSkipped(t *testing.T) {
-	s := newTestSession()
-	// Two containers with same service, both running (scaled service).
-	resp := &protocol.QueryMetricsResp{
-		Containers: []protocol.TimedContainerMetrics{
-			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "s1", CPUPercent: 10, Project: "myapp", Service: "worker", State: "running"}},
-			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "s2", CPUPercent: 20, Project: "myapp", Service: "worker", State: "running"}},
-		},
-	}
-	handleMetricsBackfill(s, resp, 0, 0, false)
-
-	// Both should remain separate — not merged.
-	if s.CPUHistory["s1"].Len() != 1 {
-		t.Errorf("s1 CPUHistory.Len() = %d, want 1", s.CPUHistory["s1"].Len())
-	}
-	if s.CPUHistory["s2"].Len() != 1 {
-		t.Errorf("s2 CPUHistory.Len() = %d, want 1", s.CPUHistory["s2"].Len())
-	}
-}
-
-func TestMergeByServiceIdentityNonComposeSkipped(t *testing.T) {
-	s := newTestSession()
-	// Two containers without service labels — should not be merged.
-	resp := &protocol.QueryMetricsResp{
-		Containers: []protocol.TimedContainerMetrics{
-			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "a1", CPUPercent: 10}},
-			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "a2", CPUPercent: 20}},
-		},
-	}
-	handleMetricsBackfill(s, resp, 0, 0, false)
-
-	if s.CPUHistory["a1"].Len() != 1 {
-		t.Errorf("a1 CPUHistory.Len() = %d, want 1", s.CPUHistory["a1"].Len())
-	}
-	if s.CPUHistory["a2"].Len() != 1 {
-		t.Errorf("a2 CPUHistory.Len() = %d, want 1", s.CPUHistory["a2"].Len())
-	}
-}
-
-func TestMergeByServiceIdentityTimeAlign(t *testing.T) {
-	s := newTestSession()
-	// Cross-deploy with historical window — merge should happen before time-alignment.
-	resp := &protocol.QueryMetricsResp{
-		Containers: []protocol.TimedContainerMetrics{
-			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "old1", CPUPercent: 10, MemUsage: 100, Project: "myapp", Service: "web", State: "exited"}},
-			{Timestamp: 8, ContainerMetrics: protocol.ContainerMetrics{ID: "new1", CPUPercent: 20, MemUsage: 200, Project: "myapp", Service: "web", State: "running"}},
-		},
-	}
-	handleMetricsBackfill(s, resp, 0, 10, true)
-
-	if _, ok := s.CPUHistory["old1"]; ok {
-		t.Error("old1 should be merged into new1")
-	}
-	// Time-aligned: should produce ringBufSize entries.
-	if s.CPUHistory["new1"].Len() != ringBufSize {
-		t.Fatalf("new1 CPUHistory.Len() = %d, want %d", s.CPUHistory["new1"].Len(), ringBufSize)
-	}
-	cpu := s.CPUHistory["new1"].Data()
-	var nonZero int
-	for _, v := range cpu {
-		if v > 0 {
-			nonZero++
-		}
-	}
-	if nonZero != 2 {
-		t.Errorf("nonzero buckets = %d, want 2", nonZero)
+	// Container buffers should be replaced.
+	if s.CPUHistory["c1"].Len() != 2 {
+		t.Errorf("c1 CPUHistory.Len() = %d, want 2", s.CPUHistory["c1"].Len())
 	}
 }
 
@@ -500,43 +409,117 @@ func TestGlobalBackfillSkipsDetailContainer(t *testing.T) {
 	}
 }
 
-func TestDetailBackfillTimeAlign(t *testing.T) {
+func TestHandleDetailMetricsBackfill(t *testing.T) {
 	s := newTestSession()
 	det := &s.Detail
 	det.containerID = "new-c"
 	det.reset()
 
-	// Cross-deploy data in a 10-second historical window.
+	// Agent sends pre-merged data: all points under new-c with deploy markers.
 	resp := &protocol.QueryMetricsResp{
 		Containers: []protocol.TimedContainerMetrics{
-			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "old-c", CPUPercent: 10, MemUsage: 100}},
-			{Timestamp: 8, ContainerMetrics: protocol.ContainerMetrics{ID: "new-c", CPUPercent: 20, MemUsage: 200}},
+			{Timestamp: 100, ContainerMetrics: protocol.ContainerMetrics{ID: "new-c", CPUPercent: 10, MemUsage: 1000}},
+			{Timestamp: 200, ContainerMetrics: protocol.ContainerMetrics{ID: "new-c", CPUPercent: 20, MemUsage: 2000}},
+			{Timestamp: 300, ContainerMetrics: protocol.ContainerMetrics{ID: "new-c", CPUPercent: 30, MemUsage: 3000}},
+			{Timestamp: 400, ContainerMetrics: protocol.ContainerMetrics{ID: "new-c", CPUPercent: 40, MemUsage: 4000}},
+		},
+		DeployMarkers: map[string][]int64{
+			"new-c": {300},
 		},
 	}
-	handleDetailMetricsBackfill(s, det, resp, 0, 10, 10)
+	handleDetailMetricsBackfill(s, det, resp, 0, 0, 0)
 
-	// Should produce time-aligned ringBufSize entries.
+	// metricsBackfilled should be set.
+	if !det.metricsBackfilled {
+		t.Error("metricsBackfilled should be true")
+	}
+
+	// Deploy marker from agent response.
+	if len(det.deployTimestamps) != 1 {
+		t.Fatalf("deployTimestamps = %d, want 1", len(det.deployTimestamps))
+	}
+	if det.deployTimestamps[0] != 300 {
+		t.Errorf("deploy timestamp = %d, want 300", det.deployTimestamps[0])
+	}
+
+	// All 4 data points should be in the buffer.
 	cpuBuf, ok := s.CPUHistory["new-c"]
 	if !ok {
 		t.Fatal("CPUHistory['new-c'] should exist")
 	}
-	if cpuBuf.Len() != ringBufSize {
-		t.Fatalf("CPUHistory.Len() = %d, want %d", cpuBuf.Len(), ringBufSize)
+	cpuData := cpuBuf.Data()
+	if len(cpuData) != 4 {
+		t.Errorf("CPUHistory['new-c'].Len() = %d, want 4", len(cpuData))
 	}
-	cpu := cpuBuf.Data()
-	var nonZero int
-	for _, v := range cpu {
-		if v > 0 {
-			nonZero++
-		}
-	}
-	if nonZero != 2 {
-		t.Errorf("nonzero buckets = %d, want 2", nonZero)
+	if cpuData[0] != 10 || cpuData[1] != 20 || cpuData[2] != 30 || cpuData[3] != 40 {
+		t.Errorf("CPU data = %v, want [10 20 30 40]", cpuData)
 	}
 
-	// Deploy marker should be detected.
-	if len(det.deployTimestamps) != 1 {
-		t.Fatalf("deployTimestamps = %d, want 1", len(det.deployTimestamps))
+	memBuf, ok := s.MemHistory["new-c"]
+	if !ok {
+		t.Fatal("MemHistory['new-c'] should exist")
+	}
+	memData := memBuf.Data()
+	if len(memData) != 4 {
+		t.Errorf("MemHistory['new-c'].Len() = %d, want 4", len(memData))
+	}
+
+	// deployEndTS should be the last data point's timestamp.
+	if det.deployEndTS != 400 {
+		t.Errorf("deployEndTS = %d, want 400", det.deployEndTS)
+	}
+}
+
+func TestHandleDetailMetricsBackfillHistorical(t *testing.T) {
+	s := newTestSession()
+	det := &s.Detail
+	det.containerID = "c1"
+	det.reset()
+
+	// Agent sends pre-bucketed historical data (e.g. 3 points with zero-fill).
+	resp := &protocol.QueryMetricsResp{
+		Containers: []protocol.TimedContainerMetrics{
+			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 0, MemUsage: 0}},
+			{Timestamp: 5, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 10, MemUsage: 100}},
+			{Timestamp: 8, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 20, MemUsage: 200}},
+		},
+	}
+	handleDetailMetricsBackfill(s, det, resp, 0, 10, 10)
+
+	cpuBuf := s.CPUHistory["c1"]
+	if cpuBuf == nil {
+		t.Fatal("CPUHistory['c1'] should exist")
+	}
+	if cpuBuf.Len() != 3 {
+		t.Errorf("CPUHistory.Len() = %d, want 3", cpuBuf.Len())
+	}
+}
+
+func TestHandleDetailMetricsBackfillGroupMode(t *testing.T) {
+	s := newTestSession()
+	det := &s.Detail
+	det.project = "myapp"
+	det.containerID = "" // group mode
+	det.reset()
+
+	// Agent sends data for two containers in the group.
+	resp := &protocol.QueryMetricsResp{
+		Containers: []protocol.TimedContainerMetrics{
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 10, MemUsage: 100}},
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "c2", CPUPercent: 20, MemUsage: 200}},
+			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 15, MemUsage: 150}},
+		},
+	}
+	handleDetailMetricsBackfill(s, det, resp, 0, 0, 0)
+
+	if !det.metricsBackfilled {
+		t.Error("metricsBackfilled should be true")
+	}
+	if s.CPUHistory["c1"].Len() != 2 {
+		t.Errorf("c1 CPUHistory.Len() = %d, want 2", s.CPUHistory["c1"].Len())
+	}
+	if s.CPUHistory["c2"].Len() != 1 {
+		t.Errorf("c2 CPUHistory.Len() = %d, want 1", s.CPUHistory["c2"].Len())
 	}
 }
 
@@ -588,70 +571,6 @@ func TestAppMultiServerMessageRouting(t *testing.T) {
 	}
 	if a.sessions["staging"].Host != nil {
 		t.Error("staging should not have received prod's metrics")
-	}
-}
-
-func TestHandleDetailMetricsBackfill(t *testing.T) {
-	s := newTestSession()
-	det := &s.Detail
-	det.containerID = "new-c"
-	det.reset()
-
-	// Build response with data from two different container IDs (old and new)
-	// representing a deploy where old-c was replaced by new-c.
-	resp := &protocol.QueryMetricsResp{
-		Containers: []protocol.TimedContainerMetrics{
-			{Timestamp: 100, ContainerMetrics: protocol.ContainerMetrics{ID: "old-c", CPUPercent: 10, MemUsage: 1000}},
-			{Timestamp: 200, ContainerMetrics: protocol.ContainerMetrics{ID: "old-c", CPUPercent: 20, MemUsage: 2000}},
-			{Timestamp: 300, ContainerMetrics: protocol.ContainerMetrics{ID: "new-c", CPUPercent: 30, MemUsage: 3000}},
-			{Timestamp: 400, ContainerMetrics: protocol.ContainerMetrics{ID: "new-c", CPUPercent: 40, MemUsage: 4000}},
-		},
-	}
-	handleDetailMetricsBackfill(s, det, resp, 0, 0, 0)
-
-	// metricsBackfilled should be set.
-	if !det.metricsBackfilled {
-		t.Error("metricsBackfilled should be true")
-	}
-
-	// Should have exactly one deploy timestamp (old-c -> new-c transition).
-	if len(det.deployTimestamps) != 1 {
-		t.Fatalf("deployTimestamps = %d, want 1", len(det.deployTimestamps))
-	}
-
-	// The timestamp should be the first point of the new container.
-	if det.deployTimestamps[0] != 300 {
-		t.Errorf("deploy timestamp = %d, want 300", det.deployTimestamps[0])
-	}
-
-	// CPU/Mem history for "new-c" should contain data from BOTH containers
-	// (merged historical data).
-	cpuBuf, ok := s.CPUHistory["new-c"]
-	if !ok {
-		t.Fatal("CPUHistory['new-c'] should exist")
-	}
-	cpuData := cpuBuf.Data()
-	if len(cpuData) != 4 {
-		t.Errorf("CPUHistory['new-c'].Len() = %d, want 4 (merged from both containers)", len(cpuData))
-	}
-
-	memBuf, ok := s.MemHistory["new-c"]
-	if !ok {
-		t.Fatal("MemHistory['new-c'] should exist")
-	}
-	memData := memBuf.Data()
-	if len(memData) != 4 {
-		t.Errorf("MemHistory['new-c'].Len() = %d, want 4 (merged from both containers)", len(memData))
-	}
-
-	// Verify the data is in timestamp order (old-c data first, then new-c).
-	if cpuData[0] != 10 || cpuData[1] != 20 || cpuData[2] != 30 || cpuData[3] != 40 {
-		t.Errorf("CPU data = %v, want [10 20 30 40]", cpuData)
-	}
-
-	// deployEndTS should be the last data point's timestamp.
-	if det.deployEndTS != 400 {
-		t.Errorf("deployEndTS = %d, want 400", det.deployEndTS)
 	}
 }
 
@@ -748,5 +667,81 @@ func TestHandleDetailAutoSwitchNonCompose(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Error("expected non-nil cmd for non-compose auto-switch")
+	}
+}
+
+func TestStreamingBufferTransfer(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+
+	// Set up ContInfo with old container.
+	s.ContInfo = []protocol.ContainerInfo{
+		{ID: "old-c", Name: "web", Project: "myapp", Service: "web", State: "exited"},
+	}
+
+	// Push some history for old container.
+	s.CPUHistory["old-c"] = NewRingBuffer[float64](ringBufSize)
+	s.MemHistory["old-c"] = NewRingBuffer[float64](ringBufSize)
+	for i := 0; i < 5; i++ {
+		s.CPUHistory["old-c"].Push(float64(i * 10))
+		s.MemHistory["old-c"].Push(float64(i * 100))
+	}
+
+	// Streaming update: new container with same service identity replaces old.
+	m := &protocol.MetricsUpdate{
+		Timestamp: 200,
+		Containers: []protocol.ContainerMetrics{
+			{ID: "new-c", Name: "web", Project: "myapp", Service: "web", State: "running", CPUPercent: 99},
+		},
+	}
+	model, _ := a.Update(MetricsMsg{m, testServer})
+	a = model.(App)
+	s = a.session()
+
+	// Old buffer should be transferred to new container.
+	if _, ok := s.CPUHistory["old-c"]; ok {
+		t.Error("old-c buffer should be deleted after transfer")
+	}
+	newBuf := s.CPUHistory["new-c"]
+	if newBuf == nil {
+		t.Fatal("new-c buffer should exist")
+	}
+	// Should have 5 old points + 1 new point = 6.
+	if newBuf.Len() != 6 {
+		t.Errorf("new-c CPUHistory.Len() = %d, want 6", newBuf.Len())
+	}
+	data := newBuf.Data()
+	// Last point should be the new streaming value.
+	if data[5] != 99 {
+		t.Errorf("last CPU value = %v, want 99", data[5])
+	}
+}
+
+func TestStreamingBufferTransferNoServiceNoTransfer(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+
+	// Non-compose container: no service label.
+	s.ContInfo = []protocol.ContainerInfo{
+		{ID: "old-c", Name: "web", State: "exited"},
+	}
+	s.CPUHistory["old-c"] = NewRingBuffer[float64](ringBufSize)
+	s.CPUHistory["old-c"].Push(10)
+	s.MemHistory["old-c"] = NewRingBuffer[float64](ringBufSize)
+
+	// New container without service — should NOT transfer.
+	m := &protocol.MetricsUpdate{
+		Timestamp: 200,
+		Containers: []protocol.ContainerMetrics{
+			{ID: "new-c", Name: "web", State: "running", CPUPercent: 5},
+		},
+	}
+	model, _ := a.Update(MetricsMsg{m, testServer})
+	a = model.(App)
+	s = a.session()
+
+	// new-c should start fresh (1 point from streaming).
+	if s.CPUHistory["new-c"].Len() != 1 {
+		t.Errorf("new-c CPUHistory.Len() = %d, want 1 (no transfer)", s.CPUHistory["new-c"].Len())
 	}
 }

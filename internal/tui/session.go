@@ -34,19 +34,6 @@ type Session struct {
 	Err error
 }
 
-// resetHistories clears all ring buffers for a fresh backfill.
-func (s *Session) resetHistories() {
-	s.HostCPUHistory.Reset()
-	s.HostMemHistory.Reset()
-	s.HostMemUsedHistory.Reset()
-	for _, buf := range s.CPUHistory {
-		buf.Reset()
-	}
-	for _, buf := range s.MemHistory {
-		buf.Reset()
-	}
-}
-
 // NewSession creates a session with initialized buffers.
 func NewSession(name string, client *Client, tunnel *Tunnel) *Session {
 	return &Session{
