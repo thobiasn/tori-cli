@@ -10,6 +10,7 @@ type Theme struct {
 	Healthy  lipgloss.Color // green
 	Accent   lipgloss.Color // cyan
 	Muted    lipgloss.Color // gray
+	Grid     lipgloss.Color // dark gray for grid lines
 
 	// Graph colors for container CPU/MEM charts.
 	CPUGraph lipgloss.Color // green
@@ -31,6 +32,7 @@ func DefaultTheme() Theme {
 		Healthy:  lipgloss.Color("10"),
 		Accent:   lipgloss.Color("14"),
 		Muted:        lipgloss.Color("8"),
+		Grid:         lipgloss.Color("240"),
 		CPUGraph: lipgloss.Color("10"), // green
 		MemGraph: lipgloss.Color("12"), // blue
 		MemUsed: lipgloss.Color("10"),

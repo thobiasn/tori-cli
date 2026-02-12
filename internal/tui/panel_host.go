@@ -91,6 +91,9 @@ func autoGridGraph(data []float64, value string, innerW, rows int, windowSec int
 		maxObs = 1
 	}
 	maxVal := axis.ceilFn(maxObs)
+	if maxObs > maxVal*0.9 {
+		maxVal = axis.ceilFn(maxVal + 1)
+	}
 
 	// Use the wider of value/ceiling label to size the right margin.
 	ceilLabel := axis.labelFn(maxVal)

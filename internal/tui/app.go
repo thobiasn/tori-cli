@@ -317,7 +317,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case detailMetricsQueryMsg:
-		if s := a.session(); s != nil && msg.resp != nil {
+		if s := a.session(); s != nil && msg.resp != nil && msg.containerID == s.Detail.containerID {
 			handleDetailMetricsBackfill(s, &s.Detail, msg.resp)
 		}
 		return a, nil
@@ -468,6 +468,7 @@ func handleDetailMetricsBackfill(s *Session, det *DetailState, resp *protocol.Qu
 
 	// Detect deploy boundaries (container ID transitions) and store raw timestamps.
 	det.deployTimestamps = nil
+	det.deployEndTS = sorted[len(sorted)-1].Timestamp
 	if len(sorted) > 1 {
 		prevCID := sorted[0].ID
 		for _, d := range sorted[1:] {

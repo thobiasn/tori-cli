@@ -411,7 +411,7 @@ func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []f
 		heights[i] = h
 	}
 
-	// Convert grid percentages to dot positions.
+	// Convert grid percentages to character rows.
 	gridDots := make(map[int]bool, len(gridPcts))
 	for _, pct := range gridPcts {
 		dot := int(pct / maxVal * float64(totalDots))
@@ -422,6 +422,11 @@ func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []f
 			dot = totalDots - 1
 		}
 		gridDots[dot] = true
+	}
+	gridRows := make(map[int]bool)
+	for dot := range gridDots {
+		r := rows - 1 - dot/4
+		gridRows[r] = true
 	}
 
 	leftBits := [4]byte{0x40, 0x04, 0x02, 0x01}
@@ -472,7 +477,11 @@ func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []f
 			vcols[i].labelStart = -1
 		}
 	}
-	// Build label character map for the label row.
+	// Build vline column set for O(1) lookup and label char map.
+	vcolSet := make(map[int]bool, len(vcols))
+	for _, vc := range vcols {
+		vcolSet[vc.col] = true
+	}
 	labelChars := make(map[int]rune, len(vcols)*4)
 	for _, vc := range vcols {
 		if vc.labelStart < 0 {
@@ -483,18 +492,25 @@ func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []f
 		}
 	}
 
+	gridStyle := lipgloss.NewStyle().Foreground(theme.Grid)
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+
+	type cellKind int
+	const (
+		kindEmpty cellKind = iota
+		kindData
+		kindGrid
+	)
 
 	rowStrs := make([]string, rows)
 	for r := 0; r < rows; r++ {
 		bottomDot := (rows - 1 - r) * 4
 		isLabelRow := len(vcols) > 0 && r == labelRow
+		isGridRow := gridRows[r]
 
+		// Build data braille patterns.
 		dataChars := make([]rune, width)
-		gridChars := make([]rune, width)
 		hasData := make([]bool, width)
-
-		// Build data patterns.
 		for col := 0; col < len(heights); col += 2 {
 			charIdx := width - (len(heights)-col+1)/2
 			if charIdx < 0 {
@@ -519,54 +535,69 @@ func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []f
 			hasData[charIdx] = pattern != 0
 		}
 
-		// Build grid patterns (dashed: left-column dot every other char).
+		// Compose cells: determine character and kind for each column.
+		type cell struct {
+			ch   rune
+			kind cellKind
+		}
+		cells := make([]cell, width)
 		for i := 0; i < width; i++ {
-			var pattern byte
-			for dot := 0; dot < 4; dot++ {
-				if gridDots[bottomDot+dot] {
-					if i%2 == 0 {
-						pattern |= leftBits[dot]
-					}
-				}
-			}
-			gridChars[i] = rune(0x2800 + int(pattern))
-		}
+			isVCol := vcolSet[i]
 
-		// Add vertical line patterns (dashed: even rows only, skip label row).
-		if !isLabelRow && r%2 == 0 {
-			for _, vc := range vcols {
-				gridChars[vc.col] = rune(int(gridChars[vc.col]) | 0x47)
-			}
-		}
-
-		// Compose: data chars in usage color, grid/label chars in muted.
-		var b strings.Builder
-		type run struct {
-			isData bool
-			chars  []rune
-		}
-		var runs []run
-		for i := 0; i < width; i++ {
-			ch := dataChars[i]
-			if ch == 0 {
-				ch = 0x2800
-			}
-			// Merge grid dots into data character.
-			merged := rune(int(ch) | (int(gridChars[i]) - 0x2800))
-			isData := hasData[i]
-
-			// On label row, replace braille with label text at label positions.
+			// Label row: label chars override everything at their positions.
 			if isLabelRow {
 				if lch, ok := labelChars[i]; ok {
-					merged = lch
-					isData = false
+					cells[i] = cell{lch, kindGrid}
+					continue
 				}
 			}
 
-			if len(runs) > 0 && runs[len(runs)-1].isData == isData {
-				runs[len(runs)-1].chars = append(runs[len(runs)-1].chars, merged)
+			// Grid infrastructure (vlines and hlines) — dashed pattern.
+			vDash := isVCol && r%2 == 0 // vertical: every other row
+			hDash := isGridRow && i%2 == 0 // horizontal: every other column
+			if vDash && hDash {
+				cells[i] = cell{'┼', kindGrid}
+				continue
+			}
+			if vDash && !isLabelRow {
+				cells[i] = cell{'│', kindGrid}
+				continue
+			}
+			if isGridRow && !isVCol {
+				if hasData[i] {
+					cells[i] = cell{dataChars[i], kindData}
+				} else if hDash {
+					cells[i] = cell{'─', kindGrid}
+				} else {
+					cells[i] = cell{' ', kindGrid}
+				}
+				continue
+			}
+
+			// Normal cell: data or empty braille.
+			if hasData[i] {
+				cells[i] = cell{dataChars[i], kindData}
 			} else {
-				runs = append(runs, run{isData, []rune{merged}})
+				ch := dataChars[i]
+				if ch == 0 {
+					ch = 0x2800
+				}
+				cells[i] = cell{ch, kindEmpty}
+			}
+		}
+
+		// Group consecutive same-kind cells into runs.
+		var b strings.Builder
+		type run struct {
+			kind  cellKind
+			chars []rune
+		}
+		var runs []run
+		for _, c := range cells {
+			if len(runs) > 0 && runs[len(runs)-1].kind == c.kind {
+				runs[len(runs)-1].chars = append(runs[len(runs)-1].chars, c.ch)
+			} else {
+				runs = append(runs, run{c.kind, []rune{c.ch}})
 			}
 		}
 
@@ -581,9 +612,12 @@ func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []f
 
 		for _, rn := range runs {
 			s := string(rn.chars)
-			if rn.isData {
+			switch rn.kind {
+			case kindData:
 				b.WriteString(dataStyle.Render(s))
-			} else {
+			case kindGrid:
+				b.WriteString(gridStyle.Render(s))
+			default:
 				b.WriteString(muted.Render(s))
 			}
 		}

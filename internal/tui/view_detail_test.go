@@ -18,10 +18,13 @@ func TestDetailBackfillDedup(t *testing.T) {
 	s.onStreamEntry(protocol.LogEntryMsg{Timestamp: 101, ContainerID: "c1", Message: "stream2"})
 
 	// Backfill with overlap — agent returns DESC order (newest first).
-	s.handleBackfill(detailLogQueryMsg{entries: []protocol.LogEntryMsg{
-		{Timestamp: 100, ContainerID: "c1", Message: "dup"},
-		{Timestamp: 90, ContainerID: "c1", Message: "old1"},
-	}})
+	s.handleBackfill(detailLogQueryMsg{
+		containerID: "c1",
+		entries: []protocol.LogEntryMsg{
+			{Timestamp: 100, ContainerID: "c1", Message: "dup"},
+			{Timestamp: 90, ContainerID: "c1", Message: "old1"},
+		},
+	})
 
 	data := s.logs.Data()
 	if len(data) != 3 {
@@ -438,11 +441,14 @@ func TestDetailBackfillOrdering(t *testing.T) {
 	s.reset()
 
 	// Simulate agent returning DESC order (newest first).
-	s.handleBackfill(detailLogQueryMsg{entries: []protocol.LogEntryMsg{
-		{Timestamp: 300, ContainerID: "c1", Message: "c"},
-		{Timestamp: 200, ContainerID: "c1", Message: "b"},
-		{Timestamp: 100, ContainerID: "c1", Message: "a"},
-	}})
+	s.handleBackfill(detailLogQueryMsg{
+		containerID: "c1",
+		entries: []protocol.LogEntryMsg{
+			{Timestamp: 300, ContainerID: "c1", Message: "c"},
+			{Timestamp: 200, ContainerID: "c1", Message: "b"},
+			{Timestamp: 100, ContainerID: "c1", Message: "a"},
+		},
+	})
 
 	// After backfill, entries should be in ASC (chronological) order.
 	data := s.logs.Data()
@@ -467,41 +473,42 @@ func TestDetailBackfillOrdering(t *testing.T) {
 
 func TestDeployVLines(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
-		vl := deployVLines(nil, 100, 3600)
+		vl := deployVLines(nil, 100, 3600, 0)
 		if len(vl) != 0 {
 			t.Errorf("expected no vlines for nil timestamps, got %d", len(vl))
 		}
 	})
 
 	t.Run("no data", func(t *testing.T) {
-		vl := deployVLines([]int64{100}, 0, 3600)
+		vl := deployVLines([]int64{100}, 0, 3600, 0)
 		if len(vl) != 0 {
 			t.Errorf("expected no vlines for zero dataLen, got %d", len(vl))
 		}
 	})
 
 	t.Run("within window", func(t *testing.T) {
-		now := time.Now().Unix()
+		// Use a fixed endTS so the test is deterministic.
+		endTS := int64(100000)
 		// Place a deploy marker at the midpoint of a 1h window.
-		ts := now - 1800
-		vl := deployVLines([]int64{ts}, 100, 3600)
+		ts := endTS - 1800
+		vl := deployVLines([]int64{ts}, 100, 3600, endTS)
 		if len(vl) != 1 {
 			t.Fatalf("expected 1 vline, got %d", len(vl))
 		}
-		// Frac should be approximately 0.5 (midpoint).
-		if vl[0].Frac < 0.4 || vl[0].Frac > 0.6 {
-			t.Errorf("frac = %f, want ~0.5", vl[0].Frac)
+		// Frac should be exactly 0.5 (midpoint).
+		if vl[0].Frac < 0.49 || vl[0].Frac > 0.51 {
+			t.Errorf("frac = %f, want 0.5", vl[0].Frac)
 		}
-		if vl[0].Label != "↻" {
-			t.Errorf("label = %q, want ↻", vl[0].Label)
+		if vl[0].Label != "dpl" {
+			t.Errorf("label = %q, want dpl", vl[0].Label)
 		}
 	})
 
 	t.Run("outside window filtered", func(t *testing.T) {
-		now := time.Now().Unix()
+		endTS := int64(100000)
 		// Timestamp well outside the window (2 hours ago in a 1h window).
-		ts := now - 7200
-		vl := deployVLines([]int64{ts}, 100, 3600)
+		ts := endTS - 7200
+		vl := deployVLines([]int64{ts}, 100, 3600, endTS)
 		if len(vl) != 0 {
 			t.Errorf("expected timestamp outside window to be filtered, got %d", len(vl))
 		}
@@ -512,12 +519,26 @@ func TestDeployVLines(t *testing.T) {
 		// windowSec=0 → range inferred from dataLen*10.
 		// dataLen=100 → 1000s range. Place marker at 500s ago.
 		ts := now - 500
-		vl := deployVLines([]int64{ts}, 100, 0)
+		vl := deployVLines([]int64{ts}, 100, 0, 0)
 		if len(vl) != 1 {
 			t.Fatalf("expected 1 vline in live mode, got %d", len(vl))
 		}
 		if vl[0].Frac < 0.4 || vl[0].Frac > 0.6 {
 			t.Errorf("frac = %f, want ~0.5", vl[0].Frac)
+		}
+	})
+
+	t.Run("historic markers stable", func(t *testing.T) {
+		// With fixed endTS, calling deployVLines twice should give identical results.
+		endTS := int64(100000)
+		ts := endTS - 900
+		vl1 := deployVLines([]int64{ts}, 100, 3600, endTS)
+		vl2 := deployVLines([]int64{ts}, 100, 3600, endTS)
+		if len(vl1) != 1 || len(vl2) != 1 {
+			t.Fatalf("expected 1 vline each, got %d and %d", len(vl1), len(vl2))
+		}
+		if vl1[0].Frac != vl2[0].Frac {
+			t.Errorf("fracs should be identical: %f vs %f", vl1[0].Frac, vl2[0].Frac)
 		}
 	})
 }

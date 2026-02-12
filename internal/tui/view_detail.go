@@ -39,14 +39,18 @@ type DetailState struct {
 	backfilled         bool
 	metricsBackfilled  bool
 	deployTimestamps []int64 // raw timestamps of container ID transitions
+	deployEndTS      int64   // timestamp of last backfilled data point (right edge anchor)
 }
 
 type detailLogQueryMsg struct {
-	entries []protocol.LogEntryMsg
+	entries     []protocol.LogEntryMsg
+	containerID string // which detail view requested this
+	project     string
 }
 
 type detailMetricsQueryMsg struct {
-	resp *protocol.QueryMetricsResp
+	resp        *protocol.QueryMetricsResp
+	containerID string
 }
 
 func (s *DetailState) reset() {
@@ -63,6 +67,7 @@ func (s *DetailState) reset() {
 	s.backfilled = false
 	s.metricsBackfilled = false
 	s.deployTimestamps = nil
+	s.deployEndTS = 0
 }
 
 func (s *DetailState) isGroupMode() bool {
@@ -82,6 +87,7 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64) tea.Cmd {
 	// Log backfill.
 	if !s.backfilled {
 		id := s.containerID
+		project := s.project
 		ids := s.projectIDs
 		svcProject := s.svcProject
 		svcService := s.svcService
@@ -104,14 +110,15 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64) tea.Cmd {
 			}
 			entries, err := c.QueryLogs(ctx, req)
 			if err != nil {
-				return detailLogQueryMsg{}
+				return detailLogQueryMsg{containerID: id, project: project}
 			}
-			return detailLogQueryMsg{entries: entries}
+			return detailLogQueryMsg{entries: entries, containerID: id, project: project}
 		})
 	}
 
 	// Service-scoped metrics backfill for cross-container graph history.
 	if !s.metricsBackfilled && s.svcService != "" {
+		id := s.containerID
 		svcProject := s.svcProject
 		svcService := s.svcService
 		ws := windowSec
@@ -134,9 +141,9 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64) tea.Cmd {
 				Service: svcService,
 			})
 			if err != nil {
-				return detailMetricsQueryMsg{}
+				return detailMetricsQueryMsg{containerID: id}
 			}
-			return detailMetricsQueryMsg{resp: resp}
+			return detailMetricsQueryMsg{resp: resp, containerID: id}
 		})
 	}
 
@@ -169,6 +176,10 @@ func (s *DetailState) onStreamEntry(entry protocol.LogEntryMsg) {
 func (s *DetailState) handleBackfill(msg detailLogQueryMsg) {
 	if s.backfilled || s.logs == nil {
 		s.backfilled = true
+		return
+	}
+	// Reject stale responses from a previous detail view.
+	if msg.containerID != s.containerID || msg.project != s.project {
 		return
 	}
 	if len(msg.entries) == 0 {
@@ -587,7 +598,7 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 
 	cpuVal := fmt.Sprintf("%5.1f%%", cm.CPUPercent)
 	cpuData := historyData(s.CPUHistory, det.containerID)
-	vlines := deployVLines(det.deployTimestamps, len(cpuData), windowSec)
+	vlines := deployVLines(det.deployTimestamps, len(cpuData), windowSec, det.deployEndTS)
 	var cpuContent string
 	if len(cpuData) > 0 {
 		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, windowSec, theme, theme.CPUGraph, pctAxis, vlines...), "\n")
@@ -649,29 +660,34 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 	return strings.Join(lines, "\n")
 }
 
-// deployVLines computes VLine fractions at render time from raw timestamps.
-// The graph's x-axis spans [now-windowSec, now]; if windowSec==0 it is
-// inferred from dataLen (10s collection interval).
-func deployVLines(timestamps []int64, dataLen int, windowSec int64) []VLine {
+// deployVLines computes VLine fractions from raw timestamps.
+// For live mode (windowSec==0) the right edge is time.Now(); for historic
+// windows the right edge is endTS (the last backfilled data point) so that
+// markers stay fixed while viewing static data.
+func deployVLines(timestamps []int64, dataLen int, windowSec int64, endTS int64) []VLine {
 	if len(timestamps) == 0 || dataLen == 0 {
 		return nil
 	}
-	now := time.Now().Unix()
-	var startTS int64
+	var rightEdge, startTS int64
 	if windowSec > 0 {
-		startTS = now - windowSec
+		rightEdge = endTS
+		if rightEdge == 0 {
+			rightEdge = time.Now().Unix()
+		}
+		startTS = rightEdge - windowSec
 	} else {
-		startTS = now - int64(dataLen)*10
+		rightEdge = time.Now().Unix()
+		startTS = rightEdge - int64(dataLen)*10
 	}
-	span := float64(now - startTS)
+	span := float64(rightEdge - startTS)
 	if span <= 0 {
 		return nil
 	}
 	var vlines []VLine
 	for _, ts := range timestamps {
-		frac := float64(now-ts) / span
+		frac := float64(rightEdge-ts) / span
 		if frac > 0.01 && frac < 0.99 {
-			vlines = append(vlines, VLine{Frac: frac, Label: "↻"})
+			vlines = append(vlines, VLine{Frac: frac, Label: "dpl"})
 		}
 	}
 	return vlines

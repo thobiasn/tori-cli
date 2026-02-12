@@ -553,6 +553,75 @@ func TestGraphWithGridVLines(t *testing.T) {
 			t.Errorf("expected 4 rows, got %d", len(lines))
 		}
 	})
+
+	t.Run("vline uses box drawing", func(t *testing.T) {
+		vlines := []VLine{{Frac: 0.5, Label: "-3h"}}
+		got := GraphWithGrid(data, 20, 6, 100, []float64{0, 100}, vlines, &theme)
+		plain := stripANSI(got)
+		if !strings.Contains(plain, "│") {
+			t.Errorf("expected vline character │ in output, got:\n%s", plain)
+		}
+	})
+
+	t.Run("grid row uses line drawing", func(t *testing.T) {
+		// Use all-zero data so grid lines aren't obscured by data.
+		zeroData := make([]float64, 40)
+		got := GraphWithGrid(zeroData, 20, 6, 100, []float64{0, 50, 100}, nil, &theme)
+		plain := stripANSI(got)
+		if !strings.Contains(plain, "─") {
+			t.Errorf("expected grid line character ─ in output, got:\n%s", plain)
+		}
+	})
+}
+
+func TestAutoGridGraphBreathingRoom(t *testing.T) {
+	theme := DefaultTheme()
+
+	t.Run("bumps ceiling when near max", func(t *testing.T) {
+		// 72.0 → niceMaxBytes → 75M (if in bytes scale).
+		// Using niceMax directly: 72.0 → 75. 72 > 75*0.9=67.5 → bump → niceMax(76) → 100.
+		data := []float64{72.0}
+		maxObs := 72.0
+		maxVal := niceMax(maxObs)
+		if maxVal != 75 {
+			t.Fatalf("niceMax(72) = %v, want 75", maxVal)
+		}
+		// After breathing room: 72 > 75*0.9 = 67.5 → bump.
+		bumped := niceMax(maxVal + 1)
+		if bumped != 100 {
+			t.Fatalf("niceMax(76) = %v, want 100", bumped)
+		}
+
+		// Verify via autoGridGraph: the ceiling label should show "100".
+		lines := autoGridGraph(data, "72", 40, 6, 0, &theme, theme.Accent, graphAxis{
+			ceilFn:  niceMax,
+			labelFn: formatAutoLabel,
+		})
+		if len(lines) == 0 {
+			t.Fatal("expected graph lines")
+		}
+		// First line should have the ceiling label.
+		firstPlain := stripANSI(lines[0])
+		if !strings.Contains(firstPlain, "100") {
+			t.Errorf("ceiling should be bumped to 100, got: %q", firstPlain)
+		}
+	})
+
+	t.Run("no bump when well below max", func(t *testing.T) {
+		// 40 → niceMax → 50. 40 <= 50*0.9=45 → no bump.
+		data := []float64{40.0}
+		lines := autoGridGraph(data, "40", 40, 6, 0, &theme, theme.Accent, graphAxis{
+			ceilFn:  niceMax,
+			labelFn: formatAutoLabel,
+		})
+		if len(lines) == 0 {
+			t.Fatal("expected graph lines")
+		}
+		firstPlain := stripANSI(lines[0])
+		if !strings.Contains(firstPlain, "50") {
+			t.Errorf("ceiling should be 50, got: %q", firstPlain)
+		}
+	})
 }
 
 func TestFormatContainerUptime(t *testing.T) {

@@ -488,6 +488,11 @@ func TestHandleDetailMetricsBackfill(t *testing.T) {
 	if cpuData[0] != 10 || cpuData[1] != 20 || cpuData[2] != 30 || cpuData[3] != 40 {
 		t.Errorf("CPU data = %v, want [10 20 30 40]", cpuData)
 	}
+
+	// deployEndTS should be the last data point's timestamp.
+	if det.deployEndTS != 400 {
+		t.Errorf("deployEndTS = %d, want 400", det.deployEndTS)
+	}
 }
 
 func TestHandleDetailAutoSwitch(t *testing.T) {
