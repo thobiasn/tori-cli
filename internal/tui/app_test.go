@@ -318,7 +318,7 @@ func TestHandleMetricsBackfill(t *testing.T) {
 			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "c2", CPUPercent: 8, MemPercent: 18}},
 		},
 	}
-	handleMetricsBackfill(s, resp)
+	handleMetricsBackfill(s, resp, 0, 0, false)
 
 	// Host history populated in order.
 	if s.HostCPUHistory.Len() != 3 {
@@ -345,6 +345,38 @@ func TestHandleMetricsBackfill(t *testing.T) {
 	}
 	if s.MemHistory["c1"].Len() != 2 {
 		t.Errorf("c1 MemHistory.Len() = %d, want 2", s.MemHistory["c1"].Len())
+	}
+}
+
+func TestHandleMetricsBackfillTimeAlign(t *testing.T) {
+	s := newTestSession()
+	// Simulate a 10-second window with 5 buckets. Data only in the last 2 seconds.
+	resp := &protocol.QueryMetricsResp{
+		Containers: []protocol.TimedContainerMetrics{
+			{Timestamp: 8, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 10, MemUsage: 100}},
+			{Timestamp: 9, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 20, MemUsage: 200}},
+		},
+	}
+	handleMetricsBackfill(s, resp, 0, 10, true)
+
+	// With rangeHist=true and sparse data, the TUI should produce
+	// ringBufSize entries with zero-fill for empty buckets.
+	if s.CPUHistory["c1"].Len() != ringBufSize {
+		t.Fatalf("c1 CPUHistory.Len() = %d, want %d", s.CPUHistory["c1"].Len(), ringBufSize)
+	}
+	cpu := s.CPUHistory["c1"].Data()
+	// Data at ts 8,9 in a 0-10 window with 600 buckets:
+	// bucket duration = 10/600 = 0.01667s per bucket
+	// ts=8 → bucket 480, ts=9 → bucket 540
+	// Most buckets should be zero.
+	var nonZero int
+	for _, v := range cpu {
+		if v > 0 {
+			nonZero++
+		}
+	}
+	if nonZero != 2 {
+		t.Errorf("nonzero buckets = %d, want 2", nonZero)
 	}
 }
 

@@ -679,10 +679,10 @@ func downsampleHost(data []protocol.TimedHostMetrics, n int, start, end int64) [
 	return out
 }
 
-// downsampleContainers reduces container metrics to exactly n points per
-// container using time-aware max-per-bucket aggregation. The [start, end]
-// range is divided into n equal buckets; empty buckets produce zero-value
-// entries so partial data doesn't stretch across the full graph width.
+// downsampleContainers reduces container metrics to at most n points per
+// container using time-aware max-per-bucket aggregation. Containers with
+// <= n data points are returned as-is to keep the response small (the TUI
+// handles time-aware zero-fill locally for short series).
 func downsampleContainers(data []protocol.TimedContainerMetrics, n int, start, end int64) []protocol.TimedContainerMetrics {
 	if n <= 0 || len(data) == 0 {
 		return data
@@ -703,6 +703,10 @@ func downsampleContainers(data []protocol.TimedContainerMetrics, n int, start, e
 	var out []protocol.TimedContainerMetrics
 	for _, id := range order {
 		series := byID[id]
+		if len(series) <= n {
+			out = append(out, series...)
+			continue
+		}
 		buckets := make([]protocol.TimedContainerMetrics, n)
 		filled := make([]bool, n)
 		for i := range buckets {

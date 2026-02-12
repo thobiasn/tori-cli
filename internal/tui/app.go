@@ -119,7 +119,8 @@ func subscribeAndQueryContainers(c *Client) tea.Cmd {
 func backfillMetrics(c *Client, seconds int64) tea.Cmd {
 	return func() tea.Msg {
 		timeout := 5 * time.Second
-		if seconds > 0 {
+		hist := seconds > 0
+		if hist {
 			timeout = 15 * time.Second
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -127,25 +128,38 @@ func backfillMetrics(c *Client, seconds int64) tea.Cmd {
 		now := time.Now().Unix()
 		rangeSec := int64(ringBufSize * 10) // 600 points × 10s default interval
 		points := 0
-		if seconds > 0 {
+		if hist {
 			rangeSec = seconds
 			points = ringBufSize
 		}
-		resp, err := c.QueryMetrics(ctx, now-rangeSec, now, points)
+		start := now - rangeSec
+		resp, err := c.QueryMetrics(ctx, start, now, points)
 		if err != nil {
-			return nil // Non-critical: graphs fill from live data instead.
+			if hist {
+				return backfillRetryMsg{server: c.server, seconds: seconds}
+			}
+			return nil // Live backfill non-critical: streaming fills graphs.
 		}
-		return metricsBackfillMsg{server: c.server, resp: resp}
+		return metricsBackfillMsg{server: c.server, resp: resp, start: start, end: now, rangeHist: hist}
 	}
 }
+
+type backfillRetryMsg struct {
+	server  string
+	seconds int64
+}
+type backfillRetryTickMsg backfillRetryMsg
 
 type sessionContainersMsg struct {
 	server     string
 	containers []protocol.ContainerInfo
 }
 type metricsBackfillMsg struct {
-	server string
-	resp   *protocol.QueryMetricsResp
+	server    string
+	resp      *protocol.QueryMetricsResp
+	start     int64 // query window start (unix seconds)
+	end       int64 // query window end (unix seconds)
+	rangeHist bool  // true if this was a historical (non-live) request
 }
 type trackingDoneMsg struct {
 	server string
@@ -202,7 +216,21 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.resp.RetentionDays > 0 {
 				s.RetentionDays = msg.resp.RetentionDays
 			}
-			handleMetricsBackfill(s, msg.resp)
+			handleMetricsBackfill(s, msg.resp, msg.start, msg.end, msg.rangeHist)
+		}
+		return a, nil
+
+	case backfillRetryMsg:
+		if s := a.sessions[msg.server]; s != nil {
+			return a, tea.Tick(2*time.Second, func(time.Time) tea.Msg {
+				return backfillRetryTickMsg(msg)
+			})
+		}
+		return a, nil
+
+	case backfillRetryTickMsg:
+		if s := a.sessions[msg.server]; s != nil {
+			return a, backfillMetrics(s.Client, msg.seconds)
 		}
 		return a, nil
 
@@ -328,7 +356,10 @@ func (a *App) handleSessionMetrics(s *Session, m *protocol.MetricsUpdate) tea.Cm
 
 // handleMetricsBackfill populates ring buffers from historical metrics so
 // graphs show data immediately on connect rather than starting empty.
-func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp) {
+// For historical windows (rangeHist=true), container data that arrived
+// sparse (fewer than ringBufSize points) is time-aligned into ringBufSize
+// buckets with zero-fill so partial data doesn't stretch across the graph.
+func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp, start, end int64, rangeHist bool) {
 	for _, h := range resp.Host {
 		s.HostCPUHistory.Push(h.CPUPercent)
 		s.HostMemHistory.Push(h.MemPercent)
@@ -337,15 +368,62 @@ func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp) {
 		// have MemTotal==0 but still need a push to keep buffers in sync.
 		s.HostMemUsedHistory.Push(h.MemPercent)
 	}
+
+	// Group container points by ID.
+	byID := make(map[string][]protocol.TimedContainerMetrics)
+	var order []string
 	for _, c := range resp.Containers {
-		if _, ok := s.CPUHistory[c.ID]; !ok {
-			s.CPUHistory[c.ID] = NewRingBuffer[float64](ringBufSize)
+		if _, seen := byID[c.ID]; !seen {
+			order = append(order, c.ID)
 		}
-		if _, ok := s.MemHistory[c.ID]; !ok {
-			s.MemHistory[c.ID] = NewRingBuffer[float64](ringBufSize)
+		byID[c.ID] = append(byID[c.ID], c)
+	}
+
+	n := ringBufSize
+	bucketDur := float64(end-start) / float64(n)
+	needAlign := rangeHist && bucketDur > 0
+
+	for _, id := range order {
+		if _, ok := s.CPUHistory[id]; !ok {
+			s.CPUHistory[id] = NewRingBuffer[float64](ringBufSize)
 		}
-		s.CPUHistory[c.ID].Push(c.CPUPercent)
-		s.MemHistory[c.ID].Push(float64(c.MemUsage))
+		if _, ok := s.MemHistory[id]; !ok {
+			s.MemHistory[id] = NewRingBuffer[float64](ringBufSize)
+		}
+		series := byID[id]
+
+		// If series already has n points (agent downsampled it), or this
+		// is a live backfill, push directly without rebucketing.
+		if !needAlign || len(series) >= n {
+			for _, c := range series {
+				s.CPUHistory[id].Push(c.CPUPercent)
+				s.MemHistory[id].Push(float64(c.MemUsage))
+			}
+			continue
+		}
+
+		// Time-align sparse data into n buckets with zero-fill.
+		cpuBuckets := make([]float64, n)
+		memBuckets := make([]float64, n)
+		for _, d := range series {
+			idx := int(float64(d.Timestamp-start) / bucketDur)
+			if idx < 0 {
+				idx = 0
+			}
+			if idx >= n {
+				idx = n - 1
+			}
+			if d.CPUPercent > cpuBuckets[idx] {
+				cpuBuckets[idx] = d.CPUPercent
+			}
+			if float64(d.MemUsage) > memBuckets[idx] {
+				memBuckets[idx] = float64(d.MemUsage)
+			}
+		}
+		for i := 0; i < n; i++ {
+			s.CPUHistory[id].Push(cpuBuckets[i])
+			s.MemHistory[id].Push(memBuckets[i])
+		}
 	}
 }
 
