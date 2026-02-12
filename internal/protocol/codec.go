@@ -8,8 +8,8 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-// MaxMessageSize is the maximum allowed payload size (4 MB).
-const MaxMessageSize = 4 * 1024 * 1024
+// MaxMessageSize is the maximum allowed payload size (16 MB).
+const MaxMessageSize = 16 * 1024 * 1024
 
 // WriteMsg writes a length-prefixed msgpack envelope to w.
 func WriteMsg(w io.Writer, env *Envelope) error {

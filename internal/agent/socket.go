@@ -459,7 +459,7 @@ func (c *connState) queryMetrics(env *protocol.Envelope) {
 
 	if req.Points > 0 {
 		// Downsampled backfill: TUI only uses Host and Containers.
-		// Skip disk/net queries to avoid exceeding MaxMessageSize on wide windows.
+		// Skip disk/net queries to keep response size reasonable on wide windows.
 		resp.Host = downsampleHost(hostOut, req.Points, req.Start, req.End)
 		resp.Containers = downsampleContainers(containerOut, req.Points, req.Start, req.End)
 	} else {
