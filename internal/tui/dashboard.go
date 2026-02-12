@@ -178,9 +178,9 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		hostContent := lipgloss.JoinHorizontal(lipgloss.Top, cpuPanel, rightCol)
 		hostBox := Box("Host", hostContent, width, cpuH, theme)
 
-		halfW := width / 2
-		midRightW := width - halfW
-		contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, halfW, middleH, theme)
+		listW := width * 3 / 5
+		midRightW := width - listW
+		contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, listW, middleH, theme)
 		selPanel := renderSelectedPanel(a, s, midRightW, middleH, theme)
 		midRow := lipgloss.JoinHorizontal(lipgloss.Top, contPanel, selPanel)
 

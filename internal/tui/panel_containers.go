@@ -30,14 +30,18 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 		trackedState[ci.ID] = ci.Tracked
 	}
 
-	// Fixed-width columns: state(1) + space(1) + alert(2) + health(1) + space(1) + cpu(5) + space(1) + mem(6) + space(1) + uptime(7) + space(1) + restart(3) = ~30
-	fixedCols := 30
+	// Fixed-width columns: state(1) + sp(1) + alert(2) + 2sp + health(1) + 2sp + cpu(6) + 2sp + mem(6) + 2sp + uptime(7) + sp(1) + restart(3) = ~34
+	fixedCols := 34
 	nameW := innerW - fixedCols - 2 // 2 for leading/trailing space
 	if nameW < 8 {
 		nameW = 8
 	}
 
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+
+	// Build column header (pinned above scroll region).
+	headerStats := fmt.Sprintf("%6s  %6s  %-7s", "CPU", "MEM", "UPTIME")
+	headerLine := muted.Render(fmt.Sprintf(" %s %s%-*s  %s  %s %s", " ", "  ", nameW, "", "H", headerStats, " ↻"))
 
 	var lines []string
 	pos := 0
@@ -96,11 +100,11 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 			var stats string
 			isMuted := !tracked
 			if tracked && c.State == "running" {
-				stats = fmt.Sprintf("%5.1f%% %6s %-7s", c.CPUPercent, FormatBytes(c.MemUsage), Truncate(uptime, 7))
+				stats = fmt.Sprintf("%5.1f%%  %6s  %-7s", c.CPUPercent, FormatBytes(c.MemUsage), Truncate(uptime, 7))
 			} else {
-				stats = fmt.Sprintf("   —       — %-7s", Truncate(uptime, 7))
+				stats = fmt.Sprintf("%6s  %6s  %-7s", "—", "—", Truncate(uptime, 7))
 			}
-			row := fmt.Sprintf(" %s %s%-*s %s %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
+			row := fmt.Sprintf(" %s %s%-*s  %s  %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
 			if pos == cursor {
 				row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
 			} else if isMuted {
@@ -111,17 +115,22 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 		}
 	}
 
-	// Scroll: if more lines than innerH, show a window around cursor.
-	if len(lines) > innerH {
-		start := cursor - innerH/2
+	// Scroll: reserve 1 line for the pinned header.
+	scrollH := innerH - 1
+	if scrollH < 1 {
+		scrollH = 1
+	}
+	if len(lines) > scrollH {
+		start := cursor - scrollH/2
 		if start < 0 {
 			start = 0
 		}
-		if start+innerH > len(lines) {
-			start = len(lines) - innerH
+		if start+scrollH > len(lines) {
+			start = len(lines) - scrollH
 		}
-		lines = lines[start : start+innerH]
+		lines = lines[start : start+scrollH]
 	}
+	lines = append([]string{headerLine}, lines...)
 
 	return Box("Containers", strings.Join(lines, "\n"), width, height, theme)
 }
