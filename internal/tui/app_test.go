@@ -475,6 +475,71 @@ func TestMergeByServiceIdentityTimeAlign(t *testing.T) {
 	}
 }
 
+func TestGlobalBackfillSkipsDetailContainer(t *testing.T) {
+	s := newTestSession()
+	// Simulate detail view pending for container "c1".
+	s.Detail.containerID = "c1"
+	s.Detail.svcService = "web"
+	s.Detail.metricsBackfillPending = true
+
+	resp := &protocol.QueryMetricsResp{
+		Containers: []protocol.TimedContainerMetrics{
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 10}},
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "c2", CPUPercent: 20}},
+		},
+	}
+	handleMetricsBackfill(s, resp, 0, 0, false)
+
+	// c1 should be skipped (detail backfill handles it).
+	if _, ok := s.CPUHistory["c1"]; ok {
+		t.Error("c1 should be skipped when detail backfill is pending")
+	}
+	// c2 should be populated normally.
+	if s.CPUHistory["c2"].Len() != 1 {
+		t.Errorf("c2 CPUHistory.Len() = %d, want 1", s.CPUHistory["c2"].Len())
+	}
+}
+
+func TestDetailBackfillTimeAlign(t *testing.T) {
+	s := newTestSession()
+	det := &s.Detail
+	det.containerID = "new-c"
+	det.reset()
+
+	// Cross-deploy data in a 10-second historical window.
+	resp := &protocol.QueryMetricsResp{
+		Containers: []protocol.TimedContainerMetrics{
+			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "old-c", CPUPercent: 10, MemUsage: 100}},
+			{Timestamp: 8, ContainerMetrics: protocol.ContainerMetrics{ID: "new-c", CPUPercent: 20, MemUsage: 200}},
+		},
+	}
+	handleDetailMetricsBackfill(s, det, resp, 0, 10, 10)
+
+	// Should produce time-aligned ringBufSize entries.
+	cpuBuf, ok := s.CPUHistory["new-c"]
+	if !ok {
+		t.Fatal("CPUHistory['new-c'] should exist")
+	}
+	if cpuBuf.Len() != ringBufSize {
+		t.Fatalf("CPUHistory.Len() = %d, want %d", cpuBuf.Len(), ringBufSize)
+	}
+	cpu := cpuBuf.Data()
+	var nonZero int
+	for _, v := range cpu {
+		if v > 0 {
+			nonZero++
+		}
+	}
+	if nonZero != 2 {
+		t.Errorf("nonzero buckets = %d, want 2", nonZero)
+	}
+
+	// Deploy marker should be detected.
+	if len(det.deployTimestamps) != 1 {
+		t.Fatalf("deployTimestamps = %d, want 1", len(det.deployTimestamps))
+	}
+}
+
 func TestAppUpdateMetricsBackfillMsg(t *testing.T) {
 	a := newTestApp()
 	resp := &protocol.QueryMetricsResp{
@@ -542,7 +607,7 @@ func TestHandleDetailMetricsBackfill(t *testing.T) {
 			{Timestamp: 400, ContainerMetrics: protocol.ContainerMetrics{ID: "new-c", CPUPercent: 40, MemUsage: 4000}},
 		},
 	}
-	handleDetailMetricsBackfill(s, det, resp)
+	handleDetailMetricsBackfill(s, det, resp, 0, 0, 0)
 
 	// metricsBackfilled should be set.
 	if !det.metricsBackfilled {

@@ -79,7 +79,8 @@ func TestDownsampleContainers(t *testing.T) {
 
 	out := downsampleContainers(data, 5, 0, 20)
 
-	// Count per container — each should have exactly 5 time buckets.
+	// Count per container — each should have exactly 5 filled buckets
+	// (dense data: 20 points into 5 buckets, all buckets get filled).
 	counts := make(map[string]int)
 	for _, m := range out {
 		counts[m.ID]++
@@ -105,6 +106,7 @@ func TestDownsampleContainers(t *testing.T) {
 	}
 
 	// Partial coverage: data only in second half of window.
+	// Only filled buckets are emitted, unfilled ones are omitted.
 	var partial []protocol.TimedContainerMetrics
 	for i := 10; i < 20; i++ {
 		partial = append(partial, protocol.TimedContainerMetrics{
@@ -112,23 +114,19 @@ func TestDownsampleContainers(t *testing.T) {
 			ContainerMetrics: protocol.ContainerMetrics{ID: "ddd", CPUPercent: float64(i)},
 		})
 	}
-	// Window 0-20, 5 buckets of 4s each. First 2.5 buckets empty, last 2.5 have data.
+	// Window 0-20, 5 buckets of 4s each. Data in ts 10-19 fills buckets 2-4.
 	out2 := downsampleContainers(partial, 5, 0, 20)
 	dddCount := 0
-	var dddZero int
 	for _, m := range out2 {
 		if m.ID == "ddd" {
 			dddCount++
 			if m.CPUPercent == 0 {
-				dddZero++
+				t.Errorf("filled bucket has zero CPU, want nonzero")
 			}
 		}
 	}
-	if dddCount != 5 {
-		t.Errorf("ddd = %d points, want 5", dddCount)
-	}
-	// First 2 buckets (ts 0-7) have no data, bucket 2 (ts 8-11) has data.
-	if dddZero < 2 {
-		t.Errorf("ddd zero buckets = %d, want >= 2", dddZero)
+	// Buckets 0-1 have no data → omitted. Buckets 2-4 have data → 3 entries.
+	if dddCount != 3 {
+		t.Errorf("ddd = %d points, want 3 (only filled buckets)", dddCount)
 	}
 }

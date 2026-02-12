@@ -35,10 +35,11 @@ type DetailState struct {
 	searchText        string
 	searchMode        bool
 
-	backfilled         bool
-	metricsBackfilled  bool
-	deployTimestamps []int64 // raw timestamps of container ID transitions
-	deployEndTS      int64   // timestamp of last backfilled data point (right edge anchor)
+	backfilled                bool
+	metricsBackfilled         bool
+	metricsBackfillPending    bool    // true while a detail metrics backfill is in-flight
+	deployTimestamps          []int64 // raw timestamps of container ID transitions
+	deployEndTS               int64   // timestamp of last backfilled data point (right edge anchor)
 }
 
 type detailLogQueryMsg struct {
@@ -51,6 +52,9 @@ type detailMetricsQueryMsg struct {
 	resp        *protocol.QueryMetricsResp
 	containerID string
 	project     string
+	start       int64
+	end         int64
+	windowSec   int64
 }
 
 func (s *DetailState) reset() {
@@ -66,6 +70,7 @@ func (s *DetailState) reset() {
 	s.searchMode = false
 	s.backfilled = false
 	s.metricsBackfilled = false
+	s.metricsBackfillPending = false
 	s.deployTimestamps = nil
 	s.deployEndTS = 0
 }
@@ -121,6 +126,7 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64) tea.Cmd {
 	// Metrics backfill for cross-container graph history.
 	// Fires for single-container mode (service identity) or group mode (project).
 	if !s.metricsBackfilled && (s.svcService != "" || s.project != "") {
+		s.metricsBackfillPending = true
 		id := s.containerID
 		project := s.project
 		svcProject := s.svcProject
@@ -150,9 +156,9 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64) tea.Cmd {
 			}
 			resp, err := c.QueryMetrics(ctx, req)
 			if err != nil {
-				return detailMetricsQueryMsg{containerID: id, project: project}
+				return detailMetricsQueryMsg{containerID: id, project: project, start: start, end: now, windowSec: ws}
 			}
-			return detailMetricsQueryMsg{resp: resp, containerID: id, project: project}
+			return detailMetricsQueryMsg{resp: resp, containerID: id, project: project, start: start, end: now, windowSec: ws}
 		})
 	}
 

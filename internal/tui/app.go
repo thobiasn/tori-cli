@@ -275,7 +275,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case detailMetricsQueryMsg:
 		if s := a.session(); s != nil && msg.resp != nil &&
 			msg.containerID == s.Detail.containerID && msg.project == s.Detail.project {
-			handleDetailMetricsBackfill(s, &s.Detail, msg.resp)
+			handleDetailMetricsBackfill(s, &s.Detail, msg.resp, msg.start, msg.end, msg.windowSec)
+		}
+		s := a.session()
+		if s != nil {
+			s.Detail.metricsBackfillPending = false
 		}
 		return a, nil
 

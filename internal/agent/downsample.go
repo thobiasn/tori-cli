@@ -59,8 +59,9 @@ func downsampleHost(data []protocol.TimedHostMetrics, n int, start, end int64) [
 
 // downsampleContainers reduces container metrics to at most n points per
 // container using time-aware max-per-bucket aggregation. Containers with
-// <= n data points are returned as-is to keep the response small (the TUI
-// handles time-aware zero-fill locally for short series).
+// <= n data points are returned as-is. Only filled buckets are emitted —
+// unfilled time gaps are omitted so the TUI can merge data across container
+// IDs (cross-deploy) without zero-value entries contaminating the merge.
 func downsampleContainers(data []protocol.TimedContainerMetrics, n int, start, end int64) []protocol.TimedContainerMetrics {
 	if n <= 0 || len(data) == 0 {
 		return data
@@ -116,7 +117,11 @@ func downsampleContainers(data []protocol.TimedContainerMetrics, n int, start, e
 				}
 			}
 		}
-		out = append(out, buckets...)
+		for i, b := range buckets {
+			if filled[i] {
+				out = append(out, b)
+			}
+		}
 	}
 	return out
 }

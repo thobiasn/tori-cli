@@ -89,6 +89,12 @@ func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp, start, e
 	needAlign := rangeHist && bucketDur > 0
 
 	for _, id := range order {
+		// Skip the container being viewed in detail — it gets richer
+		// service-scoped data from the detail backfill.
+		if s.Detail.metricsBackfillPending && id == s.Detail.containerID {
+			continue
+		}
+
 		if _, ok := s.CPUHistory[id]; !ok {
 			s.CPUHistory[id] = NewRingBuffer[float64](ringBufSize)
 		}
@@ -97,9 +103,8 @@ func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp, start, e
 		}
 		series := byID[id]
 
-		// If series already has n points (agent downsampled it), or this
-		// is a live backfill, push directly without rebucketing.
-		if !needAlign || len(series) >= n {
+		// Live backfill: push directly without rebucketing.
+		if !needAlign {
 			for _, c := range series {
 				s.CPUHistory[id].Push(c.CPUPercent)
 				s.MemHistory[id].Push(float64(c.MemUsage))
@@ -216,7 +221,7 @@ func mergeByServiceIdentity(byID map[string][]protocol.TimedContainerMetrics, or
 // handleDetailMetricsBackfill merges service-scoped metric data from possibly
 // multiple container IDs into the current container's ring buffers. It records
 // container ID transition timestamps as deploy boundaries for graph markers.
-func handleDetailMetricsBackfill(s *Session, det *DetailState, resp *protocol.QueryMetricsResp) {
+func handleDetailMetricsBackfill(s *Session, det *DetailState, resp *protocol.QueryMetricsResp, start, end, windowSec int64) {
 	det.metricsBackfilled = true
 	if len(resp.Containers) == 0 {
 		return
@@ -231,14 +236,14 @@ func handleDetailMetricsBackfill(s *Session, det *DetailState, resp *protocol.Qu
 
 	if det.containerID != "" {
 		// Single-container mode: merge all data into one buffer (cross-deploy).
-		handleSingleMetricsBackfill(s, det, sorted)
+		handleSingleMetricsBackfill(s, det, sorted, start, end, windowSec)
 	} else {
 		// Group mode: distribute data into per-container buffers.
-		handleGroupMetricsBackfill(s, sorted)
+		handleGroupMetricsBackfill(s, sorted, start, end, windowSec)
 	}
 }
 
-func handleSingleMetricsBackfill(s *Session, det *DetailState, sorted []protocol.TimedContainerMetrics) {
+func handleSingleMetricsBackfill(s *Session, det *DetailState, sorted []protocol.TimedContainerMetrics, start, end, windowSec int64) {
 	id := det.containerID
 
 	// Detect deploy boundaries (container ID transitions).
@@ -254,7 +259,43 @@ func handleSingleMetricsBackfill(s *Session, det *DetailState, sorted []protocol
 		}
 	}
 
-	// Save existing live data to re-append after history.
+	n := ringBufSize
+	bucketDur := float64(end-start) / float64(n)
+	hist := windowSec > 0 && bucketDur > 0
+
+	if hist {
+		// Historical window: time-align into n buckets with zero-fill.
+		// Don't preserve existing data — this replaces the buffer entirely
+		// so that a racing global backfill doesn't contaminate the result.
+		cpuBuckets := make([]float64, n)
+		memBuckets := make([]float64, n)
+		for _, d := range sorted {
+			idx := int(float64(d.Timestamp-start) / bucketDur)
+			if idx < 0 {
+				idx = 0
+			}
+			if idx >= n {
+				idx = n - 1
+			}
+			if d.CPUPercent > cpuBuckets[idx] {
+				cpuBuckets[idx] = d.CPUPercent
+			}
+			if float64(d.MemUsage) > memBuckets[idx] {
+				memBuckets[idx] = float64(d.MemUsage)
+			}
+		}
+		cpuBuf := NewRingBuffer[float64](ringBufSize)
+		memBuf := NewRingBuffer[float64](ringBufSize)
+		for i := 0; i < n; i++ {
+			cpuBuf.Push(cpuBuckets[i])
+			memBuf.Push(memBuckets[i])
+		}
+		s.CPUHistory[id] = cpuBuf
+		s.MemHistory[id] = memBuf
+		return
+	}
+
+	// Live mode: preserve existing streaming data.
 	var existingCPU, existingMem []float64
 	if buf, ok := s.CPUHistory[id]; ok {
 		existingCPU = buf.Data()
@@ -279,8 +320,52 @@ func handleSingleMetricsBackfill(s *Session, det *DetailState, sorted []protocol
 	s.MemHistory[id] = memBuf
 }
 
-func handleGroupMetricsBackfill(s *Session, sorted []protocol.TimedContainerMetrics) {
-	// Group data points by container ID.
+func handleGroupMetricsBackfill(s *Session, sorted []protocol.TimedContainerMetrics, start, end, windowSec int64) {
+	n := ringBufSize
+	bucketDur := float64(end-start) / float64(n)
+	hist := windowSec > 0 && bucketDur > 0
+
+	if hist {
+		// Historical window: time-align per container into n buckets.
+		type perContainer struct {
+			cpu [ringBufSize]float64
+			mem [ringBufSize]float64
+		}
+		byID := make(map[string]*perContainer)
+		for _, d := range sorted {
+			pc, ok := byID[d.ID]
+			if !ok {
+				pc = &perContainer{}
+				byID[d.ID] = pc
+			}
+			idx := int(float64(d.Timestamp-start) / bucketDur)
+			if idx < 0 {
+				idx = 0
+			}
+			if idx >= n {
+				idx = n - 1
+			}
+			if d.CPUPercent > pc.cpu[idx] {
+				pc.cpu[idx] = d.CPUPercent
+			}
+			if float64(d.MemUsage) > pc.mem[idx] {
+				pc.mem[idx] = float64(d.MemUsage)
+			}
+		}
+		for id, pc := range byID {
+			cpuBuf := NewRingBuffer[float64](ringBufSize)
+			memBuf := NewRingBuffer[float64](ringBufSize)
+			for i := 0; i < n; i++ {
+				cpuBuf.Push(pc.cpu[i])
+				memBuf.Push(pc.mem[i])
+			}
+			s.CPUHistory[id] = cpuBuf
+			s.MemHistory[id] = memBuf
+		}
+		return
+	}
+
+	// Live mode: push directly, preserve existing streaming data.
 	type perContainer struct {
 		cpu []float64
 		mem []float64
@@ -296,7 +381,6 @@ func handleGroupMetricsBackfill(s *Session, sorted []protocol.TimedContainerMetr
 		pc.mem = append(pc.mem, float64(d.MemUsage))
 	}
 
-	// Merge each container's history into its ring buffer.
 	for id, pc := range byID {
 		var existingCPU, existingMem []float64
 		if buf, ok := s.CPUHistory[id]; ok {
