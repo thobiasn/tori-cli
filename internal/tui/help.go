@@ -12,6 +12,7 @@ var dashboardHelp = `
    Space        Collapse/expand group
    Enter        Open container/group detail
    t            Toggle tracking
+   +/-          Zoom time window
    Tab, 1-2     Switch view
    ?            Toggle help
    q            Quit`
@@ -35,6 +36,7 @@ var detailViewHelp = `
    s            Cycle stream (all/stdout/stderr)
    /            Text search
    r            Restart container
+   +/-          Zoom time window
    Esc          Clear filters / back
    Tab, 1-2     Switch view
    ?            Toggle help

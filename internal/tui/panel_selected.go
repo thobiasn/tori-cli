@@ -15,16 +15,18 @@ func renderSelectedPanel(a *App, s *Session, width, height int, theme *Theme) st
 		return Box("Selected", "  Move cursor to a container", width, height, theme)
 	}
 
+	windowLabel := a.windowLabel()
+
 	// Cursor on group header — show group summary.
 	if idx < 0 {
-		return renderGroupSummary(s, group, width, height, theme)
+		return renderGroupSummary(s, group, width, height, theme, windowLabel)
 	}
 
 	c := &group.containers[idx]
-	return renderContainerSelected(s, c, width, height, theme)
+	return renderContainerSelected(s, c, width, height, theme, windowLabel)
 }
 
-func renderGroupSummary(s *Session, g *containerGroup, width, height int, theme *Theme) string {
+func renderGroupSummary(s *Session, g *containerGroup, width, height int, theme *Theme, windowLabel string) string {
 	innerW := width - 2
 	innerH := height - 2
 	var totalCPU float64
@@ -85,9 +87,15 @@ func renderGroupSummary(s *Session, g *containerGroup, width, height int, theme 
 		memContent = fmt.Sprintf(" MEM: %s", memVal)
 	}
 
+	cpuTitle := "CPU"
+	memTitle := "Memory"
+	if windowLabel != "" {
+		cpuTitle += " · " + windowLabel
+		memTitle += " · " + windowLabel
+	}
 	graphs := lipgloss.JoinVertical(lipgloss.Left,
-		Box("CPU", cpuContent, innerW, cpuH, theme),
-		Box("Memory", memContent, innerW, memH, theme))
+		Box(cpuTitle, cpuContent, innerW, cpuH, theme),
+		Box(memTitle, memContent, innerW, memH, theme))
 
 	var lines []string
 	lines = append(lines, strings.Split(graphs, "\n")...)
@@ -144,7 +152,7 @@ func aggregateHistory(histories map[string]*RingBuffer[float64], ids []string) [
 	return agg
 }
 
-func renderContainerSelected(s *Session, c *protocol.ContainerMetrics, width, height int, theme *Theme) string {
+func renderContainerSelected(s *Session, c *protocol.ContainerMetrics, width, height int, theme *Theme, windowLabel string) string {
 	innerW := width - 2
 	innerH := height - 2
 
@@ -190,9 +198,15 @@ func renderContainerSelected(s *Session, c *protocol.ContainerMetrics, width, he
 		memContent = fmt.Sprintf(" MEM: %s", memVal)
 	}
 
+	cpuTitle := "CPU"
+	memTitle := "Memory"
+	if windowLabel != "" {
+		cpuTitle += " · " + windowLabel
+		memTitle += " · " + windowLabel
+	}
 	graphs := lipgloss.JoinVertical(lipgloss.Left,
-		Box("CPU", cpuContent, innerW, cpuH, theme),
-		Box("Memory", memContent, innerW, memH, theme))
+		Box(cpuTitle, cpuContent, innerW, cpuH, theme),
+		Box(memTitle, memContent, innerW, memH, theme))
 
 	var lines []string
 	lines = append(lines, strings.Split(graphs, "\n")...)

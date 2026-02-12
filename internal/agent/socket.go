@@ -17,34 +17,37 @@ import (
 
 const maxConnections = 64
 
-// maxQueryRange is the maximum allowed time range for metric/alert queries (24 hours).
-const maxQueryRange = 24 * 60 * 60
+// defaultMaxQueryRange is the fallback max query range (24 hours) when no retention is set.
+const defaultMaxQueryRange = 24 * 60 * 60
 
 // maxSilenceDuration is the maximum silence duration (30 days in seconds).
 const maxSilenceDuration = 30 * 24 * 60 * 60
 
 // SocketServer serves protocol messages over a Unix domain socket.
 type SocketServer struct {
-	hub      *Hub
-	store    *Store
-	docker   *DockerCollector
-	listener net.Listener
-	path     string
-	wg       sync.WaitGroup
-	connSem  chan struct{}
+	hub           *Hub
+	store         *Store
+	docker        *DockerCollector
+	retentionDays int
+	listener      net.Listener
+	path          string
+	wg            sync.WaitGroup
+	connSem       chan struct{}
 
 	alerterMu sync.RWMutex
 	alerter   *Alerter
 }
 
 // NewSocketServer creates a SocketServer. Call Start to begin accepting connections.
-func NewSocketServer(hub *Hub, store *Store, docker *DockerCollector, alerter *Alerter) *SocketServer {
+// retentionDays controls the maximum query range; 0 falls back to 24h.
+func NewSocketServer(hub *Hub, store *Store, docker *DockerCollector, alerter *Alerter, retentionDays int) *SocketServer {
 	return &SocketServer{
-		hub:     hub,
-		store:   store,
-		docker:  docker,
-		alerter: alerter,
-		connSem: make(chan struct{}, maxConnections),
+		hub:           hub,
+		store:         store,
+		docker:        docker,
+		alerter:       alerter,
+		retentionDays: retentionDays,
+		connSem:       make(chan struct{}, maxConnections),
 	}
 }
 
@@ -386,8 +389,12 @@ func (c *connState) queryMetrics(env *protocol.Envelope) {
 		c.sendError(env.ID, "start must be <= end")
 		return
 	}
-	if req.End-req.Start > maxQueryRange {
-		c.sendError(env.ID, "time range too large (max 24h)")
+	maxRange := int64(c.ss.retentionDays) * 86400
+	if maxRange <= 0 {
+		maxRange = defaultMaxQueryRange
+	}
+	if req.End-req.Start > maxRange {
+		c.sendError(env.ID, fmt.Sprintf("time range too large (max %dd)", c.ss.retentionDays))
 		return
 	}
 
@@ -416,11 +423,19 @@ func (c *connState) queryMetrics(env *protocol.Envelope) {
 		return
 	}
 
+	hostOut := convertTimedHost(host)
+	containerOut := convertTimedContainer(containers)
+	if req.Points > 0 {
+		hostOut = downsampleHost(hostOut, req.Points)
+		containerOut = downsampleContainers(containerOut, req.Points)
+	}
+
 	resp := protocol.QueryMetricsResp{
-		Host:       convertTimedHost(host),
-		Disks:      convertTimedDisk(disks),
-		Networks:   convertTimedNet(nets),
-		Containers: convertTimedContainer(containers),
+		Host:          hostOut,
+		Disks:         convertTimedDisk(disks),
+		Networks:      convertTimedNet(nets),
+		Containers:    containerOut,
+		RetentionDays: c.ss.retentionDays,
 	}
 	c.sendResponse(env.ID, &resp)
 }
@@ -601,6 +616,106 @@ func (c *connState) isMonitoredContainer(id string) bool {
 		}
 	}
 	return false
+}
+
+// --- Downsampling ---
+
+// downsampleHost reduces a host metric slice to at most n points using
+// max-per-bucket aggregation, preserving spikes.
+func downsampleHost(data []protocol.TimedHostMetrics, n int) []protocol.TimedHostMetrics {
+	if len(data) <= n || n <= 0 {
+		return data
+	}
+	out := make([]protocol.TimedHostMetrics, 0, n)
+	bucketSize := float64(len(data)) / float64(n)
+	for i := 0; i < n; i++ {
+		lo := int(float64(i) * bucketSize)
+		hi := int(float64(i+1) * bucketSize)
+		if hi > len(data) {
+			hi = len(data)
+		}
+		if lo >= hi {
+			continue
+		}
+		best := data[lo]
+		for j := lo + 1; j < hi; j++ {
+			d := data[j]
+			if d.CPUPercent > best.CPUPercent {
+				best.CPUPercent = d.CPUPercent
+			}
+			if d.MemPercent > best.MemPercent {
+				best.MemPercent = d.MemPercent
+			}
+			if d.MemUsed > best.MemUsed {
+				best.MemUsed = d.MemUsed
+			}
+			if d.Load1 > best.Load1 {
+				best.Load1 = d.Load1
+			}
+			if d.Load5 > best.Load5 {
+				best.Load5 = d.Load5
+			}
+			if d.Load15 > best.Load15 {
+				best.Load15 = d.Load15
+			}
+		}
+		// Keep the last timestamp in the bucket for monotonicity.
+		best.Timestamp = data[hi-1].Timestamp
+		out = append(out, best)
+	}
+	return out
+}
+
+// downsampleContainers reduces container metrics to at most n points per
+// container using max-per-bucket aggregation.
+func downsampleContainers(data []protocol.TimedContainerMetrics, n int) []protocol.TimedContainerMetrics {
+	if n <= 0 {
+		return data
+	}
+	// Group by container ID.
+	byID := make(map[string][]protocol.TimedContainerMetrics)
+	var order []string
+	for _, m := range data {
+		if _, seen := byID[m.ID]; !seen {
+			order = append(order, m.ID)
+		}
+		byID[m.ID] = append(byID[m.ID], m)
+	}
+	var out []protocol.TimedContainerMetrics
+	for _, id := range order {
+		series := byID[id]
+		if len(series) <= n {
+			out = append(out, series...)
+			continue
+		}
+		bucketSize := float64(len(series)) / float64(n)
+		for i := 0; i < n; i++ {
+			lo := int(float64(i) * bucketSize)
+			hi := int(float64(i+1) * bucketSize)
+			if hi > len(series) {
+				hi = len(series)
+			}
+			if lo >= hi {
+				continue
+			}
+			best := series[lo]
+			for j := lo + 1; j < hi; j++ {
+				d := series[j]
+				if d.CPUPercent > best.CPUPercent {
+					best.CPUPercent = d.CPUPercent
+				}
+				if d.MemUsage > best.MemUsage {
+					best.MemUsage = d.MemUsage
+				}
+				if d.MemPercent > best.MemPercent {
+					best.MemPercent = d.MemPercent
+				}
+			}
+			best.Timestamp = series[hi-1].Timestamp
+			out = append(out, best)
+		}
+	}
+	return out
 }
 
 // --- Converters: agent types -> protocol types ---

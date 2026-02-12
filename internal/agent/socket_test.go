@@ -25,7 +25,7 @@ func testSocketServer(t *testing.T, store *Store) (*SocketServer, *Hub, string) 
 		untracked:         make(map[string]bool),
 		untrackedProjects: make(map[string]bool),
 	}
-	ss := NewSocketServer(hub, store, dc, nil)
+	ss := NewSocketServer(hub, store, dc, nil, 7)
 	path := filepath.Join(t.TempDir(), "test.sock")
 	if err := ss.Start(path); err != nil {
 		t.Fatal(err)
@@ -46,7 +46,7 @@ func testSocketServerWithAlerter(t *testing.T, store *Store, alerter *Alerter) (
 		untracked:         make(map[string]bool),
 		untrackedProjects: make(map[string]bool),
 	}
-	ss := NewSocketServer(hub, store, dc, alerter)
+	ss := NewSocketServer(hub, store, dc, alerter, 7)
 	path := filepath.Join(t.TempDir(), "test.sock")
 	if err := ss.Start(path); err != nil {
 		t.Fatal(err)
@@ -160,8 +160,8 @@ func TestSocketQueryMetricsRangeValidation(t *testing.T) {
 		t.Fatalf("expected error, got %q", resp.Type)
 	}
 
-	// Range too large.
-	req = protocol.QueryMetricsReq{Start: 0, End: maxQueryRange + 1}
+	// Range too large (7 days retention = 604800s).
+	req = protocol.QueryMetricsReq{Start: 0, End: 7*86400 + 1}
 	env, err = protocol.NewEnvelope(protocol.TypeQueryMetrics, 2, &req)
 	if err != nil {
 		t.Fatal(err)
@@ -1127,7 +1127,7 @@ func TestSocketFileCleanedUpOnStop(t *testing.T) {
 	s := testStore(t)
 	hub := NewHub()
 	dc := &DockerCollector{prevCPU: make(map[string]cpuPrev), untracked: make(map[string]bool), untrackedProjects: make(map[string]bool)}
-	ss := NewSocketServer(hub, s, dc, nil)
+	ss := NewSocketServer(hub, s, dc, nil, 7)
 
 	path := filepath.Join(t.TempDir(), "test.sock")
 	if err := ss.Start(path); err != nil {

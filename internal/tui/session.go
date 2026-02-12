@@ -16,12 +16,15 @@ type Session struct {
 	Alerts     map[int64]*protocol.AlertEvent
 
 	// History buffers.
-	Rates          *RateCalc
-	CPUHistory     map[string]*RingBuffer[float64]
-	MemHistory     map[string]*RingBuffer[float64]
-	HostCPUHistory      *RingBuffer[float64]
-	HostMemHistory      *RingBuffer[float64]
+	Rates              *RateCalc
+	CPUHistory         map[string]*RingBuffer[float64]
+	MemHistory         map[string]*RingBuffer[float64]
+	HostCPUHistory     *RingBuffer[float64]
+	HostMemHistory     *RingBuffer[float64]
 	HostMemUsedHistory *RingBuffer[float64]
+
+	// Agent capabilities.
+	RetentionDays int
 
 	// Per-session view state.
 	Dash   DashboardState
@@ -29,6 +32,19 @@ type Session struct {
 	Detail DetailState
 
 	Err error
+}
+
+// resetHistories clears all ring buffers for a fresh backfill.
+func (s *Session) resetHistories() {
+	s.HostCPUHistory.Reset()
+	s.HostMemHistory.Reset()
+	s.HostMemUsedHistory.Reset()
+	for _, buf := range s.CPUHistory {
+		buf.Reset()
+	}
+	for _, buf := range s.MemHistory {
+		buf.Reset()
+	}
 }
 
 // NewSession creates a session with initialized buffers.
@@ -41,9 +57,9 @@ func NewSession(name string, client *Client, tunnel *Tunnel) *Session {
 		Rates:                NewRateCalc(),
 		CPUHistory:           make(map[string]*RingBuffer[float64]),
 		MemHistory:           make(map[string]*RingBuffer[float64]),
-		HostCPUHistory:       NewRingBuffer[float64](180),
-		HostMemHistory:       NewRingBuffer[float64](180),
-		HostMemUsedHistory: NewRingBuffer[float64](180),
+		HostCPUHistory:       NewRingBuffer[float64](600),
+		HostMemHistory:       NewRingBuffer[float64](600),
+		HostMemUsedHistory: NewRingBuffer[float64](600),
 		Dash:                 newDashboardState(),
 		Alertv:               newAlertViewState(),
 	}

@@ -75,7 +75,7 @@ func New(cfg *Config, cfgPath string) (*Agent, error) {
 	}
 
 	a.events = NewEventWatcher(docker, lt, a.alerter, hub)
-	a.socket = NewSocketServer(hub, store, docker, a.alerter)
+	a.socket = NewSocketServer(hub, store, docker, a.alerter, cfg.Storage.RetentionDays)
 	return a, nil
 }
 

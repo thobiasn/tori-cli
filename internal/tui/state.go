@@ -53,3 +53,9 @@ func (r *RingBuffer[T]) Last() (T, bool) {
 func (r *RingBuffer[T]) Len() int {
 	return r.count
 }
+
+// Reset clears the buffer without reallocating.
+func (r *RingBuffer[T]) Reset() {
+	r.head = 0
+	r.count = 0
+}

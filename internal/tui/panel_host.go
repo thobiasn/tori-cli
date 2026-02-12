@@ -166,9 +166,14 @@ func formatAutoLabel(v float64) string {
 }
 
 // renderCPUPanel renders the CPU panel with a multi-row braille graph.
-func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, height int, theme *Theme) string {
+// windowLabel is appended to the title (e.g. "CPU · 1h"); empty for Live.
+func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, height int, theme *Theme, windowLabel string) string {
+	title := "CPU"
+	if windowLabel != "" {
+		title += " · " + windowLabel
+	}
 	if host == nil {
-		return Box("CPU", "  waiting for data...", width, height, theme)
+		return Box(title, "  waiting for data...", width, height, theme)
 	}
 
 	innerW := width - 2
@@ -197,7 +202,7 @@ func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, hei
 	infoLine := loadStr + strings.Repeat(" ", gap) + uptimeStr
 	lines = append(lines, infoLine)
 
-	return Box("CPU", strings.Join(lines, "\n"), width, height, theme)
+	return Box(title, strings.Join(lines, "\n"), width, height, theme)
 }
 
 // memDivider renders a btop-style divider: ─Label:──────value─
@@ -216,9 +221,14 @@ func memDivider(label, value string, width int, labelColor lipgloss.Color, theme
 }
 
 // renderMemPanel renders the memory panel with a grid-backed braille graph (like CPU).
-func renderMemPanel(host *protocol.HostMetrics, usedHistory []float64, width, height int, theme *Theme) string {
+// windowLabel is appended to the title; empty for Live.
+func renderMemPanel(host *protocol.HostMetrics, usedHistory []float64, width, height int, theme *Theme, windowLabel string) string {
+	title := "Memory"
+	if windowLabel != "" {
+		title += " · " + windowLabel
+	}
 	if host == nil {
-		return Box("Memory", "  waiting for data...", width, height, theme)
+		return Box(title, "  waiting for data...", width, height, theme)
 	}
 
 	innerW := width - 2
@@ -242,7 +252,7 @@ func renderMemPanel(host *protocol.HostMetrics, usedHistory []float64, width, he
 	usedStr := fmt.Sprintf(" Used: %s / %s", FormatBytes(host.MemUsed), FormatBytes(host.MemTotal))
 	lines = append(lines, usedStr)
 
-	return Box("Memory", strings.Join(lines, "\n"), width, height, theme)
+	return Box(title, strings.Join(lines, "\n"), width, height, theme)
 }
 
 // renderDiskPanel renders a btop-style disk panel with per-mountpoint Used/Free bars

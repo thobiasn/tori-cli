@@ -20,17 +20,37 @@ const (
 	viewAlerts
 )
 
+// timeWindow represents a graph time window preset.
+type timeWindow struct {
+	label   string // e.g. "Live", "1h", "7d"
+	seconds int64  // 0 = live streaming
+}
+
+// ringBufSize is the number of data points in each ring buffer.
+const ringBufSize = 600
+
+var timeWindows = []timeWindow{
+	{"Live", 0},
+	{"1h", 3600},
+	{"6h", 6 * 3600},
+	{"12h", 12 * 3600},
+	{"24h", 24 * 3600},
+	{"3d", 3 * 86400},
+	{"7d", 7 * 86400},
+}
+
 // App is the root Bubbletea model.
 type App struct {
-	sessions      map[string]*Session
-	sessionOrder  []string // sorted server names for deterministic iteration
-	activeSession string
-	width         int
-	height        int
-	active        view
-	theme         Theme
-	err           error
-	showHelp      bool
+	sessions         map[string]*Session
+	sessionOrder     []string // sorted server names for deterministic iteration
+	activeSession    string
+	width            int
+	height           int
+	active           view
+	windowIdx        int // index into timeWindows (0 = Live)
+	theme            Theme
+	err              error
+	showHelp         bool
 	showServerPicker bool
 }
 
@@ -65,7 +85,7 @@ func NewApp(sessions map[string]*Session) App {
 func subscribeAll(c *Client) tea.Cmd {
 	return tea.Batch(
 		subscribeAndQueryContainers(c),
-		backfillMetrics(c),
+		backfillMetrics(c, 0),
 	)
 }
 
@@ -93,12 +113,25 @@ func subscribeAndQueryContainers(c *Client) tea.Cmd {
 	}
 }
 
-func backfillMetrics(c *Client) tea.Cmd {
+// backfillMetrics fetches historical metrics for the given time range.
+// seconds=0 uses the default 30-minute live backfill. For fixed windows,
+// points=600 requests server-side downsampling.
+func backfillMetrics(c *Client, seconds int64) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		timeout := 5 * time.Second
+		if seconds > 0 {
+			timeout = 15 * time.Second
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		now := time.Now().Unix()
-		resp, err := c.QueryMetrics(ctx, now-1800, now)
+		rangeSec := int64(1800)
+		points := 0
+		if seconds > 0 {
+			rangeSec = seconds
+			points = ringBufSize
+		}
+		resp, err := c.QueryMetrics(ctx, now-rangeSec, now, points)
 		if err != nil {
 			return nil // Non-critical: graphs fill from live data instead.
 		}
@@ -166,6 +199,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case metricsBackfillMsg:
 		if s := a.sessions[msg.server]; s != nil && msg.resp != nil {
+			if msg.resp.RetentionDays > 0 {
+				s.RetentionDays = msg.resp.RetentionDays
+			}
 			handleMetricsBackfill(s, msg.resp)
 		}
 		return a, nil
@@ -262,10 +298,10 @@ func (a *App) handleSessionMetrics(s *Session, m *protocol.MetricsUpdate) tea.Cm
 	for _, c := range m.Containers {
 		current[c.ID] = true
 		if _, ok := s.CPUHistory[c.ID]; !ok {
-			s.CPUHistory[c.ID] = NewRingBuffer[float64](180)
+			s.CPUHistory[c.ID] = NewRingBuffer[float64](600)
 		}
 		if _, ok := s.MemHistory[c.ID]; !ok {
-			s.MemHistory[c.ID] = NewRingBuffer[float64](180)
+			s.MemHistory[c.ID] = NewRingBuffer[float64](600)
 		}
 		s.CPUHistory[c.ID].Push(c.CPUPercent)
 		s.MemHistory[c.ID].Push(float64(c.MemUsage))
@@ -293,10 +329,10 @@ func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp) {
 	}
 	for _, c := range resp.Containers {
 		if _, ok := s.CPUHistory[c.ID]; !ok {
-			s.CPUHistory[c.ID] = NewRingBuffer[float64](180)
+			s.CPUHistory[c.ID] = NewRingBuffer[float64](600)
 		}
 		if _, ok := s.MemHistory[c.ID]; !ok {
-			s.MemHistory[c.ID] = NewRingBuffer[float64](180)
+			s.MemHistory[c.ID] = NewRingBuffer[float64](600)
 		}
 		s.CPUHistory[c.ID].Push(c.CPUPercent)
 		s.MemHistory[c.ID].Push(float64(c.MemUsage))
@@ -330,6 +366,16 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
+	// Zoom time window (+/- keys) — only on views with graphs.
+	if key == "+" || key == "=" || key == "-" {
+		if a.active == viewDashboard || a.active == viewDetail {
+			if cmd := a.handleZoom(key); cmd != nil {
+				return a, cmd
+			}
+			return a, nil
+		}
+	}
+
 	// View switching.
 	if cmd, ok := a.handleViewSwitch(key); ok {
 		return a, cmd
@@ -349,6 +395,44 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, updateDetail(&a, s, msg)
 	}
 	return a, nil
+}
+
+// handleZoom adjusts the time window and triggers a backfill.
+func (a *App) handleZoom(key string) tea.Cmd {
+	s := a.session()
+	if s == nil {
+		return nil
+	}
+	prev := a.windowIdx
+	switch key {
+	case "+", "=": // zoom out (longer window)
+		for i := a.windowIdx + 1; i < len(timeWindows); i++ {
+			w := timeWindows[i]
+			if s.RetentionDays > 0 && w.seconds > int64(s.RetentionDays)*86400 {
+				break
+			}
+			a.windowIdx = i
+			break
+		}
+	case "-": // zoom in (shorter window)
+		if a.windowIdx > 0 {
+			a.windowIdx--
+		}
+	}
+	if a.windowIdx == prev {
+		return nil
+	}
+	s.resetHistories()
+	return backfillMetrics(s.Client, timeWindows[a.windowIdx].seconds)
+}
+
+// windowLabel returns the label for the current time window (empty for Live).
+func (a *App) windowLabel() string {
+	w := timeWindows[a.windowIdx]
+	if w.seconds == 0 {
+		return ""
+	}
+	return w.label
 }
 
 func (a *App) handleServerPicker(key string) (App, tea.Cmd) {
@@ -523,6 +607,12 @@ func (a *App) renderFooter() string {
 	if hints := a.viewHints(); hints != "" {
 		muted := lipgloss.NewStyle().Foreground(a.theme.Muted)
 		footer += "  " + muted.Render(hints)
+	}
+
+	// Zoom indicator.
+	{
+		muted := lipgloss.NewStyle().Foreground(a.theme.Muted)
+		footer += "  " + muted.Render("+/- Zoom: "+timeWindows[a.windowIdx].label)
 	}
 
 	footer += "  ? Help  q Quit"

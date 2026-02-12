@@ -137,6 +137,7 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 	}
 
 	cpuHistory := s.HostCPUHistory.Data()
+	windowLabel := a.windowLabel()
 
 	alertPanel := renderAlertPanel(s.Alerts, width, theme)
 
@@ -149,7 +150,7 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		leftW := hostInnerW * 65 / 100
 		rightW := hostInnerW - leftW
 
-		cpuPanel := renderCPUPanel(cpuHistory, s.Host, leftW, hostInnerH, theme)
+		cpuPanel := renderCPUPanel(cpuHistory, s.Host, leftW, hostInnerH, theme, windowLabel)
 		// Split right column: memory on top, disks on bottom.
 		diskH := len(s.Disks)*3 + 2 // 3 lines per disk (divider + used + free) + borders
 		if s.Host != nil && s.Host.SwapTotal > 0 {
@@ -167,7 +168,7 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 			diskH = hostInnerH - memH
 		}
 
-		memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), rightW, memH, theme)
+		memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), rightW, memH, theme, windowLabel)
 		var swapTotal, swapUsed uint64
 		if s.Host != nil {
 			swapTotal, swapUsed = s.Host.SwapTotal, s.Host.SwapUsed
@@ -222,8 +223,8 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 	if s.Host != nil {
 		swapTotal2, swapUsed2 = s.Host.SwapTotal, s.Host.SwapUsed
 	}
-	cpuPanel := renderCPUPanel(cpuHistory, s.Host, hostInnerW, cpuPanelH, theme)
-	memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), hostInnerW, narrowMemH, theme)
+	cpuPanel := renderCPUPanel(cpuHistory, s.Host, hostInnerW, cpuPanelH, theme, windowLabel)
+	memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), hostInnerW, narrowMemH, theme, windowLabel)
 	diskPanel := renderDiskPanel(s.Disks, swapTotal2, swapUsed2, hostInnerW, diskH, theme)
 	hostContent := strings.Join([]string{cpuPanel, memPanel, diskPanel}, "\n")
 	hostBox := Box("Host", hostContent, width, hostH, theme)

@@ -42,7 +42,7 @@ func TestRenderCPUPanel(t *testing.T) {
 		Uptime: 86400 * 14,
 	}
 
-	got := renderCPUPanel([]float64{10, 20, 42.5}, host, 50, 8, &theme)
+	got := renderCPUPanel([]float64{10, 20, 42.5}, host, 50, 8, &theme, "")
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "42.5%") {
 		t.Error("should contain CPU percentage")
@@ -57,7 +57,7 @@ func TestRenderCPUPanel(t *testing.T) {
 
 func TestRenderCPUPanelNilHost(t *testing.T) {
 	theme := DefaultTheme()
-	got := renderCPUPanel(nil, nil, 30, 8, &theme)
+	got := renderCPUPanel(nil, nil, 30, 8, &theme, "")
 	if !strings.Contains(got, "waiting") {
 		t.Error("nil host should show waiting message")
 	}
@@ -73,7 +73,7 @@ func TestRenderMemPanel(t *testing.T) {
 		MemFree:    3 * 1024 * 1024 * 1024,
 	}
 
-	got := renderMemPanel(host, []float64{40, 45, 50}, 50, 14, &theme)
+	got := renderMemPanel(host, []float64{40, 45, 50}, 50, 14, &theme, "")
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "Used") {
 		t.Error("should contain Used label")
@@ -91,7 +91,7 @@ func TestRenderMemPanel(t *testing.T) {
 
 func TestRenderMemPanelNilHost(t *testing.T) {
 	theme := DefaultTheme()
-	got := renderMemPanel(nil, nil, 30, 8, &theme)
+	got := renderMemPanel(nil, nil, 30, 8, &theme, "")
 	if !strings.Contains(got, "waiting") {
 		t.Error("nil host should show waiting message")
 	}

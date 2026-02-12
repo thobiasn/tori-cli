@@ -100,8 +100,9 @@ type ContainerEvent struct {
 
 // QueryMetricsReq is the body for TypeQueryMetrics.
 type QueryMetricsReq struct {
-	Start int64 `msgpack:"start"`
-	End   int64 `msgpack:"end"`
+	Start  int64 `msgpack:"start"`
+	End    int64 `msgpack:"end"`
+	Points int   `msgpack:"points,omitempty"` // desired data points; 0 = no downsampling
 }
 
 // QueryMetricsResp is the response for TypeQueryMetrics.
@@ -110,6 +111,10 @@ type QueryMetricsResp struct {
 	Disks      []TimedDiskMetrics      `msgpack:"disks"`
 	Networks   []TimedNetMetrics       `msgpack:"networks"`
 	Containers []TimedContainerMetrics `msgpack:"containers"`
+	// RetentionDays is piggybacked here for pragmatism — it's a property of the
+	// agent, not the query result. Should move to a server-info handshake if one
+	// is added later.
+	RetentionDays int `msgpack:"retention_days,omitempty"`
 }
 
 // QueryLogsReq is the body for TypeQueryLogs.

@@ -123,7 +123,7 @@ func TestApplyConfigUpdatesFields(t *testing.T) {
 		hub:    hub,
 		done:   make(chan struct{}),
 	}
-	ss := NewSocketServer(hub, store, docker, nil)
+	ss := NewSocketServer(hub, store, docker, nil, 7)
 
 	a := &Agent{
 		cfg: &Config{
@@ -182,7 +182,7 @@ func TestApplyConfigRebuildsAlerter(t *testing.T) {
 
 	hub := NewHub()
 	ew := &EventWatcher{docker: docker, hub: hub, done: make(chan struct{})}
-	ss := NewSocketServer(hub, store, docker, nil)
+	ss := NewSocketServer(hub, store, docker, nil, 7)
 
 	a := &Agent{
 		cfg: &Config{

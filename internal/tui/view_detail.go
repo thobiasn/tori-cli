@@ -299,7 +299,7 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 		logH = 5
 	}
 
-	metricsContent := renderDetailMetrics(s, det, cm, width, metricsH, theme)
+	metricsContent := renderDetailMetrics(s, det, cm, width, metricsH, theme, a.windowLabel())
 	metricsBox := Box(title, metricsContent, width, metricsH, theme)
 
 	// Bottom section: logs.
@@ -362,7 +362,7 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 		logH = 5
 	}
 
-	metricsContent := renderDetailGroupMetrics(s, det, width, metricsH, theme)
+	metricsContent := renderDetailGroupMetrics(s, det, width, metricsH, theme, a.windowLabel())
 	metricsBox := Box(title, metricsContent, width, metricsH, theme)
 
 	var logBox string
@@ -373,7 +373,7 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 	return metricsBox + "\n" + logBox
 }
 
-func renderDetailGroupMetrics(s *Session, det *DetailState, width, height int, theme *Theme) string {
+func renderDetailGroupMetrics(s *Session, det *DetailState, width, height int, theme *Theme, windowLabel string) string {
 	innerW := width - 2
 
 	// Aggregate CPU/MEM/Disk across all containers in the group.
@@ -430,9 +430,15 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, width, height int, t
 		memContent = fmt.Sprintf(" MEM %s", memVal)
 	}
 
+	cpuTitle := "CPU"
+	memTitle := "Memory"
+	if windowLabel != "" {
+		cpuTitle += " · " + windowLabel
+		memTitle += " · " + windowLabel
+	}
 	graphs := lipgloss.JoinHorizontal(lipgloss.Top,
-		Box("CPU", cpuContent, leftW, graphBudget, theme),
-		Box("Memory", memContent, rightW, graphBudget, theme))
+		Box(cpuTitle, cpuContent, leftW, graphBudget, theme),
+		Box(memTitle, memContent, rightW, graphBudget, theme))
 
 	var lines []string
 	lines = append(lines, strings.Split(graphs, "\n")...)
@@ -473,7 +479,7 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, width, height int, t
 	return strings.Join(lines, "\n")
 }
 
-func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMetrics, width, height int, theme *Theme) string {
+func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMetrics, width, height int, theme *Theme, windowLabel string) string {
 	if cm == nil {
 		return "  Waiting for metrics..."
 	}
@@ -517,9 +523,15 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 		memContent = fmt.Sprintf(" MEM %s", memVal)
 	}
 
+	cpuTitle := "CPU"
+	memTitle := "Memory"
+	if windowLabel != "" {
+		cpuTitle += " · " + windowLabel
+		memTitle += " · " + windowLabel
+	}
 	graphs := lipgloss.JoinHorizontal(lipgloss.Top,
-		Box("CPU", cpuContent, leftW, graphBudget, theme),
-		Box("Memory", memContent, rightW, graphBudget, theme))
+		Box(cpuTitle, cpuContent, leftW, graphBudget, theme),
+		Box(memTitle, memContent, rightW, graphBudget, theme))
 
 	var lines []string
 	lines = append(lines, strings.Split(graphs, "\n")...)
