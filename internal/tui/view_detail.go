@@ -14,9 +14,14 @@ import (
 
 // DetailState holds state for the container/group detail view.
 type DetailState struct {
-	containerID string // single-container mode (empty in group mode)
-	project     string // group mode (empty in single-container mode)
+	containerID string   // single-container mode (empty in group mode)
+	project     string   // group mode (empty in single-container mode)
 	projectIDs  []string // container IDs in the project (group mode)
+
+	// Service identity for cross-container historical queries.
+	// Set when entering single-container detail; empty for group mode.
+	svcProject string // compose project (or "" for non-compose)
+	svcService string // compose service label (or container name for non-compose)
 
 	logs      *RingBuffer[protocol.LogEntryMsg]
 	logScroll int
@@ -31,11 +36,17 @@ type DetailState struct {
 	searchText        string
 	searchMode        bool
 
-	backfilled bool
+	backfilled         bool
+	metricsBackfilled  bool
+	deployBoundaries   []VLine // pre-computed deploy marker positions for graphs
 }
 
 type detailLogQueryMsg struct {
 	entries []protocol.LogEntryMsg
+}
+
+type detailMetricsQueryMsg struct {
+	resp *protocol.QueryMetricsResp
 }
 
 func (s *DetailState) reset() {
@@ -50,6 +61,8 @@ func (s *DetailState) reset() {
 	s.searchText = ""
 	s.searchMode = false
 	s.backfilled = false
+	s.metricsBackfilled = false
+	s.deployBoundaries = nil
 }
 
 func (s *DetailState) isGroupMode() bool {
@@ -63,30 +76,66 @@ func (s *DetailState) onSwitch(c *Client) tea.Cmd {
 	if s.logs == nil {
 		s.reset()
 	}
-	if s.backfilled {
+
+	var cmds []tea.Cmd
+
+	// Log backfill.
+	if !s.backfilled {
+		id := s.containerID
+		ids := s.projectIDs
+		svcProject := s.svcProject
+		svcService := s.svcService
+		cmds = append(cmds, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			req := &protocol.QueryLogsReq{
+				Start: 0,
+				End:   time.Now().Unix(),
+				Limit: 500,
+			}
+			// Prefer service identity for cross-container history.
+			if svcService != "" {
+				req.Project = svcProject
+				req.Service = svcService
+			} else if len(ids) > 0 {
+				req.ContainerIDs = ids
+			} else if id != "" {
+				req.ContainerID = id
+			}
+			entries, err := c.QueryLogs(ctx, req)
+			if err != nil {
+				return detailLogQueryMsg{}
+			}
+			return detailLogQueryMsg{entries: entries}
+		})
+	}
+
+	// Service-scoped metrics backfill for cross-container graph history.
+	if !s.metricsBackfilled && s.svcService != "" {
+		svcProject := s.svcProject
+		svcService := s.svcService
+		cmds = append(cmds, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			now := time.Now().Unix()
+			start := now - int64(ringBufSize*10) // match live backfill range
+			resp, err := c.QueryMetrics(ctx, &protocol.QueryMetricsReq{
+				Start:   start,
+				End:     now,
+				Project: svcProject,
+				Service: svcService,
+			})
+			if err != nil {
+				return detailMetricsQueryMsg{}
+			}
+			return detailMetricsQueryMsg{resp: resp}
+		})
+	}
+
+	if len(cmds) == 0 {
 		return nil
 	}
-	id := s.containerID
-	ids := s.projectIDs
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		req := &protocol.QueryLogsReq{
-			Start: 0,
-			End:   time.Now().Unix(),
-			Limit: 500,
-		}
-		if len(ids) > 0 {
-			req.ContainerIDs = ids
-		} else if id != "" {
-			req.ContainerID = id
-		}
-		entries, err := c.QueryLogs(ctx, req)
-		if err != nil {
-			return detailLogQueryMsg{}
-		}
-		return detailLogQueryMsg{entries: entries}
-	}
+	return tea.Batch(cmds...)
 }
 
 func (s *DetailState) onStreamEntry(entry protocol.LogEntryMsg) {
@@ -125,8 +174,11 @@ func (s *DetailState) handleBackfill(msg detailLogQueryMsg) {
 		oldestTS = existing[0].Timestamp
 	}
 
+	// Inject deploy separators at container ID transitions in backfilled data.
+	backfill := injectDeploySeparators(msg.entries)
+
 	newBuf := NewRingBuffer[protocol.LogEntryMsg](5000)
-	for _, e := range msg.entries {
+	for _, e := range backfill {
 		if oldestTS == 0 || e.Timestamp < oldestTS {
 			newBuf.Push(e)
 		}
@@ -136,6 +188,32 @@ func (s *DetailState) handleBackfill(msg detailLogQueryMsg) {
 	}
 	s.logs = newBuf
 	s.backfilled = true
+}
+
+// injectDeploySeparators detects container ID transitions in chronologically
+// ordered log entries and inserts synthetic "redeployed" separator entries
+// at each boundary.
+func injectDeploySeparators(entries []protocol.LogEntryMsg) []protocol.LogEntryMsg {
+	if len(entries) == 0 {
+		return entries
+	}
+	out := make([]protocol.LogEntryMsg, 0, len(entries)+4)
+	prevID := entries[0].ContainerID
+	out = append(out, entries[0])
+	for _, e := range entries[1:] {
+		if e.ContainerID != prevID && e.Stream != "event" {
+			out = append(out, protocol.LogEntryMsg{
+				Timestamp:     e.Timestamp,
+				ContainerID:   e.ContainerID,
+				ContainerName: e.ContainerName,
+				Stream:        "event",
+				Message:       fmt.Sprintf("── %s redeployed ──", e.ContainerName),
+			})
+			prevID = e.ContainerID
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func (s *DetailState) matchesFilter(entry protocol.LogEntryMsg) bool {
@@ -498,7 +576,7 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 	cpuData := historyData(s.CPUHistory, det.containerID)
 	var cpuContent string
 	if len(cpuData) > 0 {
-		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, windowSec, theme, theme.CPUGraph, pctAxis), "\n")
+		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, windowSec, theme, theme.CPUGraph, pctAxis, det.deployBoundaries...), "\n")
 	} else {
 		cpuContent = fmt.Sprintf(" CPU %s", cpuVal)
 	}
@@ -507,7 +585,7 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 	memData := historyData(s.MemHistory, det.containerID)
 	var memContent string
 	if len(memData) > 0 {
-		memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, windowSec, theme, theme.MemGraph, bytesAxis), "\n")
+		memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, windowSec, theme, theme.MemGraph, bytesAxis, det.deployBoundaries...), "\n")
 	} else {
 		memContent = fmt.Sprintf(" MEM %s", memVal)
 	}

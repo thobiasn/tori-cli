@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -363,5 +364,70 @@ func TestDetailIsGroupMode(t *testing.T) {
 	both := &DetailState{containerID: "c1", project: "myapp"}
 	if both.isGroupMode() {
 		t.Error("containerID set should not be group mode even with project")
+	}
+}
+
+func TestInjectDeploySeparators(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		out := injectDeploySeparators(nil)
+		if len(out) != 0 {
+			t.Errorf("expected empty, got %d entries", len(out))
+		}
+	})
+
+	t.Run("same container", func(t *testing.T) {
+		entries := []protocol.LogEntryMsg{
+			{Timestamp: 1, ContainerID: "aaa", ContainerName: "web", Stream: "stdout", Message: "line1"},
+			{Timestamp: 2, ContainerID: "aaa", ContainerName: "web", Stream: "stdout", Message: "line2"},
+			{Timestamp: 3, ContainerID: "aaa", ContainerName: "web", Stream: "stderr", Message: "line3"},
+		}
+		out := injectDeploySeparators(entries)
+		if len(out) != 3 {
+			t.Errorf("same container should not add separators, got %d entries", len(out))
+		}
+	})
+
+	t.Run("two containers", func(t *testing.T) {
+		entries := []protocol.LogEntryMsg{
+			{Timestamp: 1, ContainerID: "old-c", ContainerName: "web-old", Stream: "stdout", Message: "from old"},
+			{Timestamp: 2, ContainerID: "old-c", ContainerName: "web-old", Stream: "stdout", Message: "from old 2"},
+			{Timestamp: 3, ContainerID: "new-c", ContainerName: "web-new", Stream: "stdout", Message: "from new"},
+			{Timestamp: 4, ContainerID: "new-c", ContainerName: "web-new", Stream: "stdout", Message: "from new 2"},
+		}
+		out := injectDeploySeparators(entries)
+
+		// Expect: old1, old2, separator, new1, new2 = 5 entries.
+		if len(out) != 5 {
+			t.Fatalf("expected 5 entries (4 + 1 separator), got %d", len(out))
+		}
+
+		sep := out[2]
+		if sep.Stream != "event" {
+			t.Errorf("separator Stream = %q, want event", sep.Stream)
+		}
+		if sep.ContainerID != "new-c" {
+			t.Errorf("separator ContainerID = %q, want new-c", sep.ContainerID)
+		}
+		if sep.Timestamp != 3 {
+			t.Errorf("separator Timestamp = %d, want 3", sep.Timestamp)
+		}
+		if !strings.Contains(sep.Message, "redeployed") {
+			t.Errorf("separator Message = %q, should contain 'redeployed'", sep.Message)
+		}
+	})
+}
+
+func TestDetailResetClearsServiceFields(t *testing.T) {
+	det := &DetailState{containerID: "c1"}
+	det.metricsBackfilled = true
+	det.deployBoundaries = []VLine{{Frac: 0.5, Label: "test"}}
+
+	det.reset()
+
+	if det.metricsBackfilled {
+		t.Error("metricsBackfilled should be false after reset")
+	}
+	if det.deployBoundaries != nil {
+		t.Errorf("deployBoundaries should be nil after reset, got %v", det.deployBoundaries)
 	}
 }

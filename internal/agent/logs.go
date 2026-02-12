@@ -53,7 +53,8 @@ func (lt *LogTailer) Sync(ctx context.Context, containers []Container) {
 			tailerCtx, cancel := context.WithCancel(ctx)
 			lt.tailers[c.ID] = cancel
 			lt.wg.Add(1)
-			go lt.tail(tailerCtx, c.ID, c.Name)
+			idProject, idService := serviceIdentity(c.Project, c.Service, c.Name)
+			go lt.tail(tailerCtx, c.ID, c.Name, idProject, idService)
 		}
 	}
 
@@ -78,7 +79,7 @@ func (lt *LogTailer) Stop() {
 	lt.wg.Wait()
 }
 
-func (lt *LogTailer) tail(ctx context.Context, containerID, containerName string) {
+func (lt *LogTailer) tail(ctx context.Context, containerID, containerName, project, service string) {
 	defer lt.wg.Done()
 
 	logs, err := lt.client.ContainerLogs(ctx, containerID, container.LogsOptions{
@@ -132,11 +133,11 @@ func (lt *LogTailer) tail(ctx context.Context, containerID, containerName string
 
 	go func() {
 		defer readerWg.Done()
-		scanLines(stdoutR, containerID, containerName, "stdout", lines)
+		scanLines(stdoutR, containerID, containerName, project, service, "stdout", lines)
 	}()
 	go func() {
 		defer readerWg.Done()
-		scanLines(stderrR, containerID, containerName, "stderr", lines)
+		scanLines(stderrR, containerID, containerName, project, service, "stderr", lines)
 	}()
 
 	go func() {
@@ -169,7 +170,7 @@ func (lt *LogTailer) tail(ctx context.Context, containerID, containerName string
 	}
 }
 
-func scanLines(r io.Reader, containerID, containerName, stream string, out chan<- LogEntry) {
+func scanLines(r io.Reader, containerID, containerName, project, service, stream string, out chan<- LogEntry) {
 	scanner := bufio.NewScanner(r)
 	// Allow log lines up to 64KB.
 	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
@@ -181,6 +182,8 @@ func scanLines(r io.Reader, containerID, containerName, stream string, out chan<
 			Timestamp:     ts,
 			ContainerID:   containerID,
 			ContainerName: containerName,
+			Project:       project,
+			Service:       service,
 			Stream:        stream,
 			Message:       msg,
 		}

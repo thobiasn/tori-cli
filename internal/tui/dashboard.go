@@ -257,6 +257,20 @@ func updateDashboard(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		if id != "" {
 			s.Detail.containerID = id
 			s.Detail.project = ""
+			// Set service identity for cross-container history queries.
+			s.Detail.svcProject = ""
+			s.Detail.svcService = ""
+			for _, ci := range s.ContInfo {
+				if ci.ID == id {
+					if ci.Project != "" && ci.Service != "" {
+						s.Detail.svcProject = ci.Project
+						s.Detail.svcService = ci.Service
+					} else if ci.Name != "" {
+						s.Detail.svcService = ci.Name
+					}
+					break
+				}
+			}
 			s.Detail.reset()
 			a.active = viewDetail
 			return s.Detail.onSwitch(s.Client)

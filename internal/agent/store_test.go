@@ -1088,3 +1088,147 @@ func TestLoadTrackingEmpty(t *testing.T) {
 		t.Errorf("projects = %v, want empty", projects)
 	}
 }
+
+func TestQueryContainerMetricsByService(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Two different container IDs with the same project/service (simulating a
+	// service that was redeployed, getting a new container ID).
+	s.InsertContainerMetrics(ctx, ts, []ContainerMetrics{
+		{
+			ID: "aaa111", Name: "myapp-web-1", Image: "nginx:latest", State: "running",
+			Project: "myapp", Service: "web", CPUPercent: 10.0,
+		},
+	})
+	s.InsertContainerMetrics(ctx, ts.Add(10*time.Second), []ContainerMetrics{
+		{
+			ID: "bbb222", Name: "myapp-web-1", Image: "nginx:latest", State: "running",
+			Project: "myapp", Service: "web", CPUPercent: 20.0,
+		},
+	})
+	// A different service that should not be returned.
+	s.InsertContainerMetrics(ctx, ts, []ContainerMetrics{
+		{
+			ID: "ccc333", Name: "myapp-api-1", Image: "golang:latest", State: "running",
+			Project: "myapp", Service: "api", CPUPercent: 30.0,
+		},
+	})
+
+	results, err := s.QueryContainerMetrics(ctx, ts.Unix(), ts.Add(10*time.Second).Unix(),
+		ContainerMetricsFilter{Project: "myapp", Service: "web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	// Ordered by timestamp, so aaa111 first.
+	if results[0].ID != "aaa111" {
+		t.Errorf("results[0].ID = %q, want aaa111", results[0].ID)
+	}
+	if results[0].CPUPercent != 10.0 {
+		t.Errorf("results[0].CPUPercent = %f, want 10.0", results[0].CPUPercent)
+	}
+	if results[1].ID != "bbb222" {
+		t.Errorf("results[1].ID = %q, want bbb222", results[1].ID)
+	}
+	if results[1].CPUPercent != 20.0 {
+		t.Errorf("results[1].CPUPercent = %f, want 20.0", results[1].CPUPercent)
+	}
+}
+
+func TestQueryLogsByService(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Two different container IDs with the same project/service.
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: ts, ContainerID: "aaa111", ContainerName: "myapp-web-1", Project: "myapp", Service: "web", Stream: "stdout", Message: "from container a"},
+		{Timestamp: ts, ContainerID: "bbb222", ContainerName: "myapp-web-2", Project: "myapp", Service: "web", Stream: "stdout", Message: "from container b"},
+		// Different service, should not be returned.
+		{Timestamp: ts, ContainerID: "ccc333", ContainerName: "myapp-api-1", Project: "myapp", Service: "api", Stream: "stdout", Message: "from api"},
+	})
+
+	// Query by service identity.
+	results, err := s.QueryLogs(ctx, LogFilter{
+		Start:   ts.Unix(),
+		End:     ts.Unix(),
+		Service: "web",
+		Project: "myapp",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	// Both containers should be represented.
+	ids := map[string]bool{}
+	for _, r := range results {
+		ids[r.ContainerID] = true
+	}
+	if !ids["aaa111"] || !ids["bbb222"] {
+		t.Errorf("expected aaa111 and bbb222 in results, got %v", ids)
+	}
+
+	// Service filter takes precedence over ContainerIDs filter.
+	// Even though ContainerIDs only lists "ccc333", the service filter
+	// should win and return the web service logs.
+	results, err = s.QueryLogs(ctx, LogFilter{
+		Start:        ts.Unix(),
+		End:          ts.Unix(),
+		ContainerIDs: []string{"ccc333"},
+		Service:      "web",
+		Project:      "myapp",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("service precedence: got %d results, want 2", len(results))
+	}
+	for _, r := range results {
+		if r.Service != "web" {
+			t.Errorf("expected service=web, got %q", r.Service)
+		}
+	}
+}
+
+func TestQueryLogsByServiceNonCompose(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Non-compose containers: Service set (to container name), but Project is empty.
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: ts, ContainerID: "xxx111", ContainerName: "myapp", Project: "", Service: "myapp", Stream: "stdout", Message: "line from old container"},
+		{Timestamp: ts, ContainerID: "xxx222", ContainerName: "myapp", Project: "", Service: "myapp", Stream: "stdout", Message: "line from new container"},
+		// Different non-compose service, should not be returned.
+		{Timestamp: ts, ContainerID: "yyy111", ContainerName: "other", Project: "", Service: "other", Stream: "stdout", Message: "unrelated"},
+	})
+
+	results, err := s.QueryLogs(ctx, LogFilter{
+		Start:   ts.Unix(),
+		End:     ts.Unix(),
+		Service: "myapp",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	ids := map[string]bool{}
+	for _, r := range results {
+		ids[r.ContainerID] = true
+	}
+	if !ids["xxx111"] || !ids["xxx222"] {
+		t.Errorf("expected xxx111 and xxx222 in results, got %v", ids)
+	}
+}

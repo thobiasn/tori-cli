@@ -523,3 +523,147 @@ func TestTimedMetricsRoundtrip(t *testing.T) {
 		t.Errorf("containers mismatch: %+v", decoded.Containers)
 	}
 }
+
+func TestServiceIdentityFieldsRoundtrip(t *testing.T) {
+	orig := MetricsUpdate{
+		Timestamp: 1700000000,
+		Containers: []ContainerMetrics{
+			{
+				ID: "abc123", Name: "web", Image: "nginx", State: "running",
+				Project: "myapp", Service: "web",
+				CPUPercent: 5, MemUsage: 100e6, MemLimit: 512e6, MemPercent: 19.5,
+			},
+		},
+	}
+
+	raw, err := msgpack.Marshal(&orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded MetricsUpdate
+	if err := msgpack.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Containers) != 1 {
+		t.Fatalf("containers len = %d, want 1", len(decoded.Containers))
+	}
+	c := decoded.Containers[0]
+	if c.Project != "myapp" {
+		t.Errorf("project = %q, want %q", c.Project, "myapp")
+	}
+	if c.Service != "web" {
+		t.Errorf("service = %q, want %q", c.Service, "web")
+	}
+}
+
+func TestContainerInfoServiceRoundtrip(t *testing.T) {
+	orig := QueryContainersResp{
+		Containers: []ContainerInfo{
+			{ID: "abc", Name: "web", Image: "nginx", State: "running", Project: "myapp", Service: "web", Tracked: true},
+		},
+	}
+
+	raw, err := msgpack.Marshal(&orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded QueryContainersResp
+	if err := msgpack.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Containers) != 1 {
+		t.Fatalf("containers len = %d, want 1", len(decoded.Containers))
+	}
+	c := decoded.Containers[0]
+	if c.Service != "web" {
+		t.Errorf("service = %q, want %q", c.Service, "web")
+	}
+	if c.Project != "myapp" {
+		t.Errorf("project = %q, want %q", c.Project, "myapp")
+	}
+}
+
+func TestQueryReqServiceFieldsRoundtrip(t *testing.T) {
+	t.Run("QueryMetricsReq", func(t *testing.T) {
+		orig := QueryMetricsReq{Start: 1000, End: 2000, Project: "myapp", Service: "web"}
+
+		raw, err := msgpack.Marshal(&orig)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var decoded QueryMetricsReq
+		if err := msgpack.Unmarshal(raw, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded.Project != "myapp" {
+			t.Errorf("project = %q, want %q", decoded.Project, "myapp")
+		}
+		if decoded.Service != "web" {
+			t.Errorf("service = %q, want %q", decoded.Service, "web")
+		}
+		if decoded.Start != 1000 {
+			t.Errorf("start = %d, want 1000", decoded.Start)
+		}
+		if decoded.End != 2000 {
+			t.Errorf("end = %d, want 2000", decoded.End)
+		}
+	})
+
+	t.Run("QueryLogsReq", func(t *testing.T) {
+		orig := QueryLogsReq{Start: 1000, End: 2000, Project: "myapp", Service: "web"}
+
+		raw, err := msgpack.Marshal(&orig)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var decoded QueryLogsReq
+		if err := msgpack.Unmarshal(raw, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded.Project != "myapp" {
+			t.Errorf("project = %q, want %q", decoded.Project, "myapp")
+		}
+		if decoded.Service != "web" {
+			t.Errorf("service = %q, want %q", decoded.Service, "web")
+		}
+		if decoded.Start != 1000 {
+			t.Errorf("start = %d, want 1000", decoded.Start)
+		}
+		if decoded.End != 2000 {
+			t.Errorf("end = %d, want 2000", decoded.End)
+		}
+	})
+}
+
+func TestContainerEventServiceRoundtrip(t *testing.T) {
+	orig := ContainerEvent{
+		Timestamp:   1700000000,
+		ContainerID: "abc123",
+		Name:        "web",
+		Image:       "nginx",
+		State:       "running",
+		Action:      "start",
+		Project:     "myapp",
+		Service:     "web",
+	}
+
+	raw, err := msgpack.Marshal(&orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded ContainerEvent
+	if err := msgpack.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded != orig {
+		t.Errorf("got %+v, want %+v", decoded, orig)
+	}
+	if decoded.Service != "web" {
+		t.Errorf("service = %q, want %q", decoded.Service, "web")
+	}
+}

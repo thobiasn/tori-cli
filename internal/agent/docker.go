@@ -157,16 +157,27 @@ type Container struct {
 	Image        string
 	State        string
 	Project      string // compose project from label
+	Service      string // compose service from label
 	Health       string
 	StartedAt    int64
 	RestartCount int
 	ExitCode     int
 }
 
+// serviceIdentity returns a stable (project, service) pair for cross-container
+// history queries. Compose containers use their labels; non-compose named
+// containers use ("", name) so queries match by name across recreations.
+func serviceIdentity(project, service, name string) (identProject, identService string) {
+	if project != "" && service != "" {
+		return project, service
+	}
+	return "", name
+}
+
 // UpdateContainerState updates a single container's state in the cached list.
 // If state is empty (destroy), the container is removed. If the container
 // isn't in the list yet (event before first collect), it is appended.
-func (d *DockerCollector) UpdateContainerState(id, state, name, image, project string) {
+func (d *DockerCollector) UpdateContainerState(id, state, name, image, project, service string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -195,6 +206,7 @@ func (d *DockerCollector) UpdateContainerState(id, state, name, image, project s
 		Image:   image,
 		State:   state,
 		Project: project,
+		Service: service,
 	})
 }
 
@@ -243,6 +255,7 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 		// Cache results for non-running containers; evict running ones for fresh data.
 		image := truncate(c.Image, maxImageLen)
 		project := c.Labels["com.docker.compose.project"]
+		service := c.Labels["com.docker.compose.service"]
 		var ir inspectResult
 		if c.State != "running" {
 			if cached, ok := d.inspectCache[c.ID]; ok {
@@ -271,6 +284,7 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 			Image:        image,
 			State:        c.State,
 			Project:      project,
+			Service:      service,
 			Health:       ir.health,
 			StartedAt:    ir.startedAt,
 			RestartCount: ir.restartCount,
@@ -284,6 +298,8 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 		}
 		tracked = append(tracked, ctr)
 
+		idProject, idService := serviceIdentity(project, service, name)
+
 		// Only get stats for running containers.
 		if c.State != "running" {
 			metrics = append(metrics, ContainerMetrics{
@@ -291,6 +307,8 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 				Name:         name,
 				Image:        image,
 				State:        c.State,
+				Project:      idProject,
+				Service:      idService,
 				Health:       ir.health,
 				StartedAt:    ir.startedAt,
 				RestartCount: ir.restartCount,
@@ -308,6 +326,8 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 				Name:         name,
 				Image:        image,
 				State:        c.State,
+				Project:      idProject,
+				Service:      idService,
 				Health:       ir.health,
 				StartedAt:    ir.startedAt,
 				RestartCount: ir.restartCount,
@@ -316,6 +336,8 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 			})
 			continue
 		}
+		m.Project = idProject
+		m.Service = idService
 		m.Health = ir.health
 		m.StartedAt = ir.startedAt
 		m.RestartCount = ir.restartCount

@@ -93,15 +93,18 @@ type ContainerEvent struct {
 	State       string `msgpack:"state"`
 	Action      string `msgpack:"action"`
 	Project     string `msgpack:"project,omitempty"`
+	Service     string `msgpack:"service,omitempty"`
 }
 
 // --- Request-response messages ---
 
 // QueryMetricsReq is the body for TypeQueryMetrics.
 type QueryMetricsReq struct {
-	Start  int64 `msgpack:"start"`
-	End    int64 `msgpack:"end"`
-	Points int   `msgpack:"points,omitempty"` // desired data points; 0 = no downsampling
+	Start   int64  `msgpack:"start"`
+	End     int64  `msgpack:"end"`
+	Points  int    `msgpack:"points,omitempty"`  // desired data points; 0 = no downsampling
+	Project string `msgpack:"project,omitempty"` // service identity filter
+	Service string `msgpack:"service,omitempty"` // service identity filter
 }
 
 // QueryMetricsResp is the response for TypeQueryMetrics.
@@ -122,6 +125,8 @@ type QueryLogsReq struct {
 	End          int64    `msgpack:"end"`
 	ContainerID  string   `msgpack:"container_id,omitempty"`
 	ContainerIDs []string `msgpack:"container_ids,omitempty"`
+	Project      string   `msgpack:"project,omitempty"` // service identity filter
+	Service      string   `msgpack:"service,omitempty"` // service identity filter
 	Stream       string   `msgpack:"stream,omitempty"`
 	Search       string   `msgpack:"search,omitempty"`
 	Limit        int      `msgpack:"limit,omitempty"`
@@ -168,6 +173,7 @@ type ContainerInfo struct {
 	Image        string `msgpack:"image"`
 	State        string `msgpack:"state"`
 	Project      string `msgpack:"project,omitempty"`
+	Service      string `msgpack:"service,omitempty"`
 	Health       string `msgpack:"health,omitempty"`
 	StartedAt    int64  `msgpack:"started_at,omitempty"`
 	RestartCount int    `msgpack:"restart_count,omitempty"`
@@ -252,6 +258,8 @@ type ContainerMetrics struct {
 	Name         string  `msgpack:"name"`
 	Image        string  `msgpack:"image"`
 	State        string  `msgpack:"state"`
+	Project      string  `msgpack:"project,omitempty"`
+	Service      string  `msgpack:"service,omitempty"`
 	Health       string  `msgpack:"health,omitempty"`
 	StartedAt    int64   `msgpack:"started_at,omitempty"`
 	RestartCount int     `msgpack:"restart_count,omitempty"`

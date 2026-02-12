@@ -149,11 +149,24 @@ func (s *Store) ensureColumns() {
 		"ALTER TABLE container_metrics ADD COLUMN restart_count INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE container_metrics ADD COLUMN exit_code INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE container_metrics ADD COLUMN disk_usage INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE container_metrics ADD COLUMN project TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE container_metrics ADD COLUMN service TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE logs ADD COLUMN project TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE logs ADD COLUMN service TEXT NOT NULL DEFAULT ''",
+	}
+	indexes := []string{
+		"CREATE INDEX IF NOT EXISTS idx_container_metrics_svc ON container_metrics(project, service, timestamp)",
+		"CREATE INDEX IF NOT EXISTS idx_logs_svc ON logs(project, service, timestamp)",
 	}
 	for _, stmt := range migrations {
 		_, err := s.db.Exec(stmt)
 		if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			slog.Warn("migration failed", "error", err)
+		}
+	}
+	for _, stmt := range indexes {
+		if _, err := s.db.Exec(stmt); err != nil {
+			slog.Warn("index creation failed", "error", err)
 		}
 	}
 }
@@ -201,6 +214,8 @@ type ContainerMetrics struct {
 	Name         string
 	Image        string
 	State        string
+	Project      string
+	Service      string
 	Health       string
 	StartedAt    int64
 	RestartCount int
@@ -235,6 +250,8 @@ type LogEntry struct {
 	Timestamp     time.Time
 	ContainerID   string
 	ContainerName string
+	Project       string
+	Service       string
 	Stream        string
 	Message       string
 }
@@ -306,8 +323,8 @@ func (s *Store) InsertContainerMetrics(ctx context.Context, ts time.Time, contai
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO container_metrics (timestamp, id, name, image, state, health, started_at, restart_count, exit_code, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids, disk_usage)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		`INSERT INTO container_metrics (timestamp, id, name, image, state, project, service, health, started_at, restart_count, exit_code, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids, disk_usage)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -316,6 +333,7 @@ func (s *Store) InsertContainerMetrics(ctx context.Context, ts time.Time, contai
 	unix := ts.Unix()
 	for _, c := range containers {
 		if _, err := stmt.ExecContext(ctx, unix, c.ID, c.Name, c.Image, c.State,
+			c.Project, c.Service,
 			c.Health, c.StartedAt, c.RestartCount, c.ExitCode,
 			c.CPUPercent, c.MemUsage, c.MemLimit, c.MemPercent,
 			c.NetRx, c.NetTx, c.BlockRead, c.BlockWrite, c.PIDs, c.DiskUsage); err != nil {
@@ -337,15 +355,15 @@ func (s *Store) InsertLogs(ctx context.Context, entries []LogEntry) error {
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO logs (timestamp, container_id, container_name, stream, message)
-		 VALUES (?, ?, ?, ?, ?)`)
+		`INSERT INTO logs (timestamp, container_id, container_name, project, service, stream, message)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
 	for _, e := range entries {
-		if _, err := stmt.ExecContext(ctx, e.Timestamp.Unix(), e.ContainerID, e.ContainerName, e.Stream, e.Message); err != nil {
+		if _, err := stmt.ExecContext(ctx, e.Timestamp.Unix(), e.ContainerID, e.ContainerName, e.Project, e.Service, e.Stream, e.Message); err != nil {
 			return err
 		}
 	}
@@ -403,6 +421,8 @@ type LogFilter struct {
 	Start        int64  // unix seconds
 	End          int64  // unix seconds
 	ContainerIDs []string
+	Project      string // service identity: project
+	Service      string // service identity: service (or container name for non-compose)
 	Stream       string
 	Search       string
 	Limit        int
@@ -476,10 +496,31 @@ func (s *Store) QueryNetMetrics(ctx context.Context, start, end int64) ([]TimedN
 	return result, rows.Err()
 }
 
-func (s *Store) QueryContainerMetrics(ctx context.Context, start, end int64) ([]TimedContainerMetrics, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT timestamp, id, name, image, state, health, started_at, restart_count, exit_code, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids, disk_usage
-		 FROM container_metrics WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp`, start, end)
+// ContainerMetricsFilter specifies optional service identity filters for
+// container metric queries. Zero value means no filtering (return all).
+type ContainerMetricsFilter struct {
+	Project string
+	Service string
+}
+
+func (s *Store) QueryContainerMetrics(ctx context.Context, start, end int64, filters ...ContainerMetricsFilter) ([]TimedContainerMetrics, error) {
+	query := `SELECT timestamp, id, name, image, state, project, service, health, started_at, restart_count, exit_code, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids, disk_usage
+		 FROM container_metrics WHERE timestamp >= ? AND timestamp <= ?`
+	args := []any{start, end}
+
+	if len(filters) > 0 && filters[0].Service != "" {
+		f := filters[0]
+		if f.Project != "" {
+			query += ` AND project = ? AND service = ?`
+			args = append(args, f.Project, f.Service)
+		} else {
+			query += ` AND service = ?`
+			args = append(args, f.Service)
+		}
+	}
+	query += ` ORDER BY timestamp`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -490,6 +531,7 @@ func (s *Store) QueryContainerMetrics(ctx context.Context, start, end int64) ([]
 		var t TimedContainerMetrics
 		var ts int64
 		if err := rows.Scan(&ts, &t.ID, &t.Name, &t.Image, &t.State,
+			&t.Project, &t.Service,
 			&t.Health, &t.StartedAt, &t.RestartCount, &t.ExitCode,
 			&t.CPUPercent, &t.MemUsage, &t.MemLimit, &t.MemPercent,
 			&t.NetRx, &t.NetTx, &t.BlockRead, &t.BlockWrite, &t.PIDs, &t.DiskUsage); err != nil {
@@ -502,10 +544,19 @@ func (s *Store) QueryContainerMetrics(ctx context.Context, start, end int64) ([]
 }
 
 func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) {
-	query := `SELECT timestamp, container_id, container_name, stream, message FROM logs WHERE timestamp >= ? AND timestamp <= ?`
+	query := `SELECT timestamp, container_id, container_name, project, service, stream, message FROM logs WHERE timestamp >= ? AND timestamp <= ?`
 	args := []any{f.Start, f.End}
 
-	if len(f.ContainerIDs) == 1 {
+	// Service identity filter takes precedence over container ID filter.
+	if f.Service != "" {
+		if f.Project != "" {
+			query += ` AND project = ? AND service = ?`
+			args = append(args, f.Project, f.Service)
+		} else {
+			query += ` AND service = ?`
+			args = append(args, f.Service)
+		}
+	} else if len(f.ContainerIDs) == 1 {
 		query += ` AND container_id = ?`
 		args = append(args, f.ContainerIDs[0])
 	} else if len(f.ContainerIDs) > 1 {
@@ -543,7 +594,7 @@ func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) 
 	for rows.Next() {
 		var e LogEntry
 		var ts int64
-		if err := rows.Scan(&ts, &e.ContainerID, &e.ContainerName, &e.Stream, &e.Message); err != nil {
+		if err := rows.Scan(&ts, &e.ContainerID, &e.ContainerName, &e.Project, &e.Service, &e.Stream, &e.Message); err != nil {
 			return nil, err
 		}
 		e.Timestamp = time.Unix(ts, 0)

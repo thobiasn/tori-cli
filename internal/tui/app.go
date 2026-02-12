@@ -133,7 +133,7 @@ func backfillMetrics(c *Client, seconds int64) tea.Cmd {
 			points = ringBufSize
 		}
 		start := now - rangeSec
-		resp, err := c.QueryMetrics(ctx, start, now, points)
+		resp, err := c.QueryMetrics(ctx, &protocol.QueryMetricsReq{Start: start, End: now, Points: points})
 		if err != nil {
 			if hist {
 				return backfillRetryMsg{server: c.server, seconds: seconds}
@@ -300,6 +300,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case detailMetricsQueryMsg:
+		if s := a.session(); s != nil && msg.resp != nil {
+			handleDetailMetricsBackfill(s, &s.Detail, msg.resp)
+		}
+		return a, nil
+
 	case tea.KeyMsg:
 		return a.handleKey(msg)
 	}
@@ -422,6 +428,73 @@ func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp, start, e
 			s.MemHistory[id].Push(memBuckets[i])
 		}
 	}
+}
+
+// handleDetailMetricsBackfill merges service-scoped metric data from possibly
+// multiple container IDs into the current container's ring buffers. It records
+// container ID transition timestamps as deploy boundaries for graph markers.
+func handleDetailMetricsBackfill(s *Session, det *DetailState, resp *protocol.QueryMetricsResp) {
+	det.metricsBackfilled = true
+	if len(resp.Containers) == 0 {
+		return
+	}
+	id := det.containerID
+	if id == "" {
+		return
+	}
+
+	// Sort all data points by timestamp.
+	sorted := make([]protocol.TimedContainerMetrics, len(resp.Containers))
+	copy(sorted, resp.Containers)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Timestamp < sorted[j].Timestamp
+	})
+
+	// Detect deploy boundaries (container ID transitions) and compute VLine
+	// fractions based on the data's time range.
+	det.deployBoundaries = nil
+	if len(sorted) > 1 {
+		startTS := sorted[0].Timestamp
+		endTS := sorted[len(sorted)-1].Timestamp
+		span := float64(endTS - startTS)
+		prevCID := sorted[0].ID
+		for _, d := range sorted[1:] {
+			if d.ID != prevCID {
+				prevCID = d.ID
+				if span > 0 {
+					frac := float64(endTS-d.Timestamp) / span
+					det.deployBoundaries = append(det.deployBoundaries, VLine{
+						Frac: frac, Label: "↻",
+					})
+				}
+			}
+		}
+	}
+
+	// Save existing live data to re-append after history.
+	var existingCPU, existingMem []float64
+	if buf, ok := s.CPUHistory[id]; ok {
+		existingCPU = buf.Data()
+	}
+	if buf, ok := s.MemHistory[id]; ok {
+		existingMem = buf.Data()
+	}
+
+	// Create fresh buffers and push all historical data, then existing live data.
+	cpuBuf := NewRingBuffer[float64](ringBufSize)
+	memBuf := NewRingBuffer[float64](ringBufSize)
+	for _, d := range sorted {
+		cpuBuf.Push(d.CPUPercent)
+		memBuf.Push(float64(d.MemUsage))
+	}
+	for _, v := range existingCPU {
+		cpuBuf.Push(v)
+	}
+	for _, v := range existingMem {
+		memBuf.Push(v)
+	}
+	s.CPUHistory[id] = cpuBuf
+	s.MemHistory[id] = memBuf
 }
 
 func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

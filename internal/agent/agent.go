@@ -291,6 +291,7 @@ func (a *Agent) collect(ctx context.Context) {
 	for _, c := range containerMetrics {
 		update.Containers = append(update.Containers, protocol.ContainerMetrics{
 			ID: c.ID, Name: c.Name, Image: c.Image, State: c.State,
+			Project: c.Project, Service: c.Service,
 			Health: c.Health, StartedAt: c.StartedAt, RestartCount: c.RestartCount, ExitCode: c.ExitCode,
 			CPUPercent: c.CPUPercent, MemUsage: c.MemUsage, MemLimit: c.MemLimit, MemPercent: c.MemPercent,
 			NetRx: c.NetRx, NetTx: c.NetTx, BlockRead: c.BlockRead, BlockWrite: c.BlockWrite, PIDs: c.PIDs,

@@ -160,6 +160,7 @@ func (ew *EventWatcher) handleEvent(ctx context.Context, msg events.Message) {
 	name := truncate(attrs["name"], maxNameLen)
 	image := truncate(attrs["image"], maxImageLen)
 	project := truncate(attrs["com.docker.compose.project"], maxLabelLen)
+	service := truncate(attrs["com.docker.compose.service"], maxLabelLen)
 
 	if !ew.docker.MatchFilter(name) {
 		return
@@ -167,9 +168,9 @@ func (ew *EventWatcher) handleEvent(ctx context.Context, msg events.Message) {
 
 	// Update container list so TUI sees state changes (tracked or not).
 	if isDestroy {
-		ew.docker.UpdateContainerState(id, "", name, image, project)
+		ew.docker.UpdateContainerState(id, "", name, image, project, service)
 	} else {
-		ew.docker.UpdateContainerState(id, state, name, image, project)
+		ew.docker.UpdateContainerState(id, state, name, image, project, service)
 	}
 
 	// Skip untracked containers for log sync, alerts, and event publishing.
@@ -214,5 +215,6 @@ func (ew *EventWatcher) handleEvent(ctx context.Context, msg events.Message) {
 		State:       publishState,
 		Action:      truncate(string(action), maxActionLen),
 		Project:     project,
+		Service:     service,
 	})
 }

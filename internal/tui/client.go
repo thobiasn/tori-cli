@@ -233,9 +233,8 @@ func (c *Client) QueryContainers(ctx context.Context) ([]protocol.ContainerInfo,
 }
 
 // QueryMetrics returns historical host/container metrics.
-// points requests server-side downsampling to that many data points (0 = none).
-func (c *Client) QueryMetrics(ctx context.Context, start, end int64, points int) (*protocol.QueryMetricsResp, error) {
-	resp, err := c.Request(ctx, protocol.TypeQueryMetrics, &protocol.QueryMetricsReq{Start: start, End: end, Points: points})
+func (c *Client) QueryMetrics(ctx context.Context, req *protocol.QueryMetricsReq) (*protocol.QueryMetricsResp, error) {
+	resp, err := c.Request(ctx, protocol.TypeQueryMetrics, req)
 	if err != nil {
 		return nil, err
 	}

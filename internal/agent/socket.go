@@ -402,7 +402,11 @@ func (c *connState) queryMetrics(env *protocol.Envelope) {
 		c.sendError(env.ID, "query failed")
 		return
 	}
-	containers, err := c.ss.store.QueryContainerMetrics(c.ctx, req.Start, req.End)
+	var cmFilter []ContainerMetricsFilter
+	if req.Service != "" {
+		cmFilter = append(cmFilter, ContainerMetricsFilter{Project: req.Project, Service: req.Service})
+	}
+	containers, err := c.ss.store.QueryContainerMetrics(c.ctx, req.Start, req.End, cmFilter...)
 	if err != nil {
 		slog.Error("query container metrics", "error", err)
 		c.sendError(env.ID, "query failed")
@@ -454,16 +458,20 @@ func (c *connState) queryLogs(env *protocol.Envelope) {
 	}
 
 	filter := LogFilter{
-		Start:  req.Start,
-		End:    req.End,
-		Stream: req.Stream,
-		Search: req.Search,
-		Limit:  req.Limit,
+		Start:   req.Start,
+		End:     req.End,
+		Project: req.Project,
+		Service: req.Service,
+		Stream:  req.Stream,
+		Search:  req.Search,
+		Limit:   req.Limit,
 	}
-	if len(req.ContainerIDs) > 0 {
-		filter.ContainerIDs = req.ContainerIDs
-	} else if req.ContainerID != "" {
-		filter.ContainerIDs = []string{req.ContainerID}
+	if filter.Service == "" {
+		if len(req.ContainerIDs) > 0 {
+			filter.ContainerIDs = req.ContainerIDs
+		} else if req.ContainerID != "" {
+			filter.ContainerIDs = []string{req.ContainerID}
+		}
 	}
 
 	entries, err := c.ss.store.QueryLogs(c.ctx, filter)
@@ -511,6 +519,7 @@ func (c *connState) queryContainers(id uint32) {
 			Image:        ctr.Image,
 			State:        ctr.State,
 			Project:      ctr.Project,
+			Service:      ctr.Service,
 			Health:       ctr.Health,
 			StartedAt:    ctr.StartedAt,
 			RestartCount: ctr.RestartCount,
@@ -774,6 +783,7 @@ func convertTimedContainer(src []TimedContainerMetrics) []protocol.TimedContaine
 			Timestamp: s.Timestamp.Unix(),
 			ContainerMetrics: protocol.ContainerMetrics{
 				ID: s.ID, Name: s.Name, Image: s.Image, State: s.State,
+				Project: s.Project, Service: s.Service,
 				Health: s.Health, StartedAt: s.StartedAt, RestartCount: s.RestartCount, ExitCode: s.ExitCode,
 				CPUPercent: s.CPUPercent, MemUsage: s.MemUsage, MemLimit: s.MemLimit, MemPercent: s.MemPercent,
 				NetRx: s.NetRx, NetTx: s.NetTx, BlockRead: s.BlockRead, BlockWrite: s.BlockWrite, PIDs: s.PIDs,

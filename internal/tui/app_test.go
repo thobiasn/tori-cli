@@ -430,3 +430,63 @@ func TestAppMultiServerMessageRouting(t *testing.T) {
 		t.Error("staging should not have received prod's metrics")
 	}
 }
+
+func TestHandleDetailMetricsBackfill(t *testing.T) {
+	s := newTestSession()
+	det := &s.Detail
+	det.containerID = "new-c"
+	det.reset()
+
+	// Build response with data from two different container IDs (old and new)
+	// representing a deploy where old-c was replaced by new-c.
+	resp := &protocol.QueryMetricsResp{
+		Containers: []protocol.TimedContainerMetrics{
+			{Timestamp: 100, ContainerMetrics: protocol.ContainerMetrics{ID: "old-c", CPUPercent: 10, MemUsage: 1000}},
+			{Timestamp: 200, ContainerMetrics: protocol.ContainerMetrics{ID: "old-c", CPUPercent: 20, MemUsage: 2000}},
+			{Timestamp: 300, ContainerMetrics: protocol.ContainerMetrics{ID: "new-c", CPUPercent: 30, MemUsage: 3000}},
+			{Timestamp: 400, ContainerMetrics: protocol.ContainerMetrics{ID: "new-c", CPUPercent: 40, MemUsage: 4000}},
+		},
+	}
+	handleDetailMetricsBackfill(s, det, resp)
+
+	// metricsBackfilled should be set.
+	if !det.metricsBackfilled {
+		t.Error("metricsBackfilled should be true")
+	}
+
+	// Should have exactly one deploy boundary (old-c -> new-c transition).
+	if len(det.deployBoundaries) != 1 {
+		t.Fatalf("deployBoundaries = %d, want 1", len(det.deployBoundaries))
+	}
+
+	// The VLine frac should be between 0 and 1.
+	frac := det.deployBoundaries[0].Frac
+	if frac <= 0 || frac >= 1 {
+		t.Errorf("deploy boundary frac = %f, want between 0 and 1 exclusive", frac)
+	}
+
+	// CPU/Mem history for "new-c" should contain data from BOTH containers
+	// (merged historical data).
+	cpuBuf, ok := s.CPUHistory["new-c"]
+	if !ok {
+		t.Fatal("CPUHistory['new-c'] should exist")
+	}
+	cpuData := cpuBuf.Data()
+	if len(cpuData) != 4 {
+		t.Errorf("CPUHistory['new-c'].Len() = %d, want 4 (merged from both containers)", len(cpuData))
+	}
+
+	memBuf, ok := s.MemHistory["new-c"]
+	if !ok {
+		t.Fatal("MemHistory['new-c'] should exist")
+	}
+	memData := memBuf.Data()
+	if len(memData) != 4 {
+		t.Errorf("MemHistory['new-c'].Len() = %d, want 4 (merged from both containers)", len(memData))
+	}
+
+	// Verify the data is in timestamp order (old-c data first, then new-c).
+	if cpuData[0] != 10 || cpuData[1] != 20 || cpuData[2] != 30 || cpuData[3] != 40 {
+		t.Errorf("CPU data = %v, want [10 20 30 40]", cpuData)
+	}
+}
