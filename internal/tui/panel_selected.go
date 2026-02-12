@@ -44,17 +44,7 @@ func renderGroupSummary(s *Session, g *containerGroup, rc RenderContext) string 
 	}
 
 	// Charts take 1/2 of inner height.
-	chartBudget := innerH / 2
-	var totalDisk uint64
-	for _, c := range g.containers {
-		totalDisk += c.DiskUsage
-	}
-	hasDisk := totalDisk > 0
-	diskH := 0
-	if hasDisk {
-		diskH = 3
-	}
-	graphH := chartBudget - diskH
+	graphH := innerH / 2
 	if graphH < 5 {
 		graphH = 5
 	}
@@ -97,10 +87,6 @@ func renderGroupSummary(s *Session, g *containerGroup, rc RenderContext) string 
 
 	var lines []string
 	lines = append(lines, strings.Split(graphs, "\n")...)
-
-	if hasDisk {
-		lines = append(lines, strings.Split(renderGroupDiskBox(totalDisk, innerW, diskH, theme), "\n")...)
-	}
 
 	lines = append(lines, "")
 
@@ -156,13 +142,7 @@ func renderContainerSelected(s *Session, c *protocol.ContainerMetrics, rc Render
 	innerH := rc.Height - 2
 
 	// Charts take 1/2 of inner height.
-	chartBudget := innerH / 2
-	hasDisk := c.DiskUsage > 0
-	diskH := 0
-	if hasDisk {
-		diskH = 3
-	}
-	graphH := chartBudget - diskH
+	graphH := innerH / 2
 	if graphH < 5 {
 		graphH = 5
 	}
@@ -205,11 +185,6 @@ func renderContainerSelected(s *Session, c *protocol.ContainerMetrics, rc Render
 
 	var lines []string
 	lines = append(lines, strings.Split(graphs, "\n")...)
-
-	// Disk box.
-	if hasDisk {
-		lines = append(lines, strings.Split(renderContainerDiskBox(c.DiskUsage, innerW, diskH, theme), "\n")...)
-	}
 
 	// Info lines.
 	rates := s.Rates.ContainerRates[c.ID]

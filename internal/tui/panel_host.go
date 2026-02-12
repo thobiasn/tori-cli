@@ -318,14 +318,3 @@ func highestUsageDisk(disks []protocol.DiskMetrics) protocol.DiskMetrics {
 	return best
 }
 
-// renderContainerDiskBox renders a small bordered disk panel showing container writable layer usage.
-func renderContainerDiskBox(diskUsage uint64, width, height int, theme *Theme) string {
-	content := " Writable layer: " + FormatBytes(diskUsage)
-	return Box("Disk", content, width, height, theme)
-}
-
-// renderGroupDiskBox renders a small bordered disk panel showing aggregate container disk usage.
-func renderGroupDiskBox(totalDisk uint64, width, height int, theme *Theme) string {
-	content := " Writable layers: " + FormatBytes(totalDisk)
-	return Box("Disk", content, width, height, theme)
-}

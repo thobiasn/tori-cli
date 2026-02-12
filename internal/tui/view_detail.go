@@ -375,16 +375,15 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, rc RenderContext) st
 	theme := rc.Theme
 	innerW := rc.Width - 2
 
-	// Aggregate CPU/MEM/Disk across all containers in the group.
+	// Aggregate CPU/MEM across all containers in the group.
 	var totalCPU float64
-	var totalMemUsage, totalMemLimit, totalDisk uint64
+	var totalMemUsage, totalMemLimit uint64
 	for _, id := range det.projectIDs {
 		for _, c := range s.Containers {
 			if c.ID == id {
 				totalCPU += c.CPUPercent
 				totalMemUsage += c.MemUsage
 				totalMemLimit += c.MemLimit
-				totalDisk += c.DiskUsage
 				break
 			}
 		}
@@ -392,12 +391,7 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, rc RenderContext) st
 
 	// Per-container table: header + one row per container + blank separator.
 	tableLines := 2 + len(det.projectIDs)
-	hasDisk := totalDisk > 0
-	diskH := 0
-	if hasDisk {
-		diskH = 3
-	}
-	graphBudget := rc.Height - 2 - tableLines - diskH
+	graphBudget := rc.Height - 2 - tableLines
 	if graphBudget < 5 {
 		graphBudget = 5
 	}
@@ -437,10 +431,6 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, rc RenderContext) st
 
 	var lines []string
 	lines = append(lines, strings.Split(graphs, "\n")...)
-
-	if hasDisk {
-		lines = append(lines, strings.Split(renderGroupDiskBox(totalDisk, innerW, diskH, theme), "\n")...)
-	}
 
 	lines = append(lines, "")
 
@@ -483,12 +473,7 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 
 	// Info lines: NET+BLK, PID+HC, IMG+UP = 3 fixed.
 	infoLines := 3
-	hasDisk := cm.DiskUsage > 0
-	diskH := 0
-	if hasDisk {
-		diskH = 3
-	}
-	graphBudget := rc.Height - 2 - infoLines - diskH
+	graphBudget := rc.Height - 2 - infoLines
 	if graphBudget < 5 {
 		graphBudget = 5
 	}
@@ -527,10 +512,6 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 
 	var lines []string
 	lines = append(lines, strings.Split(graphs, "\n")...)
-
-	if hasDisk {
-		lines = append(lines, strings.Split(renderContainerDiskBox(cm.DiskUsage, innerW, diskH, theme), "\n")...)
-	}
 
 	// NET + BLK on one line.
 	rates := s.Rates.ContainerRates[det.containerID]
