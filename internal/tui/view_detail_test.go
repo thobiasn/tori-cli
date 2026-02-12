@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/thobiasn/rook/internal/protocol"
@@ -16,10 +17,10 @@ func TestDetailBackfillDedup(t *testing.T) {
 	s.onStreamEntry(protocol.LogEntryMsg{Timestamp: 100, ContainerID: "c1", Message: "stream1"})
 	s.onStreamEntry(protocol.LogEntryMsg{Timestamp: 101, ContainerID: "c1", Message: "stream2"})
 
-	// Backfill with overlap.
+	// Backfill with overlap — agent returns DESC order (newest first).
 	s.handleBackfill(detailLogQueryMsg{entries: []protocol.LogEntryMsg{
-		{Timestamp: 90, ContainerID: "c1", Message: "old1"},
 		{Timestamp: 100, ContainerID: "c1", Message: "dup"},
+		{Timestamp: 90, ContainerID: "c1", Message: "old1"},
 	}})
 
 	data := s.logs.Data()
@@ -420,14 +421,103 @@ func TestInjectDeploySeparators(t *testing.T) {
 func TestDetailResetClearsServiceFields(t *testing.T) {
 	det := &DetailState{containerID: "c1"}
 	det.metricsBackfilled = true
-	det.deployBoundaries = []VLine{{Frac: 0.5, Label: "test"}}
+	det.deployTimestamps = []int64{100, 200}
 
 	det.reset()
 
 	if det.metricsBackfilled {
 		t.Error("metricsBackfilled should be false after reset")
 	}
-	if det.deployBoundaries != nil {
-		t.Errorf("deployBoundaries should be nil after reset, got %v", det.deployBoundaries)
+	if det.deployTimestamps != nil {
+		t.Errorf("deployTimestamps should be nil after reset, got %v", det.deployTimestamps)
 	}
+}
+
+func TestDetailBackfillOrdering(t *testing.T) {
+	s := &DetailState{containerID: "c1"}
+	s.reset()
+
+	// Simulate agent returning DESC order (newest first).
+	s.handleBackfill(detailLogQueryMsg{entries: []protocol.LogEntryMsg{
+		{Timestamp: 300, ContainerID: "c1", Message: "c"},
+		{Timestamp: 200, ContainerID: "c1", Message: "b"},
+		{Timestamp: 100, ContainerID: "c1", Message: "a"},
+	}})
+
+	// After backfill, entries should be in ASC (chronological) order.
+	data := s.logs.Data()
+	if len(data) != 3 {
+		t.Fatalf("expected 3 entries, got %d", len(data))
+	}
+	if data[0].Message != "a" || data[1].Message != "b" || data[2].Message != "c" {
+		t.Errorf("entries not in chronological order: [%s, %s, %s]",
+			data[0].Message, data[1].Message, data[2].Message)
+	}
+
+	// Streaming entries should appear after backfilled entries.
+	s.onStreamEntry(protocol.LogEntryMsg{Timestamp: 400, ContainerID: "c1", Message: "d"})
+	data = s.logs.Data()
+	if len(data) != 4 {
+		t.Fatalf("expected 4 entries after stream, got %d", len(data))
+	}
+	if data[3].Message != "d" {
+		t.Errorf("streaming entry should be last, got %q", data[3].Message)
+	}
+}
+
+func TestDeployVLines(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		vl := deployVLines(nil, 100, 3600)
+		if len(vl) != 0 {
+			t.Errorf("expected no vlines for nil timestamps, got %d", len(vl))
+		}
+	})
+
+	t.Run("no data", func(t *testing.T) {
+		vl := deployVLines([]int64{100}, 0, 3600)
+		if len(vl) != 0 {
+			t.Errorf("expected no vlines for zero dataLen, got %d", len(vl))
+		}
+	})
+
+	t.Run("within window", func(t *testing.T) {
+		now := time.Now().Unix()
+		// Place a deploy marker at the midpoint of a 1h window.
+		ts := now - 1800
+		vl := deployVLines([]int64{ts}, 100, 3600)
+		if len(vl) != 1 {
+			t.Fatalf("expected 1 vline, got %d", len(vl))
+		}
+		// Frac should be approximately 0.5 (midpoint).
+		if vl[0].Frac < 0.4 || vl[0].Frac > 0.6 {
+			t.Errorf("frac = %f, want ~0.5", vl[0].Frac)
+		}
+		if vl[0].Label != "↻" {
+			t.Errorf("label = %q, want ↻", vl[0].Label)
+		}
+	})
+
+	t.Run("outside window filtered", func(t *testing.T) {
+		now := time.Now().Unix()
+		// Timestamp well outside the window (2 hours ago in a 1h window).
+		ts := now - 7200
+		vl := deployVLines([]int64{ts}, 100, 3600)
+		if len(vl) != 0 {
+			t.Errorf("expected timestamp outside window to be filtered, got %d", len(vl))
+		}
+	})
+
+	t.Run("live mode infers range", func(t *testing.T) {
+		now := time.Now().Unix()
+		// windowSec=0 → range inferred from dataLen*10.
+		// dataLen=100 → 1000s range. Place marker at 500s ago.
+		ts := now - 500
+		vl := deployVLines([]int64{ts}, 100, 0)
+		if len(vl) != 1 {
+			t.Fatalf("expected 1 vline in live mode, got %d", len(vl))
+		}
+		if vl[0].Frac < 0.4 || vl[0].Frac > 0.6 {
+			t.Errorf("frac = %f, want ~0.5", vl[0].Frac)
+		}
+	})
 }

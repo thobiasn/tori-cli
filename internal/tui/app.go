@@ -466,23 +466,14 @@ func handleDetailMetricsBackfill(s *Session, det *DetailState, resp *protocol.Qu
 		return sorted[i].Timestamp < sorted[j].Timestamp
 	})
 
-	// Detect deploy boundaries (container ID transitions) and compute VLine
-	// fractions based on the data's time range.
-	det.deployBoundaries = nil
+	// Detect deploy boundaries (container ID transitions) and store raw timestamps.
+	det.deployTimestamps = nil
 	if len(sorted) > 1 {
-		startTS := sorted[0].Timestamp
-		endTS := sorted[len(sorted)-1].Timestamp
-		span := float64(endTS - startTS)
 		prevCID := sorted[0].ID
 		for _, d := range sorted[1:] {
 			if d.ID != prevCID {
 				prevCID = d.ID
-				if span > 0 {
-					frac := float64(endTS-d.Timestamp) / span
-					det.deployBoundaries = append(det.deployBoundaries, VLine{
-						Frac: frac, Label: "↻",
-					})
-				}
+				det.deployTimestamps = append(det.deployTimestamps, d.Timestamp)
 			}
 		}
 	}
@@ -598,7 +589,7 @@ func (a *App) handleDetailAutoSwitch(s *Session, evt protocol.ContainerEvent) te
 	// Match — switch to the new container.
 	det.containerID = evt.ContainerID
 	det.reset()
-	return det.onSwitch(s.Client)
+	return det.onSwitch(s.Client, a.windowSeconds())
 }
 
 // handleZoom adjusts the time window and triggers a backfill.
@@ -627,7 +618,16 @@ func (a *App) handleZoom(key string) tea.Cmd {
 		return nil
 	}
 	s.resetHistories()
-	return backfillMetrics(s.Client, timeWindows[a.windowIdx].seconds)
+	s.Detail.metricsBackfilled = false
+	s.Detail.deployTimestamps = nil
+	var cmds []tea.Cmd
+	cmds = append(cmds, backfillMetrics(s.Client, timeWindows[a.windowIdx].seconds))
+	if a.active == viewDetail {
+		if cmd := s.Detail.onSwitch(s.Client, timeWindows[a.windowIdx].seconds); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	return tea.Batch(cmds...)
 }
 
 // windowLabel returns the label for the current time window.
@@ -689,7 +689,7 @@ func (a *App) onViewSwitch() tea.Cmd {
 	case viewAlerts:
 		return s.Alertv.onSwitch(s.Client)
 	case viewDetail:
-		return s.Detail.onSwitch(s.Client)
+		return s.Detail.onSwitch(s.Client, a.windowSeconds())
 	}
 	return nil
 }

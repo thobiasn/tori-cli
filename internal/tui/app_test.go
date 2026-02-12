@@ -454,15 +454,14 @@ func TestHandleDetailMetricsBackfill(t *testing.T) {
 		t.Error("metricsBackfilled should be true")
 	}
 
-	// Should have exactly one deploy boundary (old-c -> new-c transition).
-	if len(det.deployBoundaries) != 1 {
-		t.Fatalf("deployBoundaries = %d, want 1", len(det.deployBoundaries))
+	// Should have exactly one deploy timestamp (old-c -> new-c transition).
+	if len(det.deployTimestamps) != 1 {
+		t.Fatalf("deployTimestamps = %d, want 1", len(det.deployTimestamps))
 	}
 
-	// The VLine frac should be between 0 and 1.
-	frac := det.deployBoundaries[0].Frac
-	if frac <= 0 || frac >= 1 {
-		t.Errorf("deploy boundary frac = %f, want between 0 and 1 exclusive", frac)
+	// The timestamp should be the first point of the new container.
+	if det.deployTimestamps[0] != 300 {
+		t.Errorf("deploy timestamp = %d, want 300", det.deployTimestamps[0])
 	}
 
 	// CPU/Mem history for "new-c" should contain data from BOTH containers

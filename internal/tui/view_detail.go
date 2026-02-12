@@ -38,7 +38,7 @@ type DetailState struct {
 
 	backfilled         bool
 	metricsBackfilled  bool
-	deployBoundaries   []VLine // pre-computed deploy marker positions for graphs
+	deployTimestamps []int64 // raw timestamps of container ID transitions
 }
 
 type detailLogQueryMsg struct {
@@ -62,14 +62,14 @@ func (s *DetailState) reset() {
 	s.searchMode = false
 	s.backfilled = false
 	s.metricsBackfilled = false
-	s.deployBoundaries = nil
+	s.deployTimestamps = nil
 }
 
 func (s *DetailState) isGroupMode() bool {
 	return s.project != "" && s.containerID == ""
 }
 
-func (s *DetailState) onSwitch(c *Client) tea.Cmd {
+func (s *DetailState) onSwitch(c *Client, windowSec int64) tea.Cmd {
 	if s.containerID == "" && s.project == "" {
 		return nil
 	}
@@ -114,14 +114,22 @@ func (s *DetailState) onSwitch(c *Client) tea.Cmd {
 	if !s.metricsBackfilled && s.svcService != "" {
 		svcProject := s.svcProject
 		svcService := s.svcService
+		ws := windowSec
 		cmds = append(cmds, func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			now := time.Now().Unix()
-			start := now - int64(ringBufSize*10) // match live backfill range
+			rangeSec := int64(ringBufSize * 10)
+			points := 0
+			if ws > 0 {
+				rangeSec = ws
+				points = ringBufSize
+			}
+			start := now - rangeSec
 			resp, err := c.QueryMetrics(ctx, &protocol.QueryMetricsReq{
 				Start:   start,
 				End:     now,
+				Points:  points,
 				Project: svcProject,
 				Service: svcService,
 			})
@@ -166,6 +174,11 @@ func (s *DetailState) handleBackfill(msg detailLogQueryMsg) {
 	if len(msg.entries) == 0 {
 		s.backfilled = true
 		return
+	}
+
+	// Reverse from DESC (newest-first) to ASC (oldest-first).
+	for i, j := 0, len(msg.entries)-1; i < j; i, j = i+1, j-1 {
+		msg.entries[i], msg.entries[j] = msg.entries[j], msg.entries[i]
 	}
 
 	existing := s.logs.Data()
@@ -574,9 +587,10 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 
 	cpuVal := fmt.Sprintf("%5.1f%%", cm.CPUPercent)
 	cpuData := historyData(s.CPUHistory, det.containerID)
+	vlines := deployVLines(det.deployTimestamps, len(cpuData), windowSec)
 	var cpuContent string
 	if len(cpuData) > 0 {
-		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, windowSec, theme, theme.CPUGraph, pctAxis, det.deployBoundaries...), "\n")
+		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, windowSec, theme, theme.CPUGraph, pctAxis, vlines...), "\n")
 	} else {
 		cpuContent = fmt.Sprintf(" CPU %s", cpuVal)
 	}
@@ -585,7 +599,7 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 	memData := historyData(s.MemHistory, det.containerID)
 	var memContent string
 	if len(memData) > 0 {
-		memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, windowSec, theme, theme.MemGraph, bytesAxis, det.deployBoundaries...), "\n")
+		memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, windowSec, theme, theme.MemGraph, bytesAxis, vlines...), "\n")
 	} else {
 		memContent = fmt.Sprintf(" MEM %s", memVal)
 	}
@@ -633,6 +647,34 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 	lines = append(lines, Truncate(imgLine, innerW))
 
 	return strings.Join(lines, "\n")
+}
+
+// deployVLines computes VLine fractions at render time from raw timestamps.
+// The graph's x-axis spans [now-windowSec, now]; if windowSec==0 it is
+// inferred from dataLen (10s collection interval).
+func deployVLines(timestamps []int64, dataLen int, windowSec int64) []VLine {
+	if len(timestamps) == 0 || dataLen == 0 {
+		return nil
+	}
+	now := time.Now().Unix()
+	var startTS int64
+	if windowSec > 0 {
+		startTS = now - windowSec
+	} else {
+		startTS = now - int64(dataLen)*10
+	}
+	span := float64(now - startTS)
+	if span <= 0 {
+		return nil
+	}
+	var vlines []VLine
+	for _, ts := range timestamps {
+		frac := float64(now-ts) / span
+		if frac > 0.01 && frac < 0.99 {
+			vlines = append(vlines, VLine{Frac: frac, Label: "↻"})
+		}
+	}
+	return vlines
 }
 
 func historyData(hist map[string]*RingBuffer[float64], id string) []float64 {
