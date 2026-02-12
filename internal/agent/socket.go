@@ -403,7 +403,7 @@ func (c *connState) queryMetrics(env *protocol.Envelope) {
 		return
 	}
 	var cmFilter []ContainerMetricsFilter
-	if req.Service != "" {
+	if req.Service != "" || req.Project != "" {
 		cmFilter = append(cmFilter, ContainerMetricsFilter{Project: req.Project, Service: req.Service})
 	}
 	containers, err := c.ss.store.QueryContainerMetrics(c.ctx, req.Start, req.End, cmFilter...)

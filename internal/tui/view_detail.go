@@ -51,6 +51,7 @@ type detailLogQueryMsg struct {
 type detailMetricsQueryMsg struct {
 	resp        *protocol.QueryMetricsResp
 	containerID string
+	project     string
 }
 
 func (s *DetailState) reset() {
@@ -99,10 +100,12 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64) tea.Cmd {
 				End:   time.Now().Unix(),
 				Limit: 500,
 			}
-			// Prefer service identity for cross-container history.
+			// Prefer service/project identity for cross-container history.
 			if svcService != "" {
 				req.Project = svcProject
 				req.Service = svcService
+			} else if project != "" {
+				req.Project = project
 			} else if len(ids) > 0 {
 				req.ContainerIDs = ids
 			} else if id != "" {
@@ -116,9 +119,11 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64) tea.Cmd {
 		})
 	}
 
-	// Service-scoped metrics backfill for cross-container graph history.
-	if !s.metricsBackfilled && s.svcService != "" {
+	// Metrics backfill for cross-container graph history.
+	// Fires for single-container mode (service identity) or group mode (project).
+	if !s.metricsBackfilled && (s.svcService != "" || s.project != "") {
 		id := s.containerID
+		project := s.project
 		svcProject := s.svcProject
 		svcService := s.svcService
 		ws := windowSec
@@ -133,17 +138,22 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64) tea.Cmd {
 				points = ringBufSize
 			}
 			start := now - rangeSec
-			resp, err := c.QueryMetrics(ctx, &protocol.QueryMetricsReq{
-				Start:   start,
-				End:     now,
-				Points:  points,
-				Project: svcProject,
-				Service: svcService,
-			})
-			if err != nil {
-				return detailMetricsQueryMsg{containerID: id}
+			req := &protocol.QueryMetricsReq{
+				Start:  start,
+				End:    now,
+				Points: points,
 			}
-			return detailMetricsQueryMsg{resp: resp, containerID: id}
+			if svcService != "" {
+				req.Project = svcProject
+				req.Service = svcService
+			} else {
+				req.Project = project
+			}
+			resp, err := c.QueryMetrics(ctx, req)
+			if err != nil {
+				return detailMetricsQueryMsg{containerID: id, project: project}
+			}
+			return detailMetricsQueryMsg{resp: resp, containerID: id, project: project}
 		})
 	}
 

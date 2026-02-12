@@ -317,7 +317,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case detailMetricsQueryMsg:
-		if s := a.session(); s != nil && msg.resp != nil && msg.containerID == s.Detail.containerID {
+		if s := a.session(); s != nil && msg.resp != nil &&
+			msg.containerID == s.Detail.containerID && msg.project == s.Detail.project {
 			handleDetailMetricsBackfill(s, &s.Detail, msg.resp)
 		}
 		return a, nil
@@ -454,10 +455,6 @@ func handleDetailMetricsBackfill(s *Session, det *DetailState, resp *protocol.Qu
 	if len(resp.Containers) == 0 {
 		return
 	}
-	id := det.containerID
-	if id == "" {
-		return
-	}
 
 	// Sort all data points by timestamp.
 	sorted := make([]protocol.TimedContainerMetrics, len(resp.Containers))
@@ -466,7 +463,19 @@ func handleDetailMetricsBackfill(s *Session, det *DetailState, resp *protocol.Qu
 		return sorted[i].Timestamp < sorted[j].Timestamp
 	})
 
-	// Detect deploy boundaries (container ID transitions) and store raw timestamps.
+	if det.containerID != "" {
+		// Single-container mode: merge all data into one buffer (cross-deploy).
+		handleSingleMetricsBackfill(s, det, sorted)
+	} else {
+		// Group mode: distribute data into per-container buffers.
+		handleGroupMetricsBackfill(s, sorted)
+	}
+}
+
+func handleSingleMetricsBackfill(s *Session, det *DetailState, sorted []protocol.TimedContainerMetrics) {
+	id := det.containerID
+
+	// Detect deploy boundaries (container ID transitions).
 	det.deployTimestamps = nil
 	det.deployEndTS = sorted[len(sorted)-1].Timestamp
 	if len(sorted) > 1 {
@@ -488,7 +497,6 @@ func handleDetailMetricsBackfill(s *Session, det *DetailState, resp *protocol.Qu
 		existingMem = buf.Data()
 	}
 
-	// Create fresh buffers and push all historical data, then existing live data.
 	cpuBuf := NewRingBuffer[float64](ringBufSize)
 	memBuf := NewRingBuffer[float64](ringBufSize)
 	for _, d := range sorted {
@@ -503,6 +511,52 @@ func handleDetailMetricsBackfill(s *Session, det *DetailState, resp *protocol.Qu
 	}
 	s.CPUHistory[id] = cpuBuf
 	s.MemHistory[id] = memBuf
+}
+
+func handleGroupMetricsBackfill(s *Session, sorted []protocol.TimedContainerMetrics) {
+	// Group data points by container ID.
+	type perContainer struct {
+		cpu []float64
+		mem []float64
+	}
+	byID := make(map[string]*perContainer)
+	for _, d := range sorted {
+		pc, ok := byID[d.ID]
+		if !ok {
+			pc = &perContainer{}
+			byID[d.ID] = pc
+		}
+		pc.cpu = append(pc.cpu, d.CPUPercent)
+		pc.mem = append(pc.mem, float64(d.MemUsage))
+	}
+
+	// Merge each container's history into its ring buffer.
+	for id, pc := range byID {
+		var existingCPU, existingMem []float64
+		if buf, ok := s.CPUHistory[id]; ok {
+			existingCPU = buf.Data()
+		}
+		if buf, ok := s.MemHistory[id]; ok {
+			existingMem = buf.Data()
+		}
+
+		cpuBuf := NewRingBuffer[float64](ringBufSize)
+		memBuf := NewRingBuffer[float64](ringBufSize)
+		for _, v := range pc.cpu {
+			cpuBuf.Push(v)
+		}
+		for _, v := range existingCPU {
+			cpuBuf.Push(v)
+		}
+		for _, v := range pc.mem {
+			memBuf.Push(v)
+		}
+		for _, v := range existingMem {
+			memBuf.Push(v)
+		}
+		s.CPUHistory[id] = cpuBuf
+		s.MemHistory[id] = memBuf
+	}
 }
 
 func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

@@ -508,14 +508,19 @@ func (s *Store) QueryContainerMetrics(ctx context.Context, start, end int64, fil
 		 FROM container_metrics WHERE timestamp >= ? AND timestamp <= ?`
 	args := []any{start, end}
 
-	if len(filters) > 0 && filters[0].Service != "" {
+	if len(filters) > 0 {
 		f := filters[0]
-		if f.Project != "" {
-			query += ` AND project = ? AND service = ?`
-			args = append(args, f.Project, f.Service)
-		} else {
-			query += ` AND service = ?`
-			args = append(args, f.Service)
+		if f.Service != "" {
+			if f.Project != "" {
+				query += ` AND project = ? AND service = ?`
+				args = append(args, f.Project, f.Service)
+			} else {
+				query += ` AND service = ?`
+				args = append(args, f.Service)
+			}
+		} else if f.Project != "" {
+			query += ` AND project = ?`
+			args = append(args, f.Project)
 		}
 	}
 	query += ` ORDER BY timestamp`
@@ -547,7 +552,7 @@ func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) 
 	query := `SELECT timestamp, container_id, container_name, project, service, stream, message FROM logs WHERE timestamp >= ? AND timestamp <= ?`
 	args := []any{f.Start, f.End}
 
-	// Service identity filter takes precedence over container ID filter.
+	// Service/project identity filter takes precedence over container ID filter.
 	if f.Service != "" {
 		if f.Project != "" {
 			query += ` AND project = ? AND service = ?`
@@ -556,6 +561,9 @@ func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) 
 			query += ` AND service = ?`
 			args = append(args, f.Service)
 		}
+	} else if f.Project != "" {
+		query += ` AND project = ?`
+		args = append(args, f.Project)
 	} else if len(f.ContainerIDs) == 1 {
 		query += ` AND container_id = ?`
 		args = append(args, f.ContainerIDs[0])
