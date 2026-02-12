@@ -430,12 +430,8 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, width, height int, t
 		memContent = fmt.Sprintf(" MEM %s", memVal)
 	}
 
-	cpuTitle := "CPU"
-	memTitle := "Memory"
-	if windowLabel != "" {
-		cpuTitle += " · " + windowLabel
-		memTitle += " · " + windowLabel
-	}
+	cpuTitle := "CPU · " + windowLabel
+	memTitle := "Memory · " + windowLabel
 	graphs := lipgloss.JoinHorizontal(lipgloss.Top,
 		Box(cpuTitle, cpuContent, leftW, graphBudget, theme),
 		Box(memTitle, memContent, rightW, graphBudget, theme))
@@ -523,12 +519,8 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 		memContent = fmt.Sprintf(" MEM %s", memVal)
 	}
 
-	cpuTitle := "CPU"
-	memTitle := "Memory"
-	if windowLabel != "" {
-		cpuTitle += " · " + windowLabel
-		memTitle += " · " + windowLabel
-	}
+	cpuTitle := "CPU · " + windowLabel
+	memTitle := "Memory · " + windowLabel
 	graphs := lipgloss.JoinHorizontal(lipgloss.Top,
 		Box(cpuTitle, cpuContent, leftW, graphBudget, theme),
 		Box(memTitle, memContent, rightW, graphBudget, theme))

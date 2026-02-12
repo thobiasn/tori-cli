@@ -87,12 +87,8 @@ func renderGroupSummary(s *Session, g *containerGroup, width, height int, theme 
 		memContent = fmt.Sprintf(" MEM: %s", memVal)
 	}
 
-	cpuTitle := "CPU"
-	memTitle := "Memory"
-	if windowLabel != "" {
-		cpuTitle += " · " + windowLabel
-		memTitle += " · " + windowLabel
-	}
+	cpuTitle := "CPU · " + windowLabel
+	memTitle := "Memory · " + windowLabel
 	graphs := lipgloss.JoinVertical(lipgloss.Left,
 		Box(cpuTitle, cpuContent, innerW, cpuH, theme),
 		Box(memTitle, memContent, innerW, memH, theme))
@@ -198,12 +194,8 @@ func renderContainerSelected(s *Session, c *protocol.ContainerMetrics, width, he
 		memContent = fmt.Sprintf(" MEM: %s", memVal)
 	}
 
-	cpuTitle := "CPU"
-	memTitle := "Memory"
-	if windowLabel != "" {
-		cpuTitle += " · " + windowLabel
-		memTitle += " · " + windowLabel
-	}
+	cpuTitle := "CPU · " + windowLabel
+	memTitle := "Memory · " + windowLabel
 	graphs := lipgloss.JoinVertical(lipgloss.Left,
 		Box(cpuTitle, cpuContent, innerW, cpuH, theme),
 		Box(memTitle, memContent, innerW, memH, theme))

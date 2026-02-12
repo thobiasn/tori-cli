@@ -168,10 +168,7 @@ func formatAutoLabel(v float64) string {
 // renderCPUPanel renders the CPU panel with a multi-row braille graph.
 // windowLabel is appended to the title (e.g. "CPU · 1h"); empty for Live.
 func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, height int, theme *Theme, windowLabel string) string {
-	title := "CPU"
-	if windowLabel != "" {
-		title += " · " + windowLabel
-	}
+	title := "CPU · " + windowLabel
 	if host == nil {
 		return Box(title, "  waiting for data...", width, height, theme)
 	}
@@ -223,10 +220,7 @@ func memDivider(label, value string, width int, labelColor lipgloss.Color, theme
 // renderMemPanel renders the memory panel with a grid-backed braille graph (like CPU).
 // windowLabel is appended to the title; empty for Live.
 func renderMemPanel(host *protocol.HostMetrics, usedHistory []float64, width, height int, theme *Theme, windowLabel string) string {
-	title := "Memory"
-	if windowLabel != "" {
-		title += " · " + windowLabel
-	}
+	title := "Memory · " + windowLabel
 	if host == nil {
 		return Box(title, "  waiting for data...", width, height, theme)
 	}

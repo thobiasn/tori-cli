@@ -426,13 +426,9 @@ func (a *App) handleZoom(key string) tea.Cmd {
 	return backfillMetrics(s.Client, timeWindows[a.windowIdx].seconds)
 }
 
-// windowLabel returns the label for the current time window (empty for Live).
+// windowLabel returns the label for the current time window.
 func (a *App) windowLabel() string {
-	w := timeWindows[a.windowIdx]
-	if w.seconds == 0 {
-		return ""
-	}
-	return w.label
+	return timeWindows[a.windowIdx].label
 }
 
 func (a *App) handleServerPicker(key string) (App, tea.Cmd) {
