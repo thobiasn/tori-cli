@@ -80,6 +80,10 @@ func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp, start, e
 		byID[c.ID] = append(byID[c.ID], c)
 	}
 
+	// Merge cross-deploy data so the current container's buffer includes
+	// history from previous containers with the same compose service.
+	mergeByServiceIdentity(byID, &order)
+
 	n := ringBufSize
 	bucketDur := float64(end-start) / float64(n)
 	needAlign := rangeHist && bucketDur > 0
@@ -126,6 +130,87 @@ func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp, start, e
 			s.MemHistory[id].Push(memBuckets[i])
 		}
 	}
+}
+
+// mergeByServiceIdentity collapses data from containers sharing the same
+// compose service identity (project+service) into the most recent container's
+// entry. This ensures the dashboard graph shows full cross-deploy history
+// instead of only data since the last redeploy.
+func mergeByServiceIdentity(byID map[string][]protocol.TimedContainerMetrics, order *[]string) {
+	// Build {project, service} -> []containerID mapping.
+	type svcKey struct{ project, service string }
+	svcContainers := make(map[svcKey][]string)
+	for id, points := range byID {
+		if len(points) == 0 {
+			continue
+		}
+		p := points[0]
+		if p.Service == "" {
+			continue // Non-compose containers can't be matched across deploys.
+		}
+		key := svcKey{p.Project, p.Service}
+		svcContainers[key] = append(svcContainers[key], id)
+	}
+
+	removed := make(map[string]bool)
+	for _, ids := range svcContainers {
+		if len(ids) < 2 {
+			continue
+		}
+
+		// Check for scaled services: if multiple containers have "running"
+		// as their last state, they're concurrent instances — don't merge.
+		runningCount := 0
+		for _, id := range ids {
+			pts := byID[id]
+			if pts[len(pts)-1].State == "running" {
+				runningCount++
+			}
+		}
+		if runningCount > 1 {
+			continue
+		}
+
+		// Collect all points, sort by timestamp, find the "current" container
+		// (the one with the latest data point).
+		var all []protocol.TimedContainerMetrics
+		var latestTS int64
+		currentID := ids[0]
+		for _, id := range ids {
+			pts := byID[id]
+			all = append(all, pts...)
+			last := pts[len(pts)-1].Timestamp
+			if last > latestTS {
+				latestTS = last
+				currentID = id
+			}
+		}
+		sort.Slice(all, func(i, j int) bool {
+			return all[i].Timestamp < all[j].Timestamp
+		})
+
+		// Store merged data under the current container ID.
+		byID[currentID] = all
+		for _, id := range ids {
+			if id != currentID {
+				delete(byID, id)
+				removed[id] = true
+			}
+		}
+	}
+
+	if len(removed) == 0 {
+		return
+	}
+
+	// Rebuild order without removed IDs.
+	filtered := (*order)[:0]
+	for _, id := range *order {
+		if !removed[id] {
+			filtered = append(filtered, id)
+		}
+	}
+	*order = filtered
 }
 
 // handleDetailMetricsBackfill merges service-scoped metric data from possibly

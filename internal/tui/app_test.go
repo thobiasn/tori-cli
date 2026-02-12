@@ -380,6 +380,101 @@ func TestHandleMetricsBackfillTimeAlign(t *testing.T) {
 	}
 }
 
+func TestMergeByServiceIdentity(t *testing.T) {
+	s := newTestSession()
+	// Old container (stopped) and new container (running) for same service.
+	resp := &protocol.QueryMetricsResp{
+		Containers: []protocol.TimedContainerMetrics{
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "old1", CPUPercent: 10, MemUsage: 100, Project: "myapp", Service: "web", State: "exited"}},
+			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "old1", CPUPercent: 20, MemUsage: 200, Project: "myapp", Service: "web", State: "exited"}},
+			{Timestamp: 3, ContainerMetrics: protocol.ContainerMetrics{ID: "new1", CPUPercent: 30, MemUsage: 300, Project: "myapp", Service: "web", State: "running"}},
+		},
+	}
+	handleMetricsBackfill(s, resp, 0, 0, false)
+
+	// Old container's buffer should not exist — merged into new1.
+	if _, ok := s.CPUHistory["old1"]; ok {
+		t.Error("old1 should be merged into new1, but CPUHistory[old1] exists")
+	}
+	// New container should have all 3 data points.
+	if s.CPUHistory["new1"].Len() != 3 {
+		t.Errorf("new1 CPUHistory.Len() = %d, want 3", s.CPUHistory["new1"].Len())
+	}
+	cpu := s.CPUHistory["new1"].Data()
+	if cpu[0] != 10 || cpu[1] != 20 || cpu[2] != 30 {
+		t.Errorf("new1 CPUHistory = %v, want [10 20 30]", cpu)
+	}
+}
+
+func TestMergeByServiceIdentityScaledSkipped(t *testing.T) {
+	s := newTestSession()
+	// Two containers with same service, both running (scaled service).
+	resp := &protocol.QueryMetricsResp{
+		Containers: []protocol.TimedContainerMetrics{
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "s1", CPUPercent: 10, Project: "myapp", Service: "worker", State: "running"}},
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "s2", CPUPercent: 20, Project: "myapp", Service: "worker", State: "running"}},
+		},
+	}
+	handleMetricsBackfill(s, resp, 0, 0, false)
+
+	// Both should remain separate — not merged.
+	if s.CPUHistory["s1"].Len() != 1 {
+		t.Errorf("s1 CPUHistory.Len() = %d, want 1", s.CPUHistory["s1"].Len())
+	}
+	if s.CPUHistory["s2"].Len() != 1 {
+		t.Errorf("s2 CPUHistory.Len() = %d, want 1", s.CPUHistory["s2"].Len())
+	}
+}
+
+func TestMergeByServiceIdentityNonComposeSkipped(t *testing.T) {
+	s := newTestSession()
+	// Two containers without service labels — should not be merged.
+	resp := &protocol.QueryMetricsResp{
+		Containers: []protocol.TimedContainerMetrics{
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "a1", CPUPercent: 10}},
+			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "a2", CPUPercent: 20}},
+		},
+	}
+	handleMetricsBackfill(s, resp, 0, 0, false)
+
+	if s.CPUHistory["a1"].Len() != 1 {
+		t.Errorf("a1 CPUHistory.Len() = %d, want 1", s.CPUHistory["a1"].Len())
+	}
+	if s.CPUHistory["a2"].Len() != 1 {
+		t.Errorf("a2 CPUHistory.Len() = %d, want 1", s.CPUHistory["a2"].Len())
+	}
+}
+
+func TestMergeByServiceIdentityTimeAlign(t *testing.T) {
+	s := newTestSession()
+	// Cross-deploy with historical window — merge should happen before time-alignment.
+	resp := &protocol.QueryMetricsResp{
+		Containers: []protocol.TimedContainerMetrics{
+			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "old1", CPUPercent: 10, MemUsage: 100, Project: "myapp", Service: "web", State: "exited"}},
+			{Timestamp: 8, ContainerMetrics: protocol.ContainerMetrics{ID: "new1", CPUPercent: 20, MemUsage: 200, Project: "myapp", Service: "web", State: "running"}},
+		},
+	}
+	handleMetricsBackfill(s, resp, 0, 10, true)
+
+	if _, ok := s.CPUHistory["old1"]; ok {
+		t.Error("old1 should be merged into new1")
+	}
+	// Time-aligned: should produce ringBufSize entries.
+	if s.CPUHistory["new1"].Len() != ringBufSize {
+		t.Fatalf("new1 CPUHistory.Len() = %d, want %d", s.CPUHistory["new1"].Len(), ringBufSize)
+	}
+	cpu := s.CPUHistory["new1"].Data()
+	var nonZero int
+	for _, v := range cpu {
+		if v > 0 {
+			nonZero++
+		}
+	}
+	if nonZero != 2 {
+		t.Errorf("nonzero buckets = %d, want 2", nonZero)
+	}
+}
+
 func TestAppUpdateMetricsBackfillMsg(t *testing.T) {
 	a := newTestApp()
 	resp := &protocol.QueryMetricsResp{
