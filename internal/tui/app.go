@@ -425,7 +425,7 @@ func (a *App) handleDetailAutoSwitch(s *Session, evt protocol.ContainerEvent) te
 	// Match — switch to the new container.
 	det.containerID = evt.ContainerID
 	det.reset()
-	return det.onSwitch(s.Client, a.windowSeconds())
+	return det.onSwitch(s.Client, a.windowSeconds(), s.RetentionDays)
 }
 
 // handleZoom adjusts the time window and triggers a backfill.
@@ -457,7 +457,7 @@ func (a *App) handleZoom(key string) tea.Cmd {
 	var cmds []tea.Cmd
 	cmds = append(cmds, backfillMetrics(s.Client, timeWindows[a.windowIdx].seconds))
 	if a.active == viewDetail {
-		if cmd := s.Detail.onSwitch(s.Client, timeWindows[a.windowIdx].seconds); cmd != nil {
+		if cmd := s.Detail.onSwitch(s.Client, timeWindows[a.windowIdx].seconds, s.RetentionDays); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	}
@@ -523,7 +523,7 @@ func (a *App) onViewSwitch() tea.Cmd {
 	case viewAlerts:
 		return s.Alertv.onSwitch(s.Client)
 	case viewDetail:
-		return s.Detail.onSwitch(s.Client, a.windowSeconds())
+		return s.Detail.onSwitch(s.Client, a.windowSeconds(), s.RetentionDays)
 	}
 	return nil
 }

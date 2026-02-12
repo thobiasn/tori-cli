@@ -75,7 +75,7 @@ func (s *DetailState) isGroupMode() bool {
 	return s.project != "" && s.containerID == ""
 }
 
-func (s *DetailState) onSwitch(c *Client, windowSec int64) tea.Cmd {
+func (s *DetailState) onSwitch(c *Client, windowSec int64, retentionDays int) tea.Cmd {
 	if s.containerID == "" && s.project == "" {
 		return nil
 	}
@@ -92,13 +92,19 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64) tea.Cmd {
 		ids := s.projectIDs
 		svcProject := s.svcProject
 		svcService := s.svcService
+		retDays := retentionDays
 		cmds = append(cmds, func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
+			now := time.Now().Unix()
+			rangeSec := int64(86400) // default 1 day
+			if retDays > 0 {
+				rangeSec = int64(retDays) * 86400
+			}
 			req := &protocol.QueryLogsReq{
-				Start: 0,
-				End:   time.Now().Unix(),
-				Limit: 500,
+				Start: now - rangeSec,
+				End:   now,
+				Limit: 5000,
 			}
 			// Prefer service/project identity for cross-container history.
 			if svcService != "" {

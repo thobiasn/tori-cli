@@ -276,7 +276,7 @@ func updateDashboard(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 			}
 			s.Detail.reset()
 			a.active = viewDetail
-			return s.Detail.onSwitch(s.Client, a.windowSeconds())
+			return s.Detail.onSwitch(s.Client, a.windowSeconds(), s.RetentionDays)
 		}
 		// Enter on group header opens detail in group mode.
 		groupName := cursorGroupName(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
@@ -292,7 +292,7 @@ func updateDashboard(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 				}
 			}
 			a.active = viewDetail
-			return s.Detail.onSwitch(s.Client, a.windowSeconds())
+			return s.Detail.onSwitch(s.Client, a.windowSeconds(), s.RetentionDays)
 		}
 	case "t":
 		return toggleTracking(s)
