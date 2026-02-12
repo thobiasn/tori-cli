@@ -423,7 +423,7 @@ func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []f
 	// Convert grid percentages to character rows.
 	gridDots := make(map[int]bool, len(gridPcts))
 	for _, pct := range gridPcts {
-		dot := int(pct / maxVal * float64(totalDots))
+		dot := int(pct / 100 * float64(totalDots))
 		if dot < 0 {
 			dot = 0
 		}
