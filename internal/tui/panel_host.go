@@ -36,15 +36,22 @@ func gridGraph(data []float64, value string, innerW, rows int, windowSec int64, 
 		graphW = 10
 	}
 	gridPcts := []float64{0, 50, 80, 100}
+	if rows < 6 {
+		gridPcts = []float64{0, 100}
+	}
 	graph := GraphWithGrid(data, graphW, rows, 100, gridPcts, timeMarkers(windowSec), theme, color...)
 	graphLines := strings.Split(graph, "\n")
 
 	gridLabels := make(map[int]string)
-	for _, pct := range []float64{100, 50, 80} {
-		row := int(float64(rows-1) * (1.0 - pct/100.0))
-		if _, taken := gridLabels[row]; !taken {
-			gridLabels[row] = fmt.Sprintf("%3.0f%%", pct)
+	if rows >= 6 {
+		for _, pct := range []float64{100, 50, 80} {
+			row := int(float64(rows-1) * (1.0 - pct/100.0))
+			if _, taken := gridLabels[row]; !taken {
+				gridLabels[row] = fmt.Sprintf("%3.0f%%", pct)
+			}
 		}
+	} else {
+		gridLabels[0] = "100%"
 	}
 
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
@@ -91,14 +98,17 @@ func autoGridGraph(data []float64, value string, innerW, rows int, windowSec int
 	}
 
 	gridPcts := []float64{0, 50, 100}
+	if rows < 6 {
+		gridPcts = []float64{0, 100}
+	}
 	graph := GraphWithGrid(data, graphW, rows, maxVal, gridPcts, timeMarkers(windowSec), theme, color)
 	graphLines := strings.Split(graph, "\n")
 
-	// Labels: ceiling at top row, mid at 50% (unless ceilOnly).
+	// Labels: ceiling at top row, mid at 50% (unless ceilOnly or too short).
 	midRow := int(float64(rows-1) * 0.5)
 	gridLabels := make(map[int]string)
 	gridLabels[0] = axis.labelFn(maxVal)
-	if !axis.ceilOnly && midRow > 0 && midRow < rows-1 {
+	if !axis.ceilOnly && midRow > 0 && midRow < rows-1 && rows >= 6 {
 		gridLabels[midRow] = axis.labelFn(maxVal / 2)
 	}
 
