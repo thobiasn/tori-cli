@@ -153,7 +153,7 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		leftW := hostInnerW * 65 / 100
 		rightW := hostInnerW - leftW
 
-		cpuPanel := renderCPUPanel(cpuHistory, s.Host, leftW, hostInnerH, theme, windowLabel, a.windowSeconds())
+		cpuPanel := renderCPUPanel(cpuHistory, s.Host, RenderContext{Width: leftW, Height: hostInnerH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
 		// Split right column: memory on top, disks on bottom.
 		diskH := len(s.Disks)*3 + 2 // 3 lines per disk (divider + used + free) + borders
 		if s.Host != nil && s.Host.SwapTotal > 0 {
@@ -171,7 +171,7 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 			diskH = hostInnerH - memH
 		}
 
-		memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), rightW, memH, theme, windowLabel, a.windowSeconds())
+		memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), RenderContext{Width: rightW, Height: memH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
 		var swapTotal, swapUsed uint64
 		if s.Host != nil {
 			swapTotal, swapUsed = s.Host.SwapTotal, s.Host.SwapUsed
@@ -183,8 +183,8 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 
 		listW := width * 3 / 5
 		midRightW := width - listW
-		contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, listW, middleH, theme)
-		selPanel := renderSelectedPanel(a, s, midRightW, middleH, theme)
+		contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, RenderContext{Width: listW, Height: middleH, Theme: theme})
+		selPanel := renderSelectedPanel(a, s, RenderContext{Width: midRightW, Height: middleH, Theme: theme})
 		midRow := lipgloss.JoinHorizontal(lipgloss.Top, contPanel, selPanel)
 
 		return strings.Join([]string{alertPanel, hostBox, midRow}, "\n")
@@ -226,13 +226,13 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 	if s.Host != nil {
 		swapTotal2, swapUsed2 = s.Host.SwapTotal, s.Host.SwapUsed
 	}
-	cpuPanel := renderCPUPanel(cpuHistory, s.Host, hostInnerW, cpuPanelH, theme, windowLabel, a.windowSeconds())
-	memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), hostInnerW, narrowMemH, theme, windowLabel, a.windowSeconds())
+	cpuPanel := renderCPUPanel(cpuHistory, s.Host, RenderContext{Width: hostInnerW, Height: cpuPanelH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
+	memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), RenderContext{Width: hostInnerW, Height: narrowMemH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
 	diskPanel := renderDiskPanel(s.Disks, swapTotal2, swapUsed2, hostInnerW, diskH, theme)
 	hostContent := strings.Join([]string{cpuPanel, memPanel, diskPanel}, "\n")
 	hostBox := Box("Host", hostContent, width, hostH, theme)
-	contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, width, contH, theme)
-	selPanel := renderSelectedPanel(a, s, width, selH, theme)
+	contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, RenderContext{Width: width, Height: contH, Theme: theme})
+	selPanel := renderSelectedPanel(a, s, RenderContext{Width: width, Height: selH, Theme: theme})
 
 	return strings.Join([]string{alertPanel, hostBox, contPanel, selPanel}, "\n")
 }

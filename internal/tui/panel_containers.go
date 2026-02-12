@@ -9,12 +9,12 @@ import (
 )
 
 // renderContainerPanel renders the container list with grouping and cursor.
-func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cursor int, alerts map[int64]*protocol.AlertEvent, contInfo []protocol.ContainerInfo, width, height int, theme *Theme) string {
-	innerH := height - 2
+func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cursor int, alerts map[int64]*protocol.AlertEvent, contInfo []protocol.ContainerInfo, rc RenderContext) string {
+	innerH := rc.Height - 2
 	if innerH < 1 {
 		innerH = 1
 	}
-	innerW := width - 2
+	innerW := rc.Width - 2
 
 	// Build set of container IDs with active alerts.
 	alertIDs := make(map[string]bool)
@@ -37,6 +37,7 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 		nameW = 8
 	}
 
+	theme := rc.Theme
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 
 	// Build column header (pinned above scroll region).
@@ -132,7 +133,7 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 	}
 	lines = append([]string{headerLine}, lines...)
 
-	return Box("Containers", strings.Join(lines, "\n"), width, height, theme)
+	return Box("Containers", strings.Join(lines, "\n"), rc.Width, rc.Height, theme)
 }
 
 // cursorContainerID resolves the current cursor position to a container ID.

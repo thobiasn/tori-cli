@@ -10,6 +10,15 @@ import (
 	"github.com/thobiasn/rook/internal/protocol"
 )
 
+// RenderContext carries shared rendering state passed through panel functions.
+type RenderContext struct {
+	Width       int
+	Height      int
+	Theme       *Theme
+	WindowLabel string
+	WindowSec   int64
+}
+
 // Box renders a bordered panel with a title using rounded Unicode corners.
 // Content is padded to fill width×height (including borders).
 func Box(title, content string, width, height int, theme *Theme) string {

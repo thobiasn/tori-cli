@@ -42,7 +42,7 @@ func TestRenderCPUPanel(t *testing.T) {
 		Uptime: 86400 * 14,
 	}
 
-	got := renderCPUPanel([]float64{10, 20, 42.5}, host, 50, 8, &theme, "", 0)
+	got := renderCPUPanel([]float64{10, 20, 42.5}, host, RenderContext{Width: 50, Height: 8, Theme: &theme})
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "42.5%") {
 		t.Error("should contain CPU percentage")
@@ -57,7 +57,7 @@ func TestRenderCPUPanel(t *testing.T) {
 
 func TestRenderCPUPanelNilHost(t *testing.T) {
 	theme := DefaultTheme()
-	got := renderCPUPanel(nil, nil, 30, 8, &theme, "", 0)
+	got := renderCPUPanel(nil, nil, RenderContext{Width: 30, Height: 8, Theme: &theme})
 	if !strings.Contains(got, "waiting") {
 		t.Error("nil host should show waiting message")
 	}
@@ -73,7 +73,7 @@ func TestRenderMemPanel(t *testing.T) {
 		MemFree:    3 * 1024 * 1024 * 1024,
 	}
 
-	got := renderMemPanel(host, []float64{40, 45, 50}, 50, 14, &theme, "", 0)
+	got := renderMemPanel(host, []float64{40, 45, 50}, RenderContext{Width: 50, Height: 14, Theme: &theme})
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "Used") {
 		t.Error("should contain Used label")
@@ -91,7 +91,7 @@ func TestRenderMemPanel(t *testing.T) {
 
 func TestRenderMemPanelNilHost(t *testing.T) {
 	theme := DefaultTheme()
-	got := renderMemPanel(nil, nil, 30, 8, &theme, "", 0)
+	got := renderMemPanel(nil, nil, RenderContext{Width: 30, Height: 8, Theme: &theme})
 	if !strings.Contains(got, "waiting") {
 		t.Error("nil host should show waiting message")
 	}
@@ -142,7 +142,7 @@ func TestRenderContainerPanel(t *testing.T) {
 			{ID: "c2", Name: "db", State: "running", CPUPercent: 0.8, MemUsage: 256 * 1024 * 1024},
 		}, running: 2},
 	}
-	got := renderContainerPanel(groups, map[string]bool{}, 0, nil, nil, 50, 10, &theme)
+	got := renderContainerPanel(groups, map[string]bool{}, 0, nil, nil, RenderContext{Width: 50, Height: 10, Theme: &theme})
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "myapp") {
 		t.Error("should contain group name")
@@ -173,7 +173,7 @@ func TestRenderSelectedPanelContainer(t *testing.T) {
 		s.CPUHistory["c1"].Push(float64(i * 10))
 	}
 
-	got := renderSelectedPanel(&a, s, 50, 25, &a.theme)
+	got := renderSelectedPanel(&a, s, RenderContext{Width: 50, Height: 25, Theme: &a.theme})
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "web") {
 		t.Error("should contain container name 'web'")
@@ -200,7 +200,7 @@ func TestRenderSelectedPanelGroupHeader(t *testing.T) {
 	s.Dash.groups = buildGroups(s.Containers, s.ContInfo)
 	s.Dash.cursor = 0 // Group header.
 
-	got := renderSelectedPanel(&a, s, 50, 10, &a.theme)
+	got := renderSelectedPanel(&a, s, RenderContext{Width: 50, Height: 10, Theme: &a.theme})
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "Group: app") {
 		t.Error("should show group summary title")
@@ -213,7 +213,7 @@ func TestRenderSelectedPanelGroupHeader(t *testing.T) {
 func TestRenderSelectedPanelNoSelection(t *testing.T) {
 	a := newTestApp()
 	s := a.session()
-	got := renderSelectedPanel(&a, s, 50, 10, &a.theme)
+	got := renderSelectedPanel(&a, s, RenderContext{Width: 50, Height: 10, Theme: &a.theme})
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "Move cursor") {
 		t.Error("should show hint when no container selected")
@@ -227,7 +227,7 @@ func TestRenderContainerPanelCollapsed(t *testing.T) {
 			{ID: "c1", Name: "web", State: "running"},
 		}, running: 1},
 	}
-	got := renderContainerPanel(groups, map[string]bool{"myapp": true}, 0, nil, nil, 50, 10, &theme)
+	got := renderContainerPanel(groups, map[string]bool{"myapp": true}, 0, nil, nil, RenderContext{Width: 50, Height: 10, Theme: &theme})
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "myapp") {
 		t.Error("collapsed should still show group header")

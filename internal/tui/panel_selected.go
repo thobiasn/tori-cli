@@ -9,27 +9,28 @@ import (
 )
 
 // renderSelectedPanel renders the selected container/group detail panel.
-func renderSelectedPanel(a *App, s *Session, width, height int, theme *Theme) string {
+func renderSelectedPanel(a *App, s *Session, rc RenderContext) string {
 	group, idx := cursorContainerMetrics(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
 	if group == nil {
-		return Box("Selected", "  Move cursor to a container", width, height, theme)
+		return Box("Selected", "  Move cursor to a container", rc.Width, rc.Height, rc.Theme)
 	}
 
-	windowLabel := a.windowLabel()
-	windowSec := a.windowSeconds()
+	rc.WindowLabel = a.windowLabel()
+	rc.WindowSec = a.windowSeconds()
 
 	// Cursor on group header — show group summary.
 	if idx < 0 {
-		return renderGroupSummary(s, group, width, height, theme, windowLabel, windowSec)
+		return renderGroupSummary(s, group, rc)
 	}
 
 	c := &group.containers[idx]
-	return renderContainerSelected(s, c, width, height, theme, windowLabel, windowSec)
+	return renderContainerSelected(s, c, rc)
 }
 
-func renderGroupSummary(s *Session, g *containerGroup, width, height int, theme *Theme, windowLabel string, windowSec int64) string {
-	innerW := width - 2
-	innerH := height - 2
+func renderGroupSummary(s *Session, g *containerGroup, rc RenderContext) string {
+	theme := rc.Theme
+	innerW := rc.Width - 2
+	innerH := rc.Height - 2
 	var totalCPU float64
 	var totalMem uint64
 	for _, c := range g.containers {
@@ -74,7 +75,7 @@ func renderGroupSummary(s *Session, g *containerGroup, width, height int, theme 
 	cpuAgg := aggregateHistory(s.CPUHistory, ids)
 	var cpuContent string
 	if len(cpuAgg) > 0 {
-		cpuContent = strings.Join(autoGridGraph(cpuAgg, cpuVal, innerW-2, cpuRows, windowSec, theme, theme.CPUGraph, pctAxis), "\n")
+		cpuContent = strings.Join(autoGridGraph(cpuAgg, cpuVal, innerW-2, cpuRows, rc.WindowSec, theme, theme.CPUGraph, pctAxis), "\n")
 	} else {
 		cpuContent = fmt.Sprintf(" CPU: %s", cpuVal)
 	}
@@ -83,13 +84,13 @@ func renderGroupSummary(s *Session, g *containerGroup, width, height int, theme 
 	memAgg := aggregateHistory(s.MemHistory, ids)
 	var memContent string
 	if len(memAgg) > 0 {
-		memContent = strings.Join(autoGridGraph(memAgg, memVal, innerW-2, memRows, windowSec, theme, theme.MemGraph, bytesAxis), "\n")
+		memContent = strings.Join(autoGridGraph(memAgg, memVal, innerW-2, memRows, rc.WindowSec, theme, theme.MemGraph, bytesAxis), "\n")
 	} else {
 		memContent = fmt.Sprintf(" MEM: %s", memVal)
 	}
 
-	cpuTitle := "CPU · " + windowLabel
-	memTitle := "Memory · " + windowLabel
+	cpuTitle := "CPU · " + rc.WindowLabel
+	memTitle := "Memory · " + rc.WindowLabel
 	graphs := lipgloss.JoinVertical(lipgloss.Left,
 		Box(cpuTitle, cpuContent, innerW, cpuH, theme),
 		Box(memTitle, memContent, innerW, memH, theme))
@@ -115,7 +116,7 @@ func renderGroupSummary(s *Session, g *containerGroup, width, height int, theme 
 	}
 
 	title := fmt.Sprintf("Group: %s ── %d/%d running", g.name, g.running, len(g.containers))
-	return Box(title, strings.Join(lines, "\n"), width, height, theme)
+	return Box(title, strings.Join(lines, "\n"), rc.Width, rc.Height, theme)
 }
 
 // aggregateHistory sums per-index values across multiple container histories (right-aligned).
@@ -149,9 +150,10 @@ func aggregateHistory(histories map[string]*RingBuffer[float64], ids []string) [
 	return agg
 }
 
-func renderContainerSelected(s *Session, c *protocol.ContainerMetrics, width, height int, theme *Theme, windowLabel string, windowSec int64) string {
-	innerW := width - 2
-	innerH := height - 2
+func renderContainerSelected(s *Session, c *protocol.ContainerMetrics, rc RenderContext) string {
+	theme := rc.Theme
+	innerW := rc.Width - 2
+	innerH := rc.Height - 2
 
 	// Charts take 1/2 of inner height.
 	chartBudget := innerH / 2
@@ -181,7 +183,7 @@ func renderContainerSelected(s *Session, c *protocol.ContainerMetrics, width, he
 	cpuData := historyData(s.CPUHistory, c.ID)
 	var cpuContent string
 	if len(cpuData) > 0 {
-		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, innerW-2, cpuRows, windowSec, theme, theme.CPUGraph, pctAxis), "\n")
+		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, innerW-2, cpuRows, rc.WindowSec, theme, theme.CPUGraph, pctAxis), "\n")
 	} else {
 		cpuContent = fmt.Sprintf(" CPU: %s", cpuVal)
 	}
@@ -190,13 +192,13 @@ func renderContainerSelected(s *Session, c *protocol.ContainerMetrics, width, he
 	memData := historyData(s.MemHistory, c.ID)
 	var memContent string
 	if len(memData) > 0 {
-		memContent = strings.Join(autoGridGraph(memData, memVal, innerW-2, memRows, windowSec, theme, theme.MemGraph, bytesAxis), "\n")
+		memContent = strings.Join(autoGridGraph(memData, memVal, innerW-2, memRows, rc.WindowSec, theme, theme.MemGraph, bytesAxis), "\n")
 	} else {
 		memContent = fmt.Sprintf(" MEM: %s", memVal)
 	}
 
-	cpuTitle := "CPU · " + windowLabel
-	memTitle := "Memory · " + windowLabel
+	cpuTitle := "CPU · " + rc.WindowLabel
+	memTitle := "Memory · " + rc.WindowLabel
 	graphs := lipgloss.JoinVertical(lipgloss.Left,
 		Box(cpuTitle, cpuContent, innerW, cpuH, theme),
 		Box(memTitle, memContent, innerW, memH, theme))
@@ -227,5 +229,5 @@ func renderContainerSelected(s *Session, c *protocol.ContainerMetrics, width, he
 	// Title with state indicator.
 	stateIndicator := theme.StateIndicator(c.State)
 	title := "Selected: " + stripANSI(c.Name) + " ── " + stateIndicator + " " + stripANSI(c.State)
-	return Box(title, strings.Join(lines, "\n"), width, height, theme)
+	return Box(title, strings.Join(lines, "\n"), rc.Width, rc.Height, theme)
 }

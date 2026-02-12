@@ -72,10 +72,12 @@ func TestTunnelSSHOptions(t *testing.T) {
 		},
 	}
 	tun.cmd = tun.execFn("false")
-	_ = tun.start("user@host", "/run/rook.sock", SSHOptions{
+	if err := tun.start("user@host", "/run/rook.sock", SSHOptions{
 		Port:         2222,
 		IdentityFile: "/home/user/.ssh/mykey",
-	})
+	}); err == nil {
+		t.Fatal("expected error from start()")
+	}
 
 	joined := strings.Join(gotArgs, " ")
 	if !strings.Contains(joined, "-p 2222") {
@@ -96,7 +98,9 @@ func TestTunnelSSHOptionsDefaults(t *testing.T) {
 		},
 	}
 	tun.cmd = tun.execFn("false")
-	_ = tun.start("user@host", "/run/rook.sock", SSHOptions{})
+	if err := tun.start("user@host", "/run/rook.sock", SSHOptions{}); err == nil {
+		t.Fatal("expected error from start()")
+	}
 
 	joined := strings.Join(gotArgs, " ")
 	if strings.Contains(joined, "-p") {

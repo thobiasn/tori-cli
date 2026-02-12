@@ -188,15 +188,14 @@ func formatAutoLabel(v float64) string {
 }
 
 // renderCPUPanel renders the CPU panel with a multi-row braille graph.
-// windowLabel is appended to the title (e.g. "CPU · 1h"); empty for Live.
-func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, height int, theme *Theme, windowLabel string, windowSec int64) string {
-	title := "CPU · " + windowLabel
+func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, rc RenderContext) string {
+	title := "CPU · " + rc.WindowLabel
 	if host == nil {
-		return Box(title, "  waiting for data...", width, height, theme)
+		return Box(title, "  waiting for data...", rc.Width, rc.Height, rc.Theme)
 	}
 
-	innerW := width - 2
-	graphRows := height - 3 // borders (2) + info line (1)
+	innerW := rc.Width - 2
+	graphRows := rc.Height - 3 // borders (2) + info line (1)
 	if graphRows < 1 {
 		graphRows = 1
 	}
@@ -206,7 +205,7 @@ func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, hei
 	var lines []string
 
 	if len(cpuHistory) > 0 {
-		lines = append(lines, gridGraph(cpuHistory, cpuVal, innerW, graphRows, windowSec, theme)...)
+		lines = append(lines, gridGraph(cpuHistory, cpuVal, innerW, graphRows, rc.WindowSec, rc.Theme)...)
 	} else {
 		lines = append(lines, fmt.Sprintf(" CPU %s", cpuVal))
 	}
@@ -221,7 +220,7 @@ func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, hei
 	infoLine := loadStr + strings.Repeat(" ", gap) + uptimeStr
 	lines = append(lines, infoLine)
 
-	return Box(title, strings.Join(lines, "\n"), width, height, theme)
+	return Box(title, strings.Join(lines, "\n"), rc.Width, rc.Height, rc.Theme)
 }
 
 // memDivider renders a btop-style divider: ─Label:──────value─
@@ -240,16 +239,15 @@ func memDivider(label, value string, width int, labelColor lipgloss.Color, theme
 }
 
 // renderMemPanel renders the memory panel with a grid-backed braille graph (like CPU).
-// windowLabel is appended to the title; empty for Live.
-func renderMemPanel(host *protocol.HostMetrics, usedHistory []float64, width, height int, theme *Theme, windowLabel string, windowSec int64) string {
-	title := "Memory · " + windowLabel
+func renderMemPanel(host *protocol.HostMetrics, usedHistory []float64, rc RenderContext) string {
+	title := "Memory · " + rc.WindowLabel
 	if host == nil {
-		return Box(title, "  waiting for data...", width, height, theme)
+		return Box(title, "  waiting for data...", rc.Width, rc.Height, rc.Theme)
 	}
 
-	innerW := width - 2
+	innerW := rc.Width - 2
 	// Layout: borders (2) + info line (1) = 3 fixed lines.
-	graphRows := height - 3
+	graphRows := rc.Height - 3
 	if graphRows < 1 {
 		graphRows = 1
 	}
@@ -259,7 +257,7 @@ func renderMemPanel(host *protocol.HostMetrics, usedHistory []float64, width, he
 	var lines []string
 
 	if len(usedHistory) > 0 {
-		lines = append(lines, gridGraph(usedHistory, memVal, innerW, graphRows, windowSec, theme, theme.MemGraph)...)
+		lines = append(lines, gridGraph(usedHistory, memVal, innerW, graphRows, rc.WindowSec, rc.Theme, rc.Theme.MemGraph)...)
 	} else {
 		lines = append(lines, fmt.Sprintf(" Mem %s", memVal))
 	}
@@ -268,7 +266,7 @@ func renderMemPanel(host *protocol.HostMetrics, usedHistory []float64, width, he
 	usedStr := fmt.Sprintf(" Used: %s / %s", FormatBytes(host.MemUsed), FormatBytes(host.MemTotal))
 	lines = append(lines, usedStr)
 
-	return Box(title, strings.Join(lines, "\n"), width, height, theme)
+	return Box(title, strings.Join(lines, "\n"), rc.Width, rc.Height, rc.Theme)
 }
 
 // renderDiskPanel renders a btop-style disk panel with per-mountpoint Used/Free bars

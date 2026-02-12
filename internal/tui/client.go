@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -118,24 +119,32 @@ func (c *Client) dispatchStreaming(env *protocol.Envelope) {
 	switch env.Type {
 	case protocol.TypeMetricsUpdate:
 		var m protocol.MetricsUpdate
-		if err := protocol.DecodeBody(env.Body, &m); err == nil {
-			c.prog.Send(MetricsMsg{&m, c.server})
+		if err := protocol.DecodeBody(env.Body, &m); err != nil {
+			log.Printf("decode metrics: %v", err)
+			return
 		}
+		c.prog.Send(MetricsMsg{&m, c.server})
 	case protocol.TypeLogEntry:
 		var m protocol.LogEntryMsg
-		if err := protocol.DecodeBody(env.Body, &m); err == nil {
-			c.prog.Send(LogMsg{m, c.server})
+		if err := protocol.DecodeBody(env.Body, &m); err != nil {
+			log.Printf("decode log entry: %v", err)
+			return
 		}
+		c.prog.Send(LogMsg{m, c.server})
 	case protocol.TypeAlertEvent:
 		var m protocol.AlertEvent
-		if err := protocol.DecodeBody(env.Body, &m); err == nil {
-			c.prog.Send(AlertEventMsg{m, c.server})
+		if err := protocol.DecodeBody(env.Body, &m); err != nil {
+			log.Printf("decode alert event: %v", err)
+			return
 		}
+		c.prog.Send(AlertEventMsg{m, c.server})
 	case protocol.TypeContainerEvent:
 		var m protocol.ContainerEvent
-		if err := protocol.DecodeBody(env.Body, &m); err == nil {
-			c.prog.Send(ContainerEventMsg{m, c.server})
+		if err := protocol.DecodeBody(env.Body, &m); err != nil {
+			log.Printf("decode container event: %v", err)
+			return
 		}
+		c.prog.Send(ContainerEventMsg{m, c.server})
 	}
 }
 
