@@ -171,10 +171,7 @@ func Sparkline(data []float64, width int, theme *Theme) string {
 	}
 
 	// Each braille char covers 2 data points.
-	maxPoints := width * 2
-	if len(data) > maxPoints {
-		data = data[len(data)-maxPoints:]
-	}
+	data = fitToWidth(data, width*2)
 
 	// Find max for normalization.
 	maxVal := 0.0
@@ -233,6 +230,32 @@ func Sparkline(data []float64, width int, theme *Theme) string {
 	return lipgloss.NewStyle().Foreground(color).Render(string(chars))
 }
 
+// fitToWidth compresses data to fit within maxPoints by taking the max
+// value in each group of consecutive points. This preserves peaks and
+// maintains time alignment (unlike truncation which discards old data).
+func fitToWidth(data []float64, maxPoints int) []float64 {
+	if len(data) <= maxPoints {
+		return data
+	}
+	out := make([]float64, maxPoints)
+	ratio := float64(len(data)) / float64(maxPoints)
+	for i := range out {
+		lo := int(float64(i) * ratio)
+		hi := int(float64(i+1) * ratio)
+		if hi > len(data) {
+			hi = len(data)
+		}
+		var mx float64
+		for j := lo; j < hi; j++ {
+			if data[j] > mx {
+				mx = data[j]
+			}
+		}
+		out[i] = mx
+	}
+	return out
+}
+
 // Graph renders a multi-row braille graph. Each braille character covers
 // 2 data points horizontally and 4 dot rows vertically. With `rows` rows of
 // braille characters the vertical resolution is rows*4 dots.
@@ -242,10 +265,7 @@ func Graph(data []float64, width, rows int, maxVal float64, theme *Theme) string
 		return ""
 	}
 
-	maxPoints := width * 2
-	if len(data) > maxPoints {
-		data = data[len(data)-maxPoints:]
-	}
+	data = fitToWidth(data, width*2)
 
 	if maxVal <= 0 {
 		for _, v := range data {
@@ -371,10 +391,7 @@ func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []f
 		return ""
 	}
 
-	maxPoints := width * 2
-	if len(data) > maxPoints {
-		data = data[len(data)-maxPoints:]
-	}
+	data = fitToWidth(data, width*2)
 
 	totalDots := rows * 4
 
@@ -584,10 +601,7 @@ func GraphFixedColor(data []float64, width, rows int, maxVal float64, color lipg
 		return ""
 	}
 
-	maxPoints := width * 2
-	if len(data) > maxPoints {
-		data = data[len(data)-maxPoints:]
-	}
+	data = fitToWidth(data, width*2)
 
 	if maxVal <= 0 {
 		for _, v := range data {
