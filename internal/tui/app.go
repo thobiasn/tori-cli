@@ -324,8 +324,10 @@ func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp) {
 	for _, h := range resp.Host {
 		s.HostCPUHistory.Push(h.CPUPercent)
 		s.HostMemHistory.Push(h.MemPercent)
-		hm := h.HostMetrics
-		pushMemHistories(s, &hm)
+		// Push directly instead of calling pushMemHistories, which skips
+		// when MemTotal==0. Zero-fill entries from time-aware downsampling
+		// have MemTotal==0 but still need a push to keep buffers in sync.
+		s.HostMemUsedHistory.Push(h.MemPercent)
 	}
 	for _, c := range resp.Containers {
 		if _, ok := s.CPUHistory[c.ID]; !ok {
