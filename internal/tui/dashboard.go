@@ -283,6 +283,8 @@ func updateDashboard(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		if groupName != "" && groupName != "other" {
 			s.Detail.containerID = ""
 			s.Detail.project = groupName
+			s.Detail.svcProject = ""
+			s.Detail.svcService = ""
 			s.Detail.reset()
 			// Populate projectIDs from contInfo.
 			s.Detail.projectIDs = nil
