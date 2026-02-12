@@ -189,7 +189,7 @@ func formatAutoLabel(v float64) string {
 
 // renderCPUPanel renders the CPU panel with a multi-row braille graph.
 func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, rc RenderContext) string {
-	title := "CPU · " + rc.WindowLabel
+	title := "Host CPU · " + rc.WindowLabel
 	if host == nil {
 		return Box(title, "  waiting for data...", rc.Width, rc.Height, rc.Theme)
 	}
@@ -240,7 +240,7 @@ func memDivider(label, value string, width int, labelColor lipgloss.Color, theme
 
 // renderMemPanel renders the memory panel with a grid-backed braille graph (like CPU).
 func renderMemPanel(host *protocol.HostMetrics, usedHistory []float64, rc RenderContext) string {
-	title := "Memory · " + rc.WindowLabel
+	title := "Host Memory · " + rc.WindowLabel
 	if host == nil {
 		return Box(title, "  waiting for data...", rc.Width, rc.Height, rc.Theme)
 	}
