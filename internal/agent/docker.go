@@ -42,6 +42,7 @@ type inspectResult struct {
 	startedAt    int64
 	restartCount int
 	exitCode     int
+	cachedAt     time.Time
 }
 
 type cpuPrev struct {
@@ -163,39 +164,6 @@ type Container struct {
 	ExitCode     int
 }
 
-// UpdateContainerState updates a single container's state in the cached list.
-// If c.State is empty (destroy), the container is removed. If the container
-// isn't in the list yet (event before first collect), it is appended.
-func (d *DockerCollector) UpdateContainerState(c Container) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if c.State == "" {
-		// Destroy: remove from list.
-		for i, existing := range d.lastContainers {
-			if existing.ID == c.ID {
-				d.lastContainers = append(d.lastContainers[:i], d.lastContainers[i+1:]...)
-				return
-			}
-		}
-		return
-	}
-
-	for i, existing := range d.lastContainers {
-		if existing.ID == c.ID {
-			d.lastContainers[i].State = c.State
-			d.lastContainers[i].Name = c.Name
-			d.lastContainers[i].Image = c.Image
-			d.lastContainers[i].Project = c.Project
-			d.lastContainers[i].Service = c.Service
-			return
-		}
-	}
-
-	// Not found — event arrived before first collect.
-	d.lastContainers = append(d.lastContainers, c)
-}
-
 // SetFilters updates the include/exclude filter lists at runtime.
 func (d *DockerCollector) SetFilters(include, exclude []string) {
 	d.mu.Lock()
@@ -217,6 +185,9 @@ func (d *DockerCollector) MatchFilter(name string) bool {
 // Size: true is expensive (requires diff per container), so we only do it
 // every 12th call (~1 min at 5s collect interval).
 const sizeCollectInterval = 12
+
+// inspectCacheTTL controls how long inspect results are cached before refresh.
+const inspectCacheTTL = 30 * time.Second
 
 func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Container, error) {
 	collectSize := d.sizeCollectN%sizeCollectInterval == 0
@@ -242,17 +213,16 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 		image := truncate(c.Image, maxImageLen)
 		project := c.Labels["com.docker.compose.project"]
 		service := c.Labels["com.docker.compose.service"]
+		// Cache inspect results with a TTL. Running containers refresh every
+		// inspectCacheTTL; non-running containers rarely change state so
+		// their cached results are reused until eviction.
 		var ir inspectResult
-		if c.State != "running" {
-			if cached, ok := d.inspectCache[c.ID]; ok {
-				ir = cached
-			} else {
-				ir = d.inspectContainer(ctx, c.ID)
-				d.inspectCache[c.ID] = ir
-			}
+		if cached, ok := d.inspectCache[c.ID]; ok && time.Since(cached.cachedAt) < inspectCacheTTL {
+			ir = cached
 		} else {
-			delete(d.inspectCache, c.ID)
 			ir = d.inspectContainer(ctx, c.ID)
+			ir.cachedAt = time.Now()
+			d.inspectCache[c.ID] = ir
 		}
 
 		// Cache container disk size when collected; use cached value otherwise.
@@ -349,6 +319,11 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 	for id := range d.cachedSizes {
 		if !seen[id] {
 			delete(d.cachedSizes, id)
+		}
+	}
+	for id := range d.prevCPU {
+		if !seen[id] {
+			delete(d.prevCPU, id)
 		}
 	}
 

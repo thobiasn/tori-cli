@@ -3,7 +3,6 @@ package tui
 import (
 	"strings"
 	"testing"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/thobiasn/rook/internal/protocol"
@@ -424,15 +423,11 @@ func TestInjectDeploySeparators(t *testing.T) {
 func TestDetailResetClearsServiceFields(t *testing.T) {
 	det := &DetailState{containerID: "c1"}
 	det.metricsBackfilled = true
-	det.deployTimestamps = []int64{100, 200}
 
 	det.reset()
 
 	if det.metricsBackfilled {
 		t.Error("metricsBackfilled should be false after reset")
-	}
-	if det.deployTimestamps != nil {
-		t.Errorf("deployTimestamps should be nil after reset, got %v", det.deployTimestamps)
 	}
 }
 
@@ -471,74 +466,3 @@ func TestDetailBackfillOrdering(t *testing.T) {
 	}
 }
 
-func TestDeployVLines(t *testing.T) {
-	t.Run("empty", func(t *testing.T) {
-		vl := deployVLines(nil, 100, 3600, 0)
-		if len(vl) != 0 {
-			t.Errorf("expected no vlines for nil timestamps, got %d", len(vl))
-		}
-	})
-
-	t.Run("no data", func(t *testing.T) {
-		vl := deployVLines([]int64{100}, 0, 3600, 0)
-		if len(vl) != 0 {
-			t.Errorf("expected no vlines for zero dataLen, got %d", len(vl))
-		}
-	})
-
-	t.Run("within window", func(t *testing.T) {
-		// Use a fixed endTS so the test is deterministic.
-		endTS := int64(100000)
-		// Place a deploy marker at the midpoint of a 1h window.
-		ts := endTS - 1800
-		vl := deployVLines([]int64{ts}, 100, 3600, endTS)
-		if len(vl) != 1 {
-			t.Fatalf("expected 1 vline, got %d", len(vl))
-		}
-		// Frac should be exactly 0.5 (midpoint).
-		if vl[0].Frac < 0.49 || vl[0].Frac > 0.51 {
-			t.Errorf("frac = %f, want 0.5", vl[0].Frac)
-		}
-		if vl[0].Label != "dpl" {
-			t.Errorf("label = %q, want dpl", vl[0].Label)
-		}
-	})
-
-	t.Run("outside window filtered", func(t *testing.T) {
-		endTS := int64(100000)
-		// Timestamp well outside the window (2 hours ago in a 1h window).
-		ts := endTS - 7200
-		vl := deployVLines([]int64{ts}, 100, 3600, endTS)
-		if len(vl) != 0 {
-			t.Errorf("expected timestamp outside window to be filtered, got %d", len(vl))
-		}
-	})
-
-	t.Run("live mode infers range", func(t *testing.T) {
-		now := time.Now().Unix()
-		// windowSec=0 → range inferred from dataLen*10.
-		// dataLen=100 → 1000s range. Place marker at 500s ago.
-		ts := now - 500
-		vl := deployVLines([]int64{ts}, 100, 0, 0)
-		if len(vl) != 1 {
-			t.Fatalf("expected 1 vline in live mode, got %d", len(vl))
-		}
-		if vl[0].Frac < 0.4 || vl[0].Frac > 0.6 {
-			t.Errorf("frac = %f, want ~0.5", vl[0].Frac)
-		}
-	})
-
-	t.Run("historic markers stable", func(t *testing.T) {
-		// With fixed endTS, calling deployVLines twice should give identical results.
-		endTS := int64(100000)
-		ts := endTS - 900
-		vl1 := deployVLines([]int64{ts}, 100, 3600, endTS)
-		vl2 := deployVLines([]int64{ts}, 100, 3600, endTS)
-		if len(vl1) != 1 || len(vl2) != 1 {
-			t.Fatalf("expected 1 vline each, got %d and %d", len(vl1), len(vl2))
-		}
-		if vl1[0].Frac != vl2[0].Frac {
-			t.Errorf("fracs should be identical: %f vs %f", vl1[0].Frac, vl2[0].Frac)
-		}
-	})
-}

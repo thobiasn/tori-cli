@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/events"
-	"github.com/docker/docker/client"
 	"github.com/thobiasn/rook/internal/protocol"
 )
 
@@ -51,17 +50,9 @@ func testEventWatcher(t *testing.T, include, exclude []string) (*EventWatcher, *
 		trackedProjects: make(map[string]bool),
 	}
 	hub := NewHub()
-	// Use a Docker client with a dummy socket so ContainerLogs fails
-	// gracefully (returns error) instead of panicking on nil client.
-	dummyClient, _ := client.NewClientWithOpts(client.WithHost("unix:///dev/null"))
-	lt := &LogTailer{
-		client:  dummyClient,
-		tailers: make(map[string]context.CancelFunc),
-	}
 
 	ew := &EventWatcher{
 		docker: dc,
-		logs:   lt,
 		hub:    hub,
 		done:   make(chan struct{}),
 	}
@@ -72,7 +63,7 @@ func testEventWatcher(t *testing.T, include, exclude []string) (*EventWatcher, *
 }
 
 func TestEventStart(t *testing.T) {
-	ew, dc, hub, src := testEventWatcher(t, nil, nil)
+	ew, _, hub, src := testEventWatcher(t, nil, nil)
 
 	// Subscribe to containers topic.
 	_, ch := hub.Subscribe(TopicContainers)
@@ -120,24 +111,10 @@ func TestEventStart(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for hub message")
 	}
-
-	// Verify container was added to list.
-	containers := dc.Containers()
-	if len(containers) != 1 {
-		t.Fatalf("containers = %d, want 1", len(containers))
-	}
-	if containers[0].State != "running" {
-		t.Errorf("container state = %q, want running", containers[0].State)
-	}
 }
 
 func TestEventDie(t *testing.T) {
-	ew, dc, hub, src := testEventWatcher(t, nil, nil)
-
-	// Pre-populate container list.
-	dc.mu.Lock()
-	dc.lastContainers = []Container{{ID: "abc123", Name: "web", State: "running"}}
-	dc.mu.Unlock()
+	ew, _, hub, src := testEventWatcher(t, nil, nil)
 
 	_, ch := hub.Subscribe(TopicContainers)
 
@@ -161,22 +138,11 @@ func TestEventDie(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout")
 	}
-
-	// Verify state updated.
-	containers := dc.Containers()
-	if len(containers) != 1 || containers[0].State != "exited" {
-		t.Errorf("container state = %v, want exited", containers)
-	}
 }
 
 func TestEventDestroy(t *testing.T) {
-	ew, dc, hub, src := testEventWatcher(t, nil, nil)
+	ew, _, hub, src := testEventWatcher(t, nil, nil)
 
-	dc.mu.Lock()
-	dc.lastContainers = []Container{{ID: "abc123", Name: "web", State: "exited"}}
-	dc.mu.Unlock()
-
-	// Subscribe to hub to synchronize on event processing.
 	_, ch := hub.Subscribe(TopicContainers)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -189,21 +155,19 @@ func TestEventDestroy(t *testing.T) {
 		Actor:  events.Actor{ID: "abc123", Attributes: map[string]string{"name": "web", "image": "nginx"}},
 	}
 
-	// Wait for the hub message to confirm event was processed.
 	select {
-	case <-ch:
+	case msg := <-ch:
+		event := msg.(*protocol.ContainerEvent)
+		if event.State != "destroyed" {
+			t.Errorf("state = %q, want destroyed", event.State)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout")
-	}
-
-	containers := dc.Containers()
-	if len(containers) != 0 {
-		t.Errorf("containers = %d, want 0 after destroy", len(containers))
 	}
 }
 
 func TestEventFiltered(t *testing.T) {
-	ew, dc, hub, src := testEventWatcher(t, nil, []string{"internal-*"})
+	ew, _, hub, src := testEventWatcher(t, nil, []string{"internal-*"})
 
 	_, ch := hub.Subscribe(TopicContainers)
 
@@ -232,13 +196,6 @@ func TestEventFiltered(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout")
-	}
-
-	// Excluded container should not be in the list.
-	for _, c := range dc.Containers() {
-		if c.Name == "internal-monitor" {
-			t.Error("excluded container should not be in list")
-		}
 	}
 }
 
@@ -347,56 +304,6 @@ func TestEventChannelClose(t *testing.T) {
 	}
 }
 
-func TestEventDieTriggersAlertEvaluation(t *testing.T) {
-	ew, dc, hub, src := testEventWatcher(t, nil, nil)
-
-	// Set up alerter with a container state rule.
-	alerts := map[string]AlertConfig{
-		"exited": {
-			Condition: "container.state == 'exited'",
-			Severity:  "critical",
-			Actions:   []string{"notify"},
-		},
-	}
-	a, _ := testAlerter(t, alerts)
-	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-	a.now = func() time.Time { return now }
-	ew.alerter = a
-
-	// Pre-populate container.
-	dc.mu.Lock()
-	dc.lastContainers = []Container{{ID: "abc123", Name: "web", State: "running"}}
-	dc.mu.Unlock()
-
-	// Subscribe to hub for synchronization.
-	_, ch := hub.Subscribe(TopicContainers)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go ew.watch(ctx)
-
-	src.msgCh <- events.Message{
-		Action: events.ActionDie,
-		Actor:  events.Actor{ID: "abc123", Attributes: map[string]string{"name": "web", "image": "nginx"}},
-	}
-
-	// Wait for hub message to confirm event was fully processed.
-	select {
-	case <-ch:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout")
-	}
-
-	a.mu.Lock()
-	inst := a.instances["exited:abc123"]
-	a.mu.Unlock()
-
-	if inst == nil || inst.state != stateFiring {
-		t.Error("expected exited:abc123 to be firing after die event")
-	}
-}
-
 func TestEventExecCreateIgnored(t *testing.T) {
 	ew, _, hub, src := testEventWatcher(t, nil, nil)
 
@@ -430,12 +337,8 @@ func TestEventExecCreateIgnored(t *testing.T) {
 	}
 }
 
-func TestEventPauseUnpause(t *testing.T) {
-	ew, dc, hub, src := testEventWatcher(t, nil, nil)
-
-	dc.mu.Lock()
-	dc.lastContainers = []Container{{ID: "abc123", Name: "web", State: "running"}}
-	dc.mu.Unlock()
+func TestEventPausePublished(t *testing.T) {
+	ew, _, hub, src := testEventWatcher(t, nil, nil)
 
 	_, ch := hub.Subscribe(TopicContainers)
 
@@ -444,7 +347,6 @@ func TestEventPauseUnpause(t *testing.T) {
 
 	go ew.watch(ctx)
 
-	// Pause.
 	src.msgCh <- events.Message{
 		Action: events.ActionPause,
 		Actor:  events.Actor{ID: "abc123", Attributes: map[string]string{"name": "web", "image": "nginx"}},
@@ -458,131 +360,5 @@ func TestEventPauseUnpause(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout")
-	}
-
-	if dc.Containers()[0].State != "paused" {
-		t.Errorf("container state = %q, want paused", dc.Containers()[0].State)
-	}
-
-	// Unpause.
-	src.msgCh <- events.Message{
-		Action: events.ActionUnPause,
-		Actor:  events.Actor{ID: "abc123", Attributes: map[string]string{"name": "web", "image": "nginx"}},
-	}
-
-	select {
-	case msg := <-ch:
-		event := msg.(*protocol.ContainerEvent)
-		if event.State != "running" {
-			t.Errorf("state = %q, want running", event.State)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout")
-	}
-
-	if dc.Containers()[0].State != "running" {
-		t.Errorf("container state = %q, want running", dc.Containers()[0].State)
-	}
-}
-
-func TestEventRestartAction(t *testing.T) {
-	ew, dc, hub, src := testEventWatcher(t, nil, nil)
-
-	dc.mu.Lock()
-	dc.lastContainers = []Container{{ID: "abc123", Name: "web", State: "running"}}
-	dc.mu.Unlock()
-
-	_, ch := hub.Subscribe(TopicContainers)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go ew.watch(ctx)
-
-	src.msgCh <- events.Message{
-		Action: events.ActionRestart,
-		Actor:  events.Actor{ID: "abc123", Attributes: map[string]string{"name": "web", "image": "nginx"}},
-	}
-
-	select {
-	case msg := <-ch:
-		event := msg.(*protocol.ContainerEvent)
-		if event.State != "restarting" {
-			t.Errorf("state = %q, want restarting", event.State)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout")
-	}
-
-	if dc.Containers()[0].State != "restarting" {
-		t.Errorf("container state = %q, want restarting", dc.Containers()[0].State)
-	}
-}
-
-func TestEventCreateAction(t *testing.T) {
-	ew, dc, hub, src := testEventWatcher(t, nil, nil)
-
-	_, ch := hub.Subscribe(TopicContainers)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go ew.watch(ctx)
-
-	src.msgCh <- events.Message{
-		Action: events.ActionCreate,
-		Actor:  events.Actor{ID: "abc123", Attributes: map[string]string{"name": "web", "image": "nginx"}},
-	}
-
-	select {
-	case msg := <-ch:
-		event := msg.(*protocol.ContainerEvent)
-		if event.State != "created" {
-			t.Errorf("state = %q, want created", event.State)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout")
-	}
-
-	containers := dc.Containers()
-	if len(containers) != 1 || containers[0].State != "created" {
-		t.Errorf("expected created container, got %v", containers)
-	}
-}
-
-func TestEventNilAlerterNoPanic(t *testing.T) {
-	ew, dc, hub, src := testEventWatcher(t, nil, nil)
-	// alerter is nil by default in testEventWatcher
-
-	dc.mu.Lock()
-	dc.lastContainers = []Container{{ID: "abc123", Name: "web", State: "running"}}
-	dc.mu.Unlock()
-
-	_, ch := hub.Subscribe(TopicContainers)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go ew.watch(ctx)
-
-	// Die event with nil alerter should not panic.
-	src.msgCh <- events.Message{
-		Action: events.ActionDie,
-		Actor:  events.Actor{ID: "abc123", Attributes: map[string]string{"name": "web", "image": "nginx"}},
-	}
-
-	select {
-	case msg := <-ch:
-		event := msg.(*protocol.ContainerEvent)
-		if event.State != "exited" {
-			t.Errorf("state = %q, want exited", event.State)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout")
-	}
-
-	// Container state should still be updated.
-	if dc.Containers()[0].State != "exited" {
-		t.Errorf("container state = %q, want exited", dc.Containers()[0].State)
 	}
 }

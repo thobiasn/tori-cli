@@ -113,9 +113,6 @@ type QueryMetricsResp struct {
 	Disks      []TimedDiskMetrics      `msgpack:"disks"`
 	Networks   []TimedNetMetrics       `msgpack:"networks"`
 	Containers []TimedContainerMetrics `msgpack:"containers"`
-	// DeployMarkers maps container ID to deploy boundary timestamps (where a
-	// previous container was replaced by a new one with the same service identity).
-	DeployMarkers map[string][]int64 `msgpack:"deploy_markers,omitempty"`
 	// RetentionDays is piggybacked here for pragmatism — it's a property of the
 	// agent, not the query result. Should move to a server-info handshake if one
 	// is added later.

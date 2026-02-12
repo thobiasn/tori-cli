@@ -53,12 +53,9 @@ func convertTimedContainer(src []TimedContainerMetrics) []protocol.TimedContaine
 		out[i] = protocol.TimedContainerMetrics{
 			Timestamp: s.Timestamp.Unix(),
 			ContainerMetrics: protocol.ContainerMetrics{
-				ID: s.ID, Name: s.Name, Image: s.Image, State: s.State,
 				Project: s.Project, Service: s.Service,
-				Health: s.Health, StartedAt: s.StartedAt, RestartCount: s.RestartCount, ExitCode: s.ExitCode,
 				CPUPercent: s.CPUPercent, MemUsage: s.MemUsage, MemLimit: s.MemLimit, MemPercent: s.MemPercent,
 				NetRx: s.NetRx, NetTx: s.NetTx, BlockRead: s.BlockRead, BlockWrite: s.BlockWrite, PIDs: s.PIDs,
-				DiskUsage: s.DiskUsage,
 			},
 		}
 	}

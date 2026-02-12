@@ -35,11 +35,9 @@ type DetailState struct {
 	searchText        string
 	searchMode        bool
 
-	backfilled                bool
-	metricsBackfilled         bool
-	metricsBackfillPending    bool    // true while a detail metrics backfill is in-flight
-	deployTimestamps          []int64 // raw timestamps of container ID transitions
-	deployEndTS               int64   // timestamp of last backfilled data point (right edge anchor)
+	backfilled             bool
+	metricsBackfilled      bool
+	metricsBackfillPending bool // true while a detail metrics backfill is in-flight
 }
 
 type detailLogQueryMsg struct {
@@ -71,8 +69,6 @@ func (s *DetailState) reset() {
 	s.backfilled = false
 	s.metricsBackfilled = false
 	s.metricsBackfillPending = false
-	s.deployTimestamps = nil
-	s.deployEndTS = 0
 }
 
 func (s *DetailState) isGroupMode() bool {
@@ -501,10 +497,9 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 
 	cpuVal := fmt.Sprintf("%5.1f%%", cm.CPUPercent)
 	cpuData := historyData(s.CPUHistory, det.containerID)
-	vlines := deployVLines(det.deployTimestamps, len(cpuData), rc.WindowSec, det.deployEndTS)
 	var cpuContent string
 	if len(cpuData) > 0 {
-		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, rc.WindowSec, theme, theme.CPUGraph, pctAxis, vlines...), "\n")
+		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, rc.WindowSec, theme, theme.CPUGraph, pctAxis), "\n")
 	} else {
 		cpuContent = fmt.Sprintf(" CPU %s", cpuVal)
 	}
@@ -513,7 +508,7 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 	memData := historyData(s.MemHistory, det.containerID)
 	var memContent string
 	if len(memData) > 0 {
-		memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, rc.WindowSec, theme, theme.MemGraph, bytesAxis, vlines...), "\n")
+		memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, rc.WindowSec, theme, theme.MemGraph, bytesAxis), "\n")
 	} else {
 		memContent = fmt.Sprintf(" MEM %s", memVal)
 	}
@@ -561,39 +556,6 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 	lines = append(lines, Truncate(imgLine, innerW))
 
 	return strings.Join(lines, "\n")
-}
-
-// deployVLines computes VLine fractions from raw timestamps.
-// For live mode (windowSec==0) the right edge is time.Now(); for historic
-// windows the right edge is endTS (the last backfilled data point) so that
-// markers stay fixed while viewing static data.
-func deployVLines(timestamps []int64, dataLen int, windowSec int64, endTS int64) []VLine {
-	if len(timestamps) == 0 || dataLen == 0 {
-		return nil
-	}
-	var rightEdge, startTS int64
-	if windowSec > 0 {
-		rightEdge = endTS
-		if rightEdge == 0 {
-			rightEdge = time.Now().Unix()
-		}
-		startTS = rightEdge - windowSec
-	} else {
-		rightEdge = time.Now().Unix()
-		startTS = rightEdge - int64(dataLen)*10
-	}
-	span := float64(rightEdge - startTS)
-	if span <= 0 {
-		return nil
-	}
-	var vlines []VLine
-	for _, ts := range timestamps {
-		frac := float64(rightEdge-ts) / span
-		if frac > 0.01 && frac < 0.99 {
-			vlines = append(vlines, VLine{Frac: frac, Label: "dpl"})
-		}
-	}
-	return vlines
 }
 
 func historyData(hist map[string]*RingBuffer[float64], id string) []float64 {

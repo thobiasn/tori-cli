@@ -64,31 +64,36 @@ func TestDownsampleHost(t *testing.T) {
 }
 
 func TestDownsampleContainers(t *testing.T) {
-	// Two containers, 20 points each, timestamps 0-19.
+	// Two services, 20 points each, timestamps 0-19.
 	var data []protocol.TimedContainerMetrics
 	for i := 0; i < 20; i++ {
 		data = append(data, protocol.TimedContainerMetrics{
 			Timestamp:        int64(i),
-			ContainerMetrics: protocol.ContainerMetrics{ID: "aaa", CPUPercent: float64(i)},
+			ContainerMetrics: protocol.ContainerMetrics{Project: "app", Service: "web", CPUPercent: float64(i)},
 		})
 		data = append(data, protocol.TimedContainerMetrics{
 			Timestamp:        int64(i),
-			ContainerMetrics: protocol.ContainerMetrics{ID: "bbb", CPUPercent: float64(i * 2)},
+			ContainerMetrics: protocol.ContainerMetrics{Project: "app", Service: "api", CPUPercent: float64(i * 2)},
 		})
 	}
 
 	out := downsampleContainers(data, 5, 0, 20)
 
-	// Each container should produce exactly 5 buckets (zero-filled).
-	counts := make(map[string]int)
+	// Each service should produce exactly 5 buckets (zero-filled).
+	webCount, apiCount := 0, 0
 	for _, m := range out {
-		counts[m.ID]++
+		if m.Project == "app" && m.Service == "web" {
+			webCount++
+		}
+		if m.Project == "app" && m.Service == "api" {
+			apiCount++
+		}
 	}
-	if counts["aaa"] != 5 {
-		t.Errorf("aaa = %d points, want 5", counts["aaa"])
+	if webCount != 5 {
+		t.Errorf("web = %d points, want 5", webCount)
 	}
-	if counts["bbb"] != 5 {
-		t.Errorf("bbb = %d points, want 5", counts["bbb"])
+	if apiCount != 5 {
+		t.Errorf("api = %d points, want 5", apiCount)
 	}
 
 	// Short series (<=n) now also zero-filled to n points.
@@ -96,18 +101,18 @@ func TestDownsampleContainers(t *testing.T) {
 	for i := range small {
 		small[i] = protocol.TimedContainerMetrics{
 			Timestamp:        int64(i),
-			ContainerMetrics: protocol.ContainerMetrics{ID: "ccc"},
+			ContainerMetrics: protocol.ContainerMetrics{Project: "", Service: "solo"},
 		}
 	}
 	same := downsampleContainers(small, 10, 0, 10)
-	cccCount := 0
+	soloCount := 0
 	for _, m := range same {
-		if m.ID == "ccc" {
-			cccCount++
+		if m.Service == "solo" {
+			soloCount++
 		}
 	}
-	if cccCount != 10 {
-		t.Errorf("short series: len = %d, want 10 (zero-filled)", cccCount)
+	if soloCount != 10 {
+		t.Errorf("short series: len = %d, want 10 (zero-filled)", soloCount)
 	}
 
 	// Partial coverage: data only in second half of window.
@@ -116,114 +121,27 @@ func TestDownsampleContainers(t *testing.T) {
 	for i := 10; i < 20; i++ {
 		partial = append(partial, protocol.TimedContainerMetrics{
 			Timestamp:        int64(i),
-			ContainerMetrics: protocol.ContainerMetrics{ID: "ddd", CPUPercent: float64(i)},
+			ContainerMetrics: protocol.ContainerMetrics{Project: "p", Service: "svc", CPUPercent: float64(i)},
 		})
 	}
 	// Window 0-20, 5 buckets of 4s each. Data in ts 10-19 fills buckets 2-4.
 	out2 := downsampleContainers(partial, 5, 0, 20)
-	dddCount := 0
-	dddNonZero := 0
+	svcCount := 0
+	svcNonZero := 0
 	for _, m := range out2 {
-		if m.ID == "ddd" {
-			dddCount++
+		if m.Service == "svc" {
+			svcCount++
 			if m.CPUPercent > 0 {
-				dddNonZero++
+				svcNonZero++
 			}
 		}
 	}
 	// All 5 buckets emitted (zero-filled).
-	if dddCount != 5 {
-		t.Errorf("ddd = %d points, want 5 (all buckets zero-filled)", dddCount)
+	if svcCount != 5 {
+		t.Errorf("svc = %d points, want 5 (all buckets zero-filled)", svcCount)
 	}
 	// Buckets 2-4 have data → 3 non-zero entries.
-	if dddNonZero != 3 {
-		t.Errorf("ddd nonzero = %d, want 3", dddNonZero)
-	}
-}
-
-func TestMergeContainersByService(t *testing.T) {
-	// Old container (stopped) and new container (running) for same service.
-	data := []protocol.TimedContainerMetrics{
-		{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "old1", CPUPercent: 10, Project: "myapp", Service: "web", State: "exited"}},
-		{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "old1", CPUPercent: 20, Project: "myapp", Service: "web", State: "exited"}},
-		{Timestamp: 3, ContainerMetrics: protocol.ContainerMetrics{ID: "new1", CPUPercent: 30, Project: "myapp", Service: "web", State: "running"}},
-	}
-	out, markers := mergeContainersByService(data)
-
-	// All points should now be under "new1".
-	for _, d := range out {
-		if d.ID != "new1" {
-			t.Errorf("expected all IDs to be new1, got %s", d.ID)
-		}
-	}
-	if len(out) != 3 {
-		t.Errorf("output len = %d, want 3", len(out))
-	}
-
-	// Should have one deploy marker for new1 (old1 → new1 transition).
-	if len(markers) == 0 {
-		t.Fatal("expected deploy markers")
-	}
-	if len(markers["new1"]) != 1 {
-		t.Fatalf("deploy markers for new1 = %d, want 1", len(markers["new1"]))
-	}
-	if markers["new1"][0] != 3 {
-		t.Errorf("deploy marker = %d, want 3", markers["new1"][0])
-	}
-}
-
-func TestMergeContainersByServiceScaledSkipped(t *testing.T) {
-	// Two containers with same service, both running (scaled service).
-	data := []protocol.TimedContainerMetrics{
-		{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "s1", CPUPercent: 10, Project: "myapp", Service: "worker", State: "running"}},
-		{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "s2", CPUPercent: 20, Project: "myapp", Service: "worker", State: "running"}},
-	}
-	out, markers := mergeContainersByService(data)
-
-	// Both should remain separate — not merged.
-	ids := make(map[string]bool)
-	for _, d := range out {
-		ids[d.ID] = true
-	}
-	if !ids["s1"] || !ids["s2"] {
-		t.Errorf("scaled service should not be merged, got IDs: %v", ids)
-	}
-	if len(markers) != 0 {
-		t.Errorf("no deploy markers expected for scaled service, got %v", markers)
-	}
-}
-
-func TestMergeContainersByServiceNonComposeSkipped(t *testing.T) {
-	// Containers without Service label should not be merged.
-	data := []protocol.TimedContainerMetrics{
-		{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "a1", CPUPercent: 10}},
-		{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "a2", CPUPercent: 20}},
-	}
-	out, markers := mergeContainersByService(data)
-
-	ids := make(map[string]bool)
-	for _, d := range out {
-		ids[d.ID] = true
-	}
-	if !ids["a1"] || !ids["a2"] {
-		t.Errorf("non-compose containers should not be merged, got IDs: %v", ids)
-	}
-	if len(markers) != 0 {
-		t.Errorf("no deploy markers expected, got %v", markers)
-	}
-}
-
-func TestMergeContainersByServiceDeployMarkers(t *testing.T) {
-	// Three deploys of the same service.
-	data := []protocol.TimedContainerMetrics{
-		{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "v1", CPUPercent: 10, Project: "app", Service: "api", State: "exited"}},
-		{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "v2", CPUPercent: 20, Project: "app", Service: "api", State: "exited"}},
-		{Timestamp: 3, ContainerMetrics: protocol.ContainerMetrics{ID: "v3", CPUPercent: 30, Project: "app", Service: "api", State: "running"}},
-	}
-	_, markers := mergeContainersByService(data)
-
-	// Should have 2 deploy markers (v1→v2 and v2→v3).
-	if len(markers["v3"]) != 2 {
-		t.Fatalf("deploy markers = %d, want 2", len(markers["v3"]))
+	if svcNonZero != 3 {
+		t.Errorf("svc nonzero = %d, want 3", svcNonZero)
 	}
 }

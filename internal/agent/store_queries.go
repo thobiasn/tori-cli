@@ -74,8 +74,8 @@ func (s *Store) InsertContainerMetrics(ctx context.Context, ts time.Time, contai
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO container_metrics (timestamp, id, name, image, state, project, service, health, started_at, restart_count, exit_code, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids, disk_usage)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		`INSERT INTO container_metrics (timestamp, project, service, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -83,11 +83,9 @@ func (s *Store) InsertContainerMetrics(ctx context.Context, ts time.Time, contai
 
 	unix := ts.Unix()
 	for _, c := range containers {
-		if _, err := stmt.ExecContext(ctx, unix, c.ID, c.Name, c.Image, c.State,
-			c.Project, c.Service,
-			c.Health, c.StartedAt, c.RestartCount, c.ExitCode,
+		if _, err := stmt.ExecContext(ctx, unix, c.Project, c.Service,
 			c.CPUPercent, c.MemUsage, c.MemLimit, c.MemPercent,
-			c.NetRx, c.NetTx, c.BlockRead, c.BlockWrite, c.PIDs, c.DiskUsage); err != nil {
+			c.NetRx, c.NetTx, c.BlockRead, c.BlockWrite, c.PIDs); err != nil {
 			return err
 		}
 	}
@@ -219,7 +217,7 @@ type ContainerMetricsFilter struct {
 }
 
 func (s *Store) QueryContainerMetrics(ctx context.Context, start, end int64, filters ...ContainerMetricsFilter) ([]TimedContainerMetrics, error) {
-	query := `SELECT timestamp, id, name, image, state, project, service, health, started_at, restart_count, exit_code, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids, disk_usage
+	query := `SELECT timestamp, project, service, cpu_percent, mem_usage, mem_limit, mem_percent, net_rx, net_tx, block_read, block_write, pids
 		 FROM container_metrics WHERE timestamp >= ? AND timestamp <= ?`
 	args := []any{start, end}
 
@@ -250,11 +248,9 @@ func (s *Store) QueryContainerMetrics(ctx context.Context, start, end int64, fil
 	for rows.Next() {
 		var t TimedContainerMetrics
 		var ts int64
-		if err := rows.Scan(&ts, &t.ID, &t.Name, &t.Image, &t.State,
-			&t.Project, &t.Service,
-			&t.Health, &t.StartedAt, &t.RestartCount, &t.ExitCode,
+		if err := rows.Scan(&ts, &t.Project, &t.Service,
 			&t.CPUPercent, &t.MemUsage, &t.MemLimit, &t.MemPercent,
-			&t.NetRx, &t.NetTx, &t.BlockRead, &t.BlockWrite, &t.PIDs, &t.DiskUsage); err != nil {
+			&t.NetRx, &t.NetTx, &t.BlockRead, &t.BlockWrite, &t.PIDs); err != nil {
 			return nil, err
 		}
 		t.Timestamp = time.Unix(ts, 0)

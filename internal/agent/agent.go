@@ -83,7 +83,7 @@ func New(cfg *Config, cfgPath string) (*Agent, error) {
 		a.alerter = alerter
 	}
 
-	a.events = NewEventWatcher(docker, lt, a.alerter, hub)
+	a.events = NewEventWatcher(docker, hub)
 	a.socket = NewSocketServer(hub, store, docker, a.alerter, cfg.Storage.RetentionDays)
 	return a, nil
 }
@@ -182,14 +182,12 @@ func (a *Agent) applyConfig(newCfg *Config) {
 			a.alerter.ResolveAll()
 		}
 		a.alerter = alerter
-		a.events.SetAlerter(alerter)
 		a.socket.SetAlerter(alerter)
 	} else {
 		if a.alerter != nil {
 			a.alerter.ResolveAll()
 		}
 		a.alerter = nil
-		a.events.SetAlerter(nil)
 		a.socket.SetAlerter(nil)
 	}
 

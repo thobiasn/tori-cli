@@ -54,10 +54,15 @@ func backfillMetrics(c *Client, seconds int64) tea.Cmd {
 	}
 }
 
+// svcKey returns a grouping key for container metrics: "project\x00service".
+func svcKey(project, service string) string {
+	return project + "\x00" + service
+}
+
 // handleMetricsBackfill populates ring buffers from historical metrics.
-// The agent provides ready-to-display time series (already merged across
-// deploys and zero-filled). For historical windows, new buffers are created
-// and swapped in atomically so old data stays visible until the response arrives.
+// The agent returns data keyed by synthetic identity (project, service).
+// We map service keys to current container IDs via ContInfo so the dashboard
+// sparklines work correctly.
 func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp, start, end int64, rangeHist bool) {
 	if rangeHist {
 		// Historical: replace host buffers atomically.
@@ -80,24 +85,43 @@ func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp, start, e
 		}
 	}
 
-	// Group container points by ID.
-	byID := make(map[string][]protocol.TimedContainerMetrics)
-	var order []string
-	for _, c := range resp.Containers {
-		if _, seen := byID[c.ID]; !seen {
-			order = append(order, c.ID)
+	// Build service key → current container ID mapping from live container info.
+	svcToID := make(map[string]string)
+	for _, ci := range s.ContInfo {
+		key := svcKey(ci.Project, ci.Service)
+		if key == "\x00" {
+			// Non-compose: use ("", name) as service identity.
+			key = svcKey("", ci.Name)
 		}
-		byID[c.ID] = append(byID[c.ID], c)
+		if _, exists := svcToID[key]; !exists {
+			svcToID[key] = ci.ID
+		}
 	}
 
-	for _, id := range order {
+	// Group container points by service key.
+	bySvc := make(map[string][]protocol.TimedContainerMetrics)
+	var order []string
+	for _, c := range resp.Containers {
+		key := svcKey(c.Project, c.Service)
+		if _, seen := bySvc[key]; !seen {
+			order = append(order, key)
+		}
+		bySvc[key] = append(bySvc[key], c)
+	}
+
+	for _, key := range order {
+		id := svcToID[key]
+		if id == "" {
+			continue // No current container for this service — skip.
+		}
+
 		// Skip the container being viewed in detail — it gets richer
 		// service-scoped data from the detail backfill.
 		if s.Detail.metricsBackfillPending && id == s.Detail.containerID {
 			continue
 		}
 
-		series := byID[id]
+		series := bySvc[key]
 
 		if rangeHist {
 			// Historical: create new buffers and swap in.
@@ -126,37 +150,45 @@ func handleMetricsBackfill(s *Session, resp *protocol.QueryMetricsResp, start, e
 }
 
 // handleDetailMetricsBackfill pushes service-scoped metric data into the
-// appropriate ring buffers. Deploy markers come from the agent response.
+// appropriate ring buffers. Data is keyed by (project, service) and mapped
+// to container IDs via ContInfo.
 func handleDetailMetricsBackfill(s *Session, det *DetailState, resp *protocol.QueryMetricsResp, start, end, windowSec int64) {
 	det.metricsBackfilled = true
 	if len(resp.Containers) == 0 {
 		return
 	}
 
-	// Read deploy markers from agent response.
-	det.deployTimestamps = nil
-	det.deployEndTS = 0
-	if det.containerID != "" && resp.DeployMarkers != nil {
-		det.deployTimestamps = resp.DeployMarkers[det.containerID]
-	}
-	if len(resp.Containers) > 0 {
-		det.deployEndTS = resp.Containers[len(resp.Containers)-1].Timestamp
+	// Build service key → current container ID mapping.
+	svcToID := make(map[string]string)
+	for _, ci := range s.ContInfo {
+		key := svcKey(ci.Project, ci.Service)
+		if key == "\x00" {
+			key = svcKey("", ci.Name)
+		}
+		if _, exists := svcToID[key]; !exists {
+			svcToID[key] = ci.ID
+		}
 	}
 
-	// Group by container ID.
-	byID := make(map[string][]protocol.TimedContainerMetrics)
+	// Group by service key.
+	bySvc := make(map[string][]protocol.TimedContainerMetrics)
 	var order []string
 	for _, c := range resp.Containers {
-		if _, seen := byID[c.ID]; !seen {
-			order = append(order, c.ID)
+		key := svcKey(c.Project, c.Service)
+		if _, seen := bySvc[key]; !seen {
+			order = append(order, key)
 		}
-		byID[c.ID] = append(byID[c.ID], c)
+		bySvc[key] = append(bySvc[key], c)
 	}
 
 	hist := windowSec > 0
 
-	for _, id := range order {
-		series := byID[id]
+	for _, key := range order {
+		id := svcToID[key]
+		if id == "" {
+			continue
+		}
+		series := bySvc[key]
 
 		if hist {
 			// Historical: create new buffers and swap in.

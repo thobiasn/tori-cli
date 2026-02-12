@@ -12,6 +12,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// currentSchemaVersion is incremented when the schema changes in a way that
+// requires data migration (not just adding columns).
+const currentSchemaVersion = 1
+
 const schema = `
 CREATE TABLE IF NOT EXISTS host_metrics (
 	timestamp    INTEGER NOT NULL,
@@ -54,26 +58,20 @@ CREATE TABLE IF NOT EXISTS net_metrics (
 CREATE INDEX IF NOT EXISTS idx_net_metrics_ts ON net_metrics(timestamp);
 
 CREATE TABLE IF NOT EXISTS container_metrics (
-	timestamp  INTEGER NOT NULL,
-	id         TEXT    NOT NULL,
-	name          TEXT    NOT NULL,
-	image         TEXT    NOT NULL,
-	state         TEXT    NOT NULL,
-	health        TEXT    NOT NULL DEFAULT '',
-	started_at    INTEGER NOT NULL DEFAULT 0,
-	restart_count INTEGER NOT NULL DEFAULT 0,
-	exit_code     INTEGER NOT NULL DEFAULT 0,
-	cpu_percent   REAL    NOT NULL,
-	mem_usage  INTEGER NOT NULL,
-	mem_limit  INTEGER NOT NULL,
-	mem_percent REAL   NOT NULL,
-	net_rx     INTEGER NOT NULL,
-	net_tx     INTEGER NOT NULL,
-	block_read INTEGER NOT NULL,
+	timestamp   INTEGER NOT NULL,
+	project     TEXT    NOT NULL,
+	service     TEXT    NOT NULL,
+	cpu_percent REAL    NOT NULL,
+	mem_usage   INTEGER NOT NULL,
+	mem_limit   INTEGER NOT NULL,
+	mem_percent REAL    NOT NULL,
+	net_rx      INTEGER NOT NULL,
+	net_tx      INTEGER NOT NULL,
+	block_read  INTEGER NOT NULL,
 	block_write INTEGER NOT NULL,
-	pids       INTEGER NOT NULL
+	pids        INTEGER NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_container_metrics_ts ON container_metrics(timestamp);
+CREATE INDEX IF NOT EXISTS idx_container_metrics_svc ON container_metrics(project, service, timestamp);
 
 CREATE TABLE IF NOT EXISTS logs (
 	timestamp      INTEGER NOT NULL,
@@ -124,6 +122,13 @@ func OpenStore(path string) (*Store, error) {
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 
+	s := &Store{db: db}
+
+	if err := s.migrate(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+
 	if _, err := db.ExecContext(context.Background(), schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
@@ -134,7 +139,6 @@ func OpenStore(path string) (*Store, error) {
 		slog.Warn("failed to set database file permissions", "error", err)
 	}
 
-	s := &Store{db: db}
 	s.ensureColumns()
 	return s, nil
 }
@@ -144,24 +148,99 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// migrate handles schema migrations using PRAGMA user_version for tracking.
+func (s *Store) migrate() error {
+	var version int
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		return fmt.Errorf("read user_version: %w", err)
+	}
+
+	if version >= currentSchemaVersion {
+		return nil
+	}
+
+	// Version 0 → 1: Migrate container_metrics from per-container-ID schema
+	// to synthetic identity (project, service) schema.
+	if version < 1 {
+		if err := s.migrateContainerMetricsV1(); err != nil {
+			return fmt.Errorf("migrate container_metrics v1: %w", err)
+		}
+	}
+
+	if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", currentSchemaVersion)); err != nil {
+		return fmt.Errorf("set user_version: %w", err)
+	}
+	return nil
+}
+
+// migrateContainerMetricsV1 converts the old container_metrics table (keyed by
+// raw container ID with 21 columns) to the new schema (keyed by synthetic
+// identity with 12 columns). No-op if the old table doesn't exist.
+func (s *Store) migrateContainerMetricsV1() error {
+	// Check if the old table exists and has the 'id' column.
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('container_metrics') WHERE name = 'id'`).Scan(&count)
+	if err != nil || count == 0 {
+		return nil // Fresh database or already migrated.
+	}
+
+	slog.Info("migrating container_metrics to synthetic identity schema")
+
+	// Ensure project/service columns exist on old table (may be missing from very old DBs).
+	for _, stmt := range []string{
+		"ALTER TABLE container_metrics ADD COLUMN project TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE container_metrics ADD COLUMN service TEXT NOT NULL DEFAULT ''",
+	} {
+		_, err := s.db.Exec(stmt)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("add column: %w", err)
+		}
+	}
+
+	// Create new table, copy data, swap.
+	migration := `
+		CREATE TABLE container_metrics_v2 (
+			timestamp   INTEGER NOT NULL,
+			project     TEXT    NOT NULL,
+			service     TEXT    NOT NULL,
+			cpu_percent REAL    NOT NULL,
+			mem_usage   INTEGER NOT NULL,
+			mem_limit   INTEGER NOT NULL,
+			mem_percent REAL    NOT NULL,
+			net_rx      INTEGER NOT NULL,
+			net_tx      INTEGER NOT NULL,
+			block_read  INTEGER NOT NULL,
+			block_write INTEGER NOT NULL,
+			pids        INTEGER NOT NULL
+		);
+		INSERT INTO container_metrics_v2
+			SELECT timestamp,
+				COALESCE(NULLIF(project, ''), ''),
+				CASE WHEN service != '' THEN service ELSE name END,
+				cpu_percent, mem_usage, mem_limit, mem_percent,
+				net_rx, net_tx, block_read, block_write, pids
+			FROM container_metrics;
+		DROP TABLE container_metrics;
+		ALTER TABLE container_metrics_v2 RENAME TO container_metrics;
+	`
+	if _, err := s.db.Exec(migration); err != nil {
+		return fmt.Errorf("migrate table: %w", err)
+	}
+
+	slog.Info("container_metrics migration complete")
+	return nil
+}
+
 // ensureColumns adds columns that may be missing from older databases.
 // Silently ignores "duplicate column name" errors (column already exists).
 func (s *Store) ensureColumns() {
 	migrations := []string{
 		"ALTER TABLE host_metrics ADD COLUMN mem_cached INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE host_metrics ADD COLUMN mem_free INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE container_metrics ADD COLUMN health TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE container_metrics ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE container_metrics ADD COLUMN restart_count INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE container_metrics ADD COLUMN exit_code INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE container_metrics ADD COLUMN disk_usage INTEGER NOT NULL DEFAULT 0",
-		"ALTER TABLE container_metrics ADD COLUMN project TEXT NOT NULL DEFAULT ''",
-		"ALTER TABLE container_metrics ADD COLUMN service TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE logs ADD COLUMN project TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE logs ADD COLUMN service TEXT NOT NULL DEFAULT ''",
 	}
 	indexes := []string{
-		"CREATE INDEX IF NOT EXISTS idx_container_metrics_svc ON container_metrics(project, service, timestamp)",
 		"CREATE INDEX IF NOT EXISTS idx_logs_svc ON logs(project, service, timestamp)",
 	}
 	for _, stmt := range migrations {

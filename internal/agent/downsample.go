@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"sort"
-
 	"github.com/thobiasn/rook/internal/protocol"
 )
 
@@ -61,9 +59,15 @@ func downsampleHost(data []protocol.TimedHostMetrics, n int, start, end int64) [
 	return out
 }
 
+// serviceKey returns a grouping key for container metrics: "project\x00service".
+func serviceKey(project, service string) string {
+	return project + "\x00" + service
+}
+
 // downsampleContainers reduces container metrics to exactly n points per
-// container using time-aware max-per-bucket aggregation. Empty buckets are
+// service using time-aware max-per-bucket aggregation. Empty buckets are
 // zero-filled so the TUI receives ready-to-display time series.
+// Data is grouped by synthetic identity (project, service).
 func downsampleContainers(data []protocol.TimedContainerMetrics, n int, start, end int64) []protocol.TimedContainerMetrics {
 	if n <= 0 || len(data) == 0 {
 		return data
@@ -72,25 +76,34 @@ func downsampleContainers(data []protocol.TimedContainerMetrics, n int, start, e
 	if bucketDur <= 0 {
 		return data
 	}
-	// Group by container ID.
-	byID := make(map[string][]protocol.TimedContainerMetrics)
+	// Group by service identity.
+	type svcEntry struct {
+		project string
+		service string
+	}
+	bySvc := make(map[string][]protocol.TimedContainerMetrics)
 	var order []string
+	var svcInfo []svcEntry
 	for _, m := range data {
-		if _, seen := byID[m.ID]; !seen {
-			order = append(order, m.ID)
+		key := serviceKey(m.Project, m.Service)
+		if _, seen := bySvc[key]; !seen {
+			order = append(order, key)
+			svcInfo = append(svcInfo, svcEntry{m.Project, m.Service})
 		}
-		byID[m.ID] = append(byID[m.ID], m)
+		bySvc[key] = append(bySvc[key], m)
 	}
 	var out []protocol.TimedContainerMetrics
-	for _, id := range order {
-		series := byID[id]
+	for i, key := range order {
+		series := bySvc[key]
+		info := svcInfo[i]
 		if len(series) <= n {
 			// Zero-fill: expand sparse series to exactly n points.
 			buckets := make([]protocol.TimedContainerMetrics, n)
 			filled := make([]bool, n)
-			for i := range buckets {
-				buckets[i].Timestamp = start + int64(float64(i+1)*bucketDur)
-				buckets[i].ID = id
+			for j := range buckets {
+				buckets[j].Timestamp = start + int64(float64(j+1)*bucketDur)
+				buckets[j].Project = info.project
+				buckets[j].Service = info.service
 			}
 			for _, d := range series {
 				idx := int(float64(d.Timestamp-start) / bucketDur)
@@ -110,9 +123,10 @@ func downsampleContainers(data []protocol.TimedContainerMetrics, n int, start, e
 			continue
 		}
 		buckets := make([]protocol.TimedContainerMetrics, n)
-		for i := range buckets {
-			buckets[i].Timestamp = start + int64(float64(i+1)*bucketDur)
-			buckets[i].ID = id
+		for j := range buckets {
+			buckets[j].Timestamp = start + int64(float64(j+1)*bucketDur)
+			buckets[j].Project = info.project
+			buckets[j].Service = info.service
 		}
 		for _, d := range series {
 			idx := int(float64(d.Timestamp-start) / bucketDur)
@@ -136,141 +150,4 @@ func downsampleContainers(data []protocol.TimedContainerMetrics, n int, start, e
 		out = append(out, buckets...)
 	}
 	return out
-}
-
-// mergeContainersByService collapses data from containers sharing the same
-// compose service identity {project, service} into the most recent container's
-// ID. This enables cross-deploy graph continuity. It returns deploy boundary
-// markers (timestamps where the container ID changed within a service).
-//
-// Scaled services (multiple running containers with the same identity) and
-// non-compose containers (empty Service field) are left untouched.
-func mergeContainersByService(data []protocol.TimedContainerMetrics) ([]protocol.TimedContainerMetrics, map[string][]int64) {
-	if len(data) == 0 {
-		return data, nil
-	}
-
-	// Build {project, service} -> []containerID mapping.
-	type svcKey struct{ project, service string }
-	type cidInfo struct {
-		latestTS int64
-		running  bool
-	}
-
-	svcContainers := make(map[svcKey]map[string]*cidInfo)
-	for _, d := range data {
-		if d.Service == "" {
-			continue
-		}
-		key := svcKey{d.Project, d.Service}
-		cids, ok := svcContainers[key]
-		if !ok {
-			cids = make(map[string]*cidInfo)
-			svcContainers[key] = cids
-		}
-		info, ok := cids[d.ID]
-		if !ok {
-			info = &cidInfo{}
-			cids[d.ID] = info
-		}
-		if d.Timestamp > info.latestTS {
-			info.latestTS = d.Timestamp
-			info.running = d.State == "running"
-		}
-	}
-
-	// Determine which services need merging: must have 2+ container IDs
-	// and at most 1 currently running.
-	type mergeTarget struct {
-		currentID string
-		oldIDs    map[string]bool
-	}
-	merges := make(map[svcKey]*mergeTarget)
-	for key, cids := range svcContainers {
-		if len(cids) < 2 {
-			continue
-		}
-		runningCount := 0
-		for _, info := range cids {
-			if info.running {
-				runningCount++
-			}
-		}
-		if runningCount > 1 {
-			continue // Scaled service — don't merge.
-		}
-
-		// Find the most recent container ID.
-		var bestID string
-		var bestTS int64
-		for id, info := range cids {
-			if info.latestTS > bestTS {
-				bestTS = info.latestTS
-				bestID = id
-			}
-		}
-		mt := &mergeTarget{currentID: bestID, oldIDs: make(map[string]bool)}
-		for id := range cids {
-			if id != bestID {
-				mt.oldIDs[id] = true
-			}
-		}
-		merges[key] = mt
-	}
-
-	if len(merges) == 0 {
-		return data, nil
-	}
-
-	// Build a rewrite map: oldID -> currentID.
-	rewrite := make(map[string]string)
-	for _, mt := range merges {
-		for oldID := range mt.oldIDs {
-			rewrite[oldID] = mt.currentID
-		}
-	}
-
-	// Rewrite container IDs and collect all points per merged ID.
-	out := make([]protocol.TimedContainerMetrics, len(data))
-	for i, d := range data {
-		out[i] = d
-		if newID, ok := rewrite[d.ID]; ok {
-			out[i].ContainerMetrics.ID = newID
-		}
-	}
-
-	// Sort by timestamp for deploy marker detection.
-	sort.SliceStable(out, func(i, j int) bool {
-		return out[i].Timestamp < out[j].Timestamp
-	})
-
-	// Detect deploy boundaries: track the last-seen original container ID
-	// per merged service and record transitions.
-	deployMarkers := make(map[string][]int64)
-	lastCID := make(map[string]string) // mergedID -> last original container ID seen
-	for _, d := range data {
-		mergedID := d.ID
-		if newID, ok := rewrite[d.ID]; ok {
-			mergedID = newID
-		} else {
-			// Only track containers that were part of a merge.
-			found := false
-			for _, mt := range merges {
-				if mt.currentID == d.ID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				continue
-			}
-		}
-		prev, seen := lastCID[mergedID]
-		if seen && prev != d.ID {
-			deployMarkers[mergedID] = append(deployMarkers[mergedID], d.Timestamp)
-		}
-		lastCID[mergedID] = d.ID
-	}
-
-	return out, deployMarkers
 }

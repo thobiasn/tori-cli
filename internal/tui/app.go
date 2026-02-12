@@ -454,7 +454,6 @@ func (a *App) handleZoom(key string) tea.Cmd {
 		return nil
 	}
 	s.Detail.metricsBackfilled = false
-	s.Detail.deployTimestamps = nil
 	var cmds []tea.Cmd
 	cmds = append(cmds, backfillMetrics(s.Client, timeWindows[a.windowIdx].seconds))
 	if a.active == viewDetail {

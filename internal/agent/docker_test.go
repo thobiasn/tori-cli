@@ -2,40 +2,6 @@ package agent
 
 import "testing"
 
-func TestUpdateContainerState(t *testing.T) {
-	d := &DockerCollector{prevCPU: make(map[string]cpuPrev)}
-
-	// Add new container via event before first collect.
-	d.UpdateContainerState(Container{ID: "abc", Name: "web", Image: "nginx", State: "running", Project: "proj", Service: "websvc"})
-	containers := d.Containers()
-	if len(containers) != 1 || containers[0].State != "running" {
-		t.Fatalf("expected 1 running container, got %v", containers)
-	}
-	if containers[0].Service != "websvc" {
-		t.Errorf("service = %q, want websvc", containers[0].Service)
-	}
-
-	// Update existing container state.
-	d.UpdateContainerState(Container{ID: "abc", Name: "web", Image: "nginx", State: "exited", Project: "proj", Service: "websvc"})
-	containers = d.Containers()
-	if len(containers) != 1 || containers[0].State != "exited" {
-		t.Fatalf("expected exited state, got %v", containers)
-	}
-
-	// Destroy removes from list (State="" signals destroy).
-	d.UpdateContainerState(Container{ID: "abc"})
-	containers = d.Containers()
-	if len(containers) != 0 {
-		t.Fatalf("expected empty list after destroy, got %v", containers)
-	}
-
-	// Destroy on non-existent container is a no-op.
-	d.UpdateContainerState(Container{ID: "nonexistent"})
-	if len(d.Containers()) != 0 {
-		t.Fatal("destroy of nonexistent should be no-op")
-	}
-}
-
 func TestInspectCache(t *testing.T) {
 	d := &DockerCollector{
 		prevCPU:      make(map[string]cpuPrev),

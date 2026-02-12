@@ -99,7 +99,7 @@ func TestInsertContainerMetrics(t *testing.T) {
 
 	containers := []ContainerMetrics{
 		{
-			ID: "abc123", Name: "web", Image: "nginx:latest", State: "running",
+			Project: "myapp", Service: "web",
 			CPUPercent: 5.0, MemUsage: 100e6, MemLimit: 512e6, MemPercent: 19.5,
 			NetRx: 1000, NetTx: 500, BlockRead: 200, BlockWrite: 100, PIDs: 5,
 		},
@@ -109,13 +109,17 @@ func TestInsertContainerMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var name, state string
-	err := s.db.QueryRow("SELECT name, state FROM container_metrics WHERE id = ?", "abc123").Scan(&name, &state)
+	var project, service string
+	var cpu float64
+	err := s.db.QueryRow("SELECT project, service, cpu_percent FROM container_metrics WHERE project = ?", "myapp").Scan(&project, &service, &cpu)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if name != "web" || state != "running" {
-		t.Errorf("got name=%q state=%q, want web running", name, state)
+	if project != "myapp" || service != "web" {
+		t.Errorf("got project=%q service=%q, want myapp web", project, service)
+	}
+	if cpu != 5.0 {
+		t.Errorf("cpu = %f, want 5.0", cpu)
 	}
 }
 
@@ -355,7 +359,7 @@ func TestQueryContainerMetrics(t *testing.T) {
 
 	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	s.InsertContainerMetrics(ctx, ts, []ContainerMetrics{
-		{ID: "abc", Name: "web", Image: "nginx", State: "running", CPUPercent: 5},
+		{Project: "myapp", Service: "web", CPUPercent: 5},
 	})
 
 	results, err := s.QueryContainerMetrics(ctx, ts.Unix(), ts.Unix())
@@ -365,8 +369,8 @@ func TestQueryContainerMetrics(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
-	if results[0].ID != "abc" || results[0].CPUPercent != 5 {
-		t.Errorf("got id=%q cpu=%f", results[0].ID, results[0].CPUPercent)
+	if results[0].Project != "myapp" || results[0].Service != "web" || results[0].CPUPercent != 5 {
+		t.Errorf("got project=%q service=%q cpu=%f", results[0].Project, results[0].Service, results[0].CPUPercent)
 	}
 }
 
@@ -585,15 +589,14 @@ func TestHostMetricsNewFields(t *testing.T) {
 	}
 }
 
-func TestContainerMetricsNewFields(t *testing.T) {
+func TestContainerMetricsAllFields(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 	ts := time.Now()
 
 	containers := []ContainerMetrics{
 		{
-			ID: "abc123", Name: "web", Image: "nginx:latest", State: "running",
-			Health: "healthy", StartedAt: 1700000000, RestartCount: 3, ExitCode: 0,
+			Project: "myapp", Service: "web",
 			CPUPercent: 5.0, MemUsage: 100e6, MemLimit: 512e6, MemPercent: 19.5,
 			NetRx: 1000, NetTx: 500, BlockRead: 200, BlockWrite: 100, PIDs: 5,
 		},
@@ -611,17 +614,17 @@ func TestContainerMetricsNewFields(t *testing.T) {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
 	r := results[0]
-	if r.Health != "healthy" {
-		t.Errorf("health = %q, want healthy", r.Health)
+	if r.CPUPercent != 5.0 {
+		t.Errorf("cpu = %f, want 5.0", r.CPUPercent)
 	}
-	if r.StartedAt != 1700000000 {
-		t.Errorf("started_at = %d, want 1700000000", r.StartedAt)
+	if r.MemUsage != 100e6 {
+		t.Errorf("mem_usage = %d, want %d", r.MemUsage, uint64(100e6))
 	}
-	if r.RestartCount != 3 {
-		t.Errorf("restart_count = %d, want 3", r.RestartCount)
+	if r.NetRx != 1000 {
+		t.Errorf("net_rx = %d, want 1000", r.NetRx)
 	}
-	if r.ExitCode != 0 {
-		t.Errorf("exit_code = %d, want 0", r.ExitCode)
+	if r.PIDs != 5 {
+		t.Errorf("pids = %d, want 5", r.PIDs)
 	}
 }
 
@@ -693,26 +696,16 @@ func TestQueryContainerMetricsByService(t *testing.T) {
 
 	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	// Two different container IDs with the same project/service (simulating a
-	// service that was redeployed, getting a new container ID).
+	// Two time points for the same service identity.
 	s.InsertContainerMetrics(ctx, ts, []ContainerMetrics{
-		{
-			ID: "aaa111", Name: "myapp-web-1", Image: "nginx:latest", State: "running",
-			Project: "myapp", Service: "web", CPUPercent: 10.0,
-		},
+		{Project: "myapp", Service: "web", CPUPercent: 10.0},
 	})
 	s.InsertContainerMetrics(ctx, ts.Add(10*time.Second), []ContainerMetrics{
-		{
-			ID: "bbb222", Name: "myapp-web-1", Image: "nginx:latest", State: "running",
-			Project: "myapp", Service: "web", CPUPercent: 20.0,
-		},
+		{Project: "myapp", Service: "web", CPUPercent: 20.0},
 	})
 	// A different service that should not be returned.
 	s.InsertContainerMetrics(ctx, ts, []ContainerMetrics{
-		{
-			ID: "ccc333", Name: "myapp-api-1", Image: "golang:latest", State: "running",
-			Project: "myapp", Service: "api", CPUPercent: 30.0,
-		},
+		{Project: "myapp", Service: "api", CPUPercent: 30.0},
 	})
 
 	results, err := s.QueryContainerMetrics(ctx, ts.Unix(), ts.Add(10*time.Second).Unix(),
@@ -723,15 +716,8 @@ func TestQueryContainerMetricsByService(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))
 	}
-	// Ordered by timestamp, so aaa111 first.
-	if results[0].ID != "aaa111" {
-		t.Errorf("results[0].ID = %q, want aaa111", results[0].ID)
-	}
 	if results[0].CPUPercent != 10.0 {
 		t.Errorf("results[0].CPUPercent = %f, want 10.0", results[0].CPUPercent)
-	}
-	if results[1].ID != "bbb222" {
-		t.Errorf("results[1].ID = %q, want bbb222", results[1].ID)
 	}
 	if results[1].CPUPercent != 20.0 {
 		t.Errorf("results[1].CPUPercent = %f, want 20.0", results[1].CPUPercent)

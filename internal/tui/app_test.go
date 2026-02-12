@@ -306,6 +306,11 @@ func TestAppServerPickerSingleServer(t *testing.T) {
 
 func TestHandleMetricsBackfill(t *testing.T) {
 	s := newTestSession()
+	// ContInfo maps service keys to current container IDs.
+	s.ContInfo = []protocol.ContainerInfo{
+		{ID: "c1", Name: "web", Project: "app", Service: "web"},
+		{ID: "c2", Name: "api", Project: "app", Service: "api"},
+	}
 	resp := &protocol.QueryMetricsResp{
 		Host: []protocol.TimedHostMetrics{
 			{Timestamp: 1, HostMetrics: protocol.HostMetrics{CPUPercent: 10, MemPercent: 20, MemTotal: 1000, MemFree: 300, MemCached: 200}},
@@ -313,9 +318,9 @@ func TestHandleMetricsBackfill(t *testing.T) {
 			{Timestamp: 3, HostMetrics: protocol.HostMetrics{CPUPercent: 50, MemPercent: 60, MemTotal: 1000, MemFree: 200, MemCached: 100}},
 		},
 		Containers: []protocol.TimedContainerMetrics{
-			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 5, MemPercent: 15}},
-			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 25, MemPercent: 35}},
-			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "c2", CPUPercent: 8, MemPercent: 18}},
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{Project: "app", Service: "web", CPUPercent: 5, MemUsage: 1500}},
+			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{Project: "app", Service: "web", CPUPercent: 25, MemUsage: 3500}},
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{Project: "app", Service: "api", CPUPercent: 8, MemUsage: 1800}},
 		},
 	}
 	handleMetricsBackfill(s, resp, 0, 0, false)
@@ -336,7 +341,7 @@ func TestHandleMetricsBackfill(t *testing.T) {
 	if s.HostMemUsedHistory.Len() != 3 {
 		t.Errorf("HostMemUsedHistory.Len() = %d, want 3", s.HostMemUsedHistory.Len())
 	}
-	// Container histories created and populated.
+	// Container histories mapped by container ID via ContInfo.
 	if s.CPUHistory["c1"].Len() != 2 {
 		t.Errorf("c1 CPUHistory.Len() = %d, want 2", s.CPUHistory["c1"].Len())
 	}
@@ -350,21 +355,24 @@ func TestHandleMetricsBackfill(t *testing.T) {
 
 func TestHandleMetricsBackfillHistorical(t *testing.T) {
 	s := newTestSession()
+	s.ContInfo = []protocol.ContainerInfo{
+		{ID: "c1", Name: "web", Project: "app", Service: "web"},
+	}
 	// Pre-populate with some existing data.
 	s.HostCPUHistory.Push(99)
 	s.CPUHistory["old"] = NewRingBuffer[float64](ringBufSize)
 	s.CPUHistory["old"].Push(50)
 	s.MemHistory["old"] = NewRingBuffer[float64](ringBufSize)
 
-	// Historical backfill: agent sends pre-bucketed data (e.g. 3 points).
+	// Historical backfill: agent sends pre-bucketed data (e.g. 2 points).
 	resp := &protocol.QueryMetricsResp{
 		Host: []protocol.TimedHostMetrics{
 			{Timestamp: 1, HostMetrics: protocol.HostMetrics{CPUPercent: 10, MemPercent: 20}},
 			{Timestamp: 2, HostMetrics: protocol.HostMetrics{CPUPercent: 30, MemPercent: 40}},
 		},
 		Containers: []protocol.TimedContainerMetrics{
-			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 5}},
-			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 15}},
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{Project: "app", Service: "web", CPUPercent: 5}},
+			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{Project: "app", Service: "web", CPUPercent: 15}},
 		},
 	}
 	handleMetricsBackfill(s, resp, 0, 10, true)
@@ -378,7 +386,7 @@ func TestHandleMetricsBackfillHistorical(t *testing.T) {
 		t.Errorf("HostCPUHistory = %v, want [10 30]", cpu)
 	}
 
-	// Container buffers should be replaced.
+	// Container buffers should be replaced, mapped to c1 via ContInfo.
 	if s.CPUHistory["c1"].Len() != 2 {
 		t.Errorf("c1 CPUHistory.Len() = %d, want 2", s.CPUHistory["c1"].Len())
 	}
@@ -386,6 +394,10 @@ func TestHandleMetricsBackfillHistorical(t *testing.T) {
 
 func TestGlobalBackfillSkipsDetailContainer(t *testing.T) {
 	s := newTestSession()
+	s.ContInfo = []protocol.ContainerInfo{
+		{ID: "c1", Name: "web", Project: "app", Service: "web"},
+		{ID: "c2", Name: "api", Project: "app", Service: "api"},
+	}
 	// Simulate detail view pending for container "c1".
 	s.Detail.containerID = "c1"
 	s.Detail.svcService = "web"
@@ -393,8 +405,8 @@ func TestGlobalBackfillSkipsDetailContainer(t *testing.T) {
 
 	resp := &protocol.QueryMetricsResp{
 		Containers: []protocol.TimedContainerMetrics{
-			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 10}},
-			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "c2", CPUPercent: 20}},
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{Project: "app", Service: "web", CPUPercent: 10}},
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{Project: "app", Service: "api", CPUPercent: 20}},
 		},
 	}
 	handleMetricsBackfill(s, resp, 0, 0, false)
@@ -411,20 +423,20 @@ func TestGlobalBackfillSkipsDetailContainer(t *testing.T) {
 
 func TestHandleDetailMetricsBackfill(t *testing.T) {
 	s := newTestSession()
+	s.ContInfo = []protocol.ContainerInfo{
+		{ID: "new-c", Name: "web", Project: "app", Service: "web"},
+	}
 	det := &s.Detail
 	det.containerID = "new-c"
 	det.reset()
 
-	// Agent sends pre-merged data: all points under new-c with deploy markers.
+	// Agent sends service-scoped data keyed by (project, service).
 	resp := &protocol.QueryMetricsResp{
 		Containers: []protocol.TimedContainerMetrics{
-			{Timestamp: 100, ContainerMetrics: protocol.ContainerMetrics{ID: "new-c", CPUPercent: 10, MemUsage: 1000}},
-			{Timestamp: 200, ContainerMetrics: protocol.ContainerMetrics{ID: "new-c", CPUPercent: 20, MemUsage: 2000}},
-			{Timestamp: 300, ContainerMetrics: protocol.ContainerMetrics{ID: "new-c", CPUPercent: 30, MemUsage: 3000}},
-			{Timestamp: 400, ContainerMetrics: protocol.ContainerMetrics{ID: "new-c", CPUPercent: 40, MemUsage: 4000}},
-		},
-		DeployMarkers: map[string][]int64{
-			"new-c": {300},
+			{Timestamp: 100, ContainerMetrics: protocol.ContainerMetrics{Project: "app", Service: "web", CPUPercent: 10, MemUsage: 1000}},
+			{Timestamp: 200, ContainerMetrics: protocol.ContainerMetrics{Project: "app", Service: "web", CPUPercent: 20, MemUsage: 2000}},
+			{Timestamp: 300, ContainerMetrics: protocol.ContainerMetrics{Project: "app", Service: "web", CPUPercent: 30, MemUsage: 3000}},
+			{Timestamp: 400, ContainerMetrics: protocol.ContainerMetrics{Project: "app", Service: "web", CPUPercent: 40, MemUsage: 4000}},
 		},
 	}
 	handleDetailMetricsBackfill(s, det, resp, 0, 0, 0)
@@ -434,15 +446,7 @@ func TestHandleDetailMetricsBackfill(t *testing.T) {
 		t.Error("metricsBackfilled should be true")
 	}
 
-	// Deploy marker from agent response.
-	if len(det.deployTimestamps) != 1 {
-		t.Fatalf("deployTimestamps = %d, want 1", len(det.deployTimestamps))
-	}
-	if det.deployTimestamps[0] != 300 {
-		t.Errorf("deploy timestamp = %d, want 300", det.deployTimestamps[0])
-	}
-
-	// All 4 data points should be in the buffer.
+	// All 4 data points should be in the buffer, mapped to new-c via ContInfo.
 	cpuBuf, ok := s.CPUHistory["new-c"]
 	if !ok {
 		t.Fatal("CPUHistory['new-c'] should exist")
@@ -463,15 +467,13 @@ func TestHandleDetailMetricsBackfill(t *testing.T) {
 	if len(memData) != 4 {
 		t.Errorf("MemHistory['new-c'].Len() = %d, want 4", len(memData))
 	}
-
-	// deployEndTS should be the last data point's timestamp.
-	if det.deployEndTS != 400 {
-		t.Errorf("deployEndTS = %d, want 400", det.deployEndTS)
-	}
 }
 
 func TestHandleDetailMetricsBackfillHistorical(t *testing.T) {
 	s := newTestSession()
+	s.ContInfo = []protocol.ContainerInfo{
+		{ID: "c1", Name: "web", Project: "app", Service: "web"},
+	}
 	det := &s.Detail
 	det.containerID = "c1"
 	det.reset()
@@ -479,9 +481,9 @@ func TestHandleDetailMetricsBackfillHistorical(t *testing.T) {
 	// Agent sends pre-bucketed historical data (e.g. 3 points with zero-fill).
 	resp := &protocol.QueryMetricsResp{
 		Containers: []protocol.TimedContainerMetrics{
-			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 0, MemUsage: 0}},
-			{Timestamp: 5, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 10, MemUsage: 100}},
-			{Timestamp: 8, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 20, MemUsage: 200}},
+			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{Project: "app", Service: "web", CPUPercent: 0, MemUsage: 0}},
+			{Timestamp: 5, ContainerMetrics: protocol.ContainerMetrics{Project: "app", Service: "web", CPUPercent: 10, MemUsage: 100}},
+			{Timestamp: 8, ContainerMetrics: protocol.ContainerMetrics{Project: "app", Service: "web", CPUPercent: 20, MemUsage: 200}},
 		},
 	}
 	handleDetailMetricsBackfill(s, det, resp, 0, 10, 10)
@@ -497,17 +499,21 @@ func TestHandleDetailMetricsBackfillHistorical(t *testing.T) {
 
 func TestHandleDetailMetricsBackfillGroupMode(t *testing.T) {
 	s := newTestSession()
+	s.ContInfo = []protocol.ContainerInfo{
+		{ID: "c1", Name: "web", Project: "myapp", Service: "web"},
+		{ID: "c2", Name: "api", Project: "myapp", Service: "api"},
+	}
 	det := &s.Detail
 	det.project = "myapp"
 	det.containerID = "" // group mode
 	det.reset()
 
-	// Agent sends data for two containers in the group.
+	// Agent sends data for two services in the group.
 	resp := &protocol.QueryMetricsResp{
 		Containers: []protocol.TimedContainerMetrics{
-			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 10, MemUsage: 100}},
-			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{ID: "c2", CPUPercent: 20, MemUsage: 200}},
-			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{ID: "c1", CPUPercent: 15, MemUsage: 150}},
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{Project: "myapp", Service: "web", CPUPercent: 10, MemUsage: 100}},
+			{Timestamp: 1, ContainerMetrics: protocol.ContainerMetrics{Project: "myapp", Service: "api", CPUPercent: 20, MemUsage: 200}},
+			{Timestamp: 2, ContainerMetrics: protocol.ContainerMetrics{Project: "myapp", Service: "web", CPUPercent: 15, MemUsage: 150}},
 		},
 	}
 	handleDetailMetricsBackfill(s, det, resp, 0, 0, 0)
