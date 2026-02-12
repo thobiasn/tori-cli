@@ -92,7 +92,14 @@ func autoGridGraph(data []float64, value string, innerW, rows int, windowSec int
 	}
 	maxVal := axis.ceilFn(maxObs)
 
-	graphW := innerW - len(value) - 2
+	// Use the wider of value/ceiling label to size the right margin.
+	ceilLabel := axis.labelFn(maxVal)
+	rightW := len(value)
+	if len(ceilLabel) > rightW {
+		rightW = len(ceilLabel)
+	}
+
+	graphW := innerW - rightW - 2
 	if graphW < 10 {
 		graphW = 10
 	}
@@ -113,7 +120,7 @@ func autoGridGraph(data []float64, value string, innerW, rows int, windowSec int
 	}
 
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
-	labelW := len(value) + 1
+	labelW := rightW + 1
 	lines := make([]string, len(graphLines))
 	for i, gl := range graphLines {
 		if i == len(graphLines)-1 {
