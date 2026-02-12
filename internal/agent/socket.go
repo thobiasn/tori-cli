@@ -404,18 +404,6 @@ func (c *connState) queryMetrics(env *protocol.Envelope) {
 		c.sendError(env.ID, "query failed")
 		return
 	}
-	disks, err := c.ss.store.QueryDiskMetrics(c.ctx, req.Start, req.End)
-	if err != nil {
-		slog.Error("query disk metrics", "error", err)
-		c.sendError(env.ID, "query failed")
-		return
-	}
-	nets, err := c.ss.store.QueryNetMetrics(c.ctx, req.Start, req.End)
-	if err != nil {
-		slog.Error("query net metrics", "error", err)
-		c.sendError(env.ID, "query failed")
-		return
-	}
 	containers, err := c.ss.store.QueryContainerMetrics(c.ctx, req.Start, req.End)
 	if err != nil {
 		slog.Error("query container metrics", "error", err)
@@ -425,17 +413,33 @@ func (c *connState) queryMetrics(env *protocol.Envelope) {
 
 	hostOut := convertTimedHost(host)
 	containerOut := convertTimedContainer(containers)
-	if req.Points > 0 {
-		hostOut = downsampleHost(hostOut, req.Points)
-		containerOut = downsampleContainers(containerOut, req.Points)
-	}
 
 	resp := protocol.QueryMetricsResp{
-		Host:          hostOut,
-		Disks:         convertTimedDisk(disks),
-		Networks:      convertTimedNet(nets),
-		Containers:    containerOut,
 		RetentionDays: c.ss.retentionDays,
+	}
+
+	if req.Points > 0 {
+		// Downsampled backfill: TUI only uses Host and Containers.
+		// Skip disk/net queries to avoid exceeding MaxMessageSize on wide windows.
+		resp.Host = downsampleHost(hostOut, req.Points)
+		resp.Containers = downsampleContainers(containerOut, req.Points)
+	} else {
+		disks, err := c.ss.store.QueryDiskMetrics(c.ctx, req.Start, req.End)
+		if err != nil {
+			slog.Error("query disk metrics", "error", err)
+			c.sendError(env.ID, "query failed")
+			return
+		}
+		nets, err := c.ss.store.QueryNetMetrics(c.ctx, req.Start, req.End)
+		if err != nil {
+			slog.Error("query net metrics", "error", err)
+			c.sendError(env.ID, "query failed")
+			return
+		}
+		resp.Host = hostOut
+		resp.Disks = convertTimedDisk(disks)
+		resp.Networks = convertTimedNet(nets)
+		resp.Containers = containerOut
 	}
 	c.sendResponse(env.ID, &resp)
 }

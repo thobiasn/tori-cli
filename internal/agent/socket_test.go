@@ -1123,6 +1123,174 @@ func TestSocketQueryContainersTracked(t *testing.T) {
 	}
 }
 
+func TestSocketQueryMetricsDownsampledSkipsDiskNet(t *testing.T) {
+	s := testStore(t)
+	ctx := t.Context()
+
+	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	// Insert 10 host metrics, disk, and net data points.
+	for i := 0; i < 10; i++ {
+		ts := base.Add(time.Duration(i) * 10 * time.Second)
+		s.InsertHostMetrics(ctx, ts, &HostMetrics{CPUPercent: float64(i * 10)})
+		s.InsertDiskMetrics(ctx, ts, []DiskMetrics{{Mountpoint: "/", Device: "sda1", Total: 100, Used: 50, Free: 50, Percent: 50}})
+		s.InsertNetMetrics(ctx, ts, []NetMetrics{{Iface: "eth0", RxBytes: uint64(i * 1000), TxBytes: uint64(i * 500)}})
+	}
+
+	_, _, path := testSocketServer(t, s)
+	conn := dial(t, path)
+
+	// Query with Points > 0 (downsampled backfill).
+	req := protocol.QueryMetricsReq{Start: base.Unix(), End: base.Add(90 * time.Second).Unix(), Points: 5}
+	env, err := protocol.NewEnvelope(protocol.TypeQueryMetrics, 1, &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Type != protocol.TypeResult {
+		t.Fatalf("type = %q, want result", resp.Type)
+	}
+
+	var metrics protocol.QueryMetricsResp
+	if err := protocol.DecodeBody(resp.Body, &metrics); err != nil {
+		t.Fatal(err)
+	}
+
+	// Host should be downsampled to 5 points.
+	if len(metrics.Host) != 5 {
+		t.Errorf("host = %d, want 5", len(metrics.Host))
+	}
+	// Disk and net should be empty (skipped for downsampled queries).
+	if len(metrics.Disks) != 0 {
+		t.Errorf("disks = %d, want 0 (should be skipped when Points > 0)", len(metrics.Disks))
+	}
+	if len(metrics.Networks) != 0 {
+		t.Errorf("networks = %d, want 0 (should be skipped when Points > 0)", len(metrics.Networks))
+	}
+
+	// Now query with Points=0 (full resolution) — should include disk/net.
+	conn2 := dial(t, path)
+	req2 := protocol.QueryMetricsReq{Start: base.Unix(), End: base.Add(90 * time.Second).Unix(), Points: 0}
+	env2, err := protocol.NewEnvelope(protocol.TypeQueryMetrics, 2, &req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteMsg(conn2, env2); err != nil {
+		t.Fatal(err)
+	}
+
+	conn2.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp2, err := protocol.ReadMsg(conn2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var metrics2 protocol.QueryMetricsResp
+	if err := protocol.DecodeBody(resp2.Body, &metrics2); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(metrics2.Host) != 10 {
+		t.Errorf("host (full) = %d, want 10", len(metrics2.Host))
+	}
+	if len(metrics2.Disks) != 10 {
+		t.Errorf("disks (full) = %d, want 10", len(metrics2.Disks))
+	}
+	if len(metrics2.Networks) != 10 {
+		t.Errorf("networks (full) = %d, want 10", len(metrics2.Networks))
+	}
+}
+
+func TestDownsampleHost(t *testing.T) {
+	// Generate 100 data points.
+	data := make([]protocol.TimedHostMetrics, 100)
+	for i := range data {
+		data[i] = protocol.TimedHostMetrics{
+			Timestamp: int64(i),
+			HostMetrics: protocol.HostMetrics{
+				CPUPercent: float64(i),
+				MemPercent: float64(100 - i),
+			},
+		}
+	}
+
+	out := downsampleHost(data, 10)
+	if len(out) != 10 {
+		t.Fatalf("len = %d, want 10", len(out))
+	}
+
+	// Each bucket of 10 should have the max CPU from that range.
+	// Bucket 0: indices 0-9, max CPU = 9.
+	if out[0].CPUPercent != 9 {
+		t.Errorf("bucket 0 CPU = %f, want 9", out[0].CPUPercent)
+	}
+	// Last bucket: indices 90-99, max CPU = 99.
+	if out[9].CPUPercent != 99 {
+		t.Errorf("bucket 9 CPU = %f, want 99", out[9].CPUPercent)
+	}
+	// Timestamps should be monotonically increasing (last in each bucket).
+	for i := 1; i < len(out); i++ {
+		if out[i].Timestamp <= out[i-1].Timestamp {
+			t.Errorf("timestamps not monotonic: [%d]=%d <= [%d]=%d", i, out[i].Timestamp, i-1, out[i-1].Timestamp)
+		}
+	}
+
+	// No-op when data fits.
+	same := downsampleHost(data[:5], 10)
+	if len(same) != 5 {
+		t.Errorf("no-op: len = %d, want 5", len(same))
+	}
+}
+
+func TestDownsampleContainers(t *testing.T) {
+	// Two containers, 20 points each.
+	var data []protocol.TimedContainerMetrics
+	for i := 0; i < 20; i++ {
+		data = append(data, protocol.TimedContainerMetrics{
+			Timestamp:        int64(i),
+			ContainerMetrics: protocol.ContainerMetrics{ID: "aaa", CPUPercent: float64(i)},
+		})
+		data = append(data, protocol.TimedContainerMetrics{
+			Timestamp:        int64(i),
+			ContainerMetrics: protocol.ContainerMetrics{ID: "bbb", CPUPercent: float64(i * 2)},
+		})
+	}
+
+	out := downsampleContainers(data, 5)
+
+	// Count per container.
+	counts := make(map[string]int)
+	for _, m := range out {
+		counts[m.ID]++
+	}
+	if counts["aaa"] != 5 {
+		t.Errorf("aaa = %d points, want 5", counts["aaa"])
+	}
+	if counts["bbb"] != 5 {
+		t.Errorf("bbb = %d points, want 5", counts["bbb"])
+	}
+
+	// No-op when data fits.
+	small := make([]protocol.TimedContainerMetrics, 3)
+	for i := range small {
+		small[i] = protocol.TimedContainerMetrics{
+			Timestamp:        int64(i),
+			ContainerMetrics: protocol.ContainerMetrics{ID: "ccc"},
+		}
+	}
+	same := downsampleContainers(small, 10)
+	if len(same) != 3 {
+		t.Errorf("no-op: len = %d, want 3", len(same))
+	}
+}
+
 func TestSocketFileCleanedUpOnStop(t *testing.T) {
 	s := testStore(t)
 	hub := NewHub()
