@@ -467,6 +467,94 @@ func TestRestartColor(t *testing.T) {
 	}
 }
 
+func TestTimeMarkers(t *testing.T) {
+	// Live mode returns nil.
+	if got := timeMarkers(0); got != nil {
+		t.Errorf("Live should return nil, got %v", got)
+	}
+	// Unknown window returns nil.
+	if got := timeMarkers(999); got != nil {
+		t.Errorf("unknown window should return nil, got %v", got)
+	}
+
+	tests := []struct {
+		seconds int64
+		count   int
+		labels  []string
+	}{
+		{3600, 2, []string{"-20m", "-40m"}},
+		{6 * 3600, 2, []string{"-2h", "-4h"}},
+		{12 * 3600, 3, []string{"-3h", "-6h", "-9h"}},
+		{24 * 3600, 3, []string{"-6h", "-12h", "-18h"}},
+		{3 * 86400, 2, []string{"-1d", "-2d"}},
+		{7 * 86400, 3, []string{"-2d", "-4d", "-6d"}},
+	}
+	for _, tt := range tests {
+		vl := timeMarkers(tt.seconds)
+		if len(vl) != tt.count {
+			t.Errorf("timeMarkers(%d): got %d markers, want %d", tt.seconds, len(vl), tt.count)
+			continue
+		}
+		for i, label := range tt.labels {
+			if vl[i].Label != label {
+				t.Errorf("timeMarkers(%d)[%d].Label = %q, want %q", tt.seconds, i, vl[i].Label, label)
+			}
+			if vl[i].Frac <= 0 || vl[i].Frac >= 1 {
+				t.Errorf("timeMarkers(%d)[%d].Frac = %f, want 0 < frac < 1", tt.seconds, i, vl[i].Frac)
+			}
+		}
+	}
+}
+
+func TestGraphWithGridVLines(t *testing.T) {
+	theme := DefaultTheme()
+	data := make([]float64, 40)
+	for i := range data {
+		data[i] = 50
+	}
+
+	t.Run("label appears", func(t *testing.T) {
+		vlines := []VLine{{Frac: 0.5, Label: "-3h"}}
+		got := GraphWithGrid(data, 20, 5, 100, []float64{50}, vlines, &theme)
+		plain := stripANSI(got)
+		if !strings.Contains(plain, "-3h") {
+			t.Errorf("expected label '-3h' in output, got:\n%s", plain)
+		}
+	})
+
+	t.Run("no vlines no label", func(t *testing.T) {
+		got := GraphWithGrid(data, 20, 5, 100, []float64{50}, nil, &theme)
+		plain := stripANSI(got)
+		if strings.Contains(plain, "-3h") {
+			t.Error("should not contain '-3h' without vlines")
+		}
+	})
+
+	t.Run("multiple labels", func(t *testing.T) {
+		vlines := []VLine{
+			{Frac: 1.0 / 3.0, Label: "-2h"},
+			{Frac: 2.0 / 3.0, Label: "-4h"},
+		}
+		got := GraphWithGrid(data, 30, 5, 100, []float64{50}, vlines, &theme)
+		plain := stripANSI(got)
+		if !strings.Contains(plain, "-2h") {
+			t.Error("expected label '-2h'")
+		}
+		if !strings.Contains(plain, "-4h") {
+			t.Error("expected label '-4h'")
+		}
+	})
+
+	t.Run("row count preserved", func(t *testing.T) {
+		vlines := []VLine{{Frac: 0.5, Label: "-1d"}}
+		got := GraphWithGrid(data, 20, 4, 100, []float64{50}, vlines, &theme)
+		lines := strings.Split(got, "\n")
+		if len(lines) != 4 {
+			t.Errorf("expected 4 rows, got %d", len(lines))
+		}
+	})
+}
+
 func TestFormatContainerUptime(t *testing.T) {
 	tests := []struct {
 		state     string

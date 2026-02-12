@@ -299,7 +299,7 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 		logH = 5
 	}
 
-	metricsContent := renderDetailMetrics(s, det, cm, width, metricsH, theme, a.windowLabel())
+	metricsContent := renderDetailMetrics(s, det, cm, width, metricsH, theme, a.windowLabel(), a.windowSeconds())
 	metricsBox := Box(title, metricsContent, width, metricsH, theme)
 
 	// Bottom section: logs.
@@ -362,7 +362,7 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 		logH = 5
 	}
 
-	metricsContent := renderDetailGroupMetrics(s, det, width, metricsH, theme, a.windowLabel())
+	metricsContent := renderDetailGroupMetrics(s, det, width, metricsH, theme, a.windowLabel(), a.windowSeconds())
 	metricsBox := Box(title, metricsContent, width, metricsH, theme)
 
 	var logBox string
@@ -373,7 +373,7 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 	return metricsBox + "\n" + logBox
 }
 
-func renderDetailGroupMetrics(s *Session, det *DetailState, width, height int, theme *Theme, windowLabel string) string {
+func renderDetailGroupMetrics(s *Session, det *DetailState, width, height int, theme *Theme, windowLabel string, windowSec int64) string {
 	innerW := width - 2
 
 	// Aggregate CPU/MEM/Disk across all containers in the group.
@@ -416,7 +416,7 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, width, height int, t
 	cpuAgg := aggregateHistory(s.CPUHistory, det.projectIDs)
 	var cpuContent string
 	if len(cpuAgg) > 0 {
-		cpuContent = strings.Join(autoGridGraph(cpuAgg, cpuVal, leftW-2, graphRows, theme, theme.CPUGraph, pctAxis), "\n")
+		cpuContent = strings.Join(autoGridGraph(cpuAgg, cpuVal, leftW-2, graphRows, windowSec, theme, theme.CPUGraph, pctAxis), "\n")
 	} else {
 		cpuContent = fmt.Sprintf(" CPU %s", cpuVal)
 	}
@@ -425,7 +425,7 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, width, height int, t
 	memAgg := aggregateHistory(s.MemHistory, det.projectIDs)
 	var memContent string
 	if len(memAgg) > 0 {
-		memContent = strings.Join(autoGridGraph(memAgg, memVal, rightW-2, graphRows, theme, theme.MemGraph, bytesAxis), "\n")
+		memContent = strings.Join(autoGridGraph(memAgg, memVal, rightW-2, graphRows, windowSec, theme, theme.MemGraph, bytesAxis), "\n")
 	} else {
 		memContent = fmt.Sprintf(" MEM %s", memVal)
 	}
@@ -475,7 +475,7 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, width, height int, t
 	return strings.Join(lines, "\n")
 }
 
-func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMetrics, width, height int, theme *Theme, windowLabel string) string {
+func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMetrics, width, height int, theme *Theme, windowLabel string, windowSec int64) string {
 	if cm == nil {
 		return "  Waiting for metrics..."
 	}
@@ -505,7 +505,7 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 	cpuData := historyData(s.CPUHistory, det.containerID)
 	var cpuContent string
 	if len(cpuData) > 0 {
-		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, theme, theme.CPUGraph, pctAxis), "\n")
+		cpuContent = strings.Join(autoGridGraph(cpuData, cpuVal, leftW-2, graphRows, windowSec, theme, theme.CPUGraph, pctAxis), "\n")
 	} else {
 		cpuContent = fmt.Sprintf(" CPU %s", cpuVal)
 	}
@@ -514,7 +514,7 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 	memData := historyData(s.MemHistory, det.containerID)
 	var memContent string
 	if len(memData) > 0 {
-		memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, theme, theme.MemGraph, bytesAxis), "\n")
+		memContent = strings.Join(autoGridGraph(memData, memVal, rightW-2, graphRows, windowSec, theme, theme.MemGraph, bytesAxis), "\n")
 	} else {
 		memContent = fmt.Sprintf(" MEM %s", memVal)
 	}

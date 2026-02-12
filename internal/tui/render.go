@@ -322,10 +322,51 @@ func Graph(data []float64, width, rows int, maxVal float64, theme *Theme) string
 	return strings.Join(rowStrs, "\n")
 }
 
-// GraphWithGrid renders a multi-row braille graph with horizontal grid lines.
-// gridPcts are percentage values (0-100) at which dashed lines are drawn in the
-// muted color. Data is rendered on top with UsageColor per row. maxVal must be >0.
-func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []float64, theme *Theme, fixedColor ...lipgloss.Color) string {
+// VLine describes a vertical marker at a fractional position across a graph.
+type VLine struct {
+	Frac  float64 // 0.0 = right edge (now), 1.0 = left edge (oldest)
+	Label string  // e.g. "-2h"
+}
+
+// timeMarkers returns vertical line markers for a given time window.
+// Returns nil for Live mode (seconds == 0) or unknown windows.
+func timeMarkers(seconds int64) []VLine {
+	type entry struct {
+		offset int64
+		label  string
+	}
+	var markers []entry
+	switch seconds {
+	case 3600: // 1h → 20min intervals
+		markers = []entry{{1200, "-20m"}, {2400, "-40m"}}
+	case 6 * 3600: // 6h → 2h intervals
+		markers = []entry{{2 * 3600, "-2h"}, {4 * 3600, "-4h"}}
+	case 12 * 3600: // 12h → 3h intervals
+		markers = []entry{{3 * 3600, "-3h"}, {6 * 3600, "-6h"}, {9 * 3600, "-9h"}}
+	case 24 * 3600: // 24h → 6h intervals
+		markers = []entry{{6 * 3600, "-6h"}, {12 * 3600, "-12h"}, {18 * 3600, "-18h"}}
+	case 3 * 86400: // 3d → 1d intervals
+		markers = []entry{{86400, "-1d"}, {2 * 86400, "-2d"}}
+	case 7 * 86400: // 7d → 2d intervals
+		markers = []entry{{2 * 86400, "-2d"}, {4 * 86400, "-4d"}, {6 * 86400, "-6d"}}
+	default:
+		return nil
+	}
+	vlines := make([]VLine, len(markers))
+	for i, m := range markers {
+		vlines[i] = VLine{
+			Frac:  float64(m.offset) / float64(seconds),
+			Label: m.label,
+		}
+	}
+	return vlines
+}
+
+// GraphWithGrid renders a multi-row braille graph with horizontal grid lines
+// and optional vertical time markers. gridPcts are percentage values (0-100)
+// at which dashed horizontal lines are drawn. vlines adds vertical dashed lines
+// with centered labels (pass nil to skip). maxVal must be >0.
+func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []float64, vlines []VLine, theme *Theme, fixedColor ...lipgloss.Color) string {
 	if width < 1 || rows < 1 || maxVal <= 0 {
 		return ""
 	}
@@ -369,11 +410,68 @@ func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []f
 	leftBits := [4]byte{0x40, 0x04, 0x02, 0x01}
 	rightBits := [4]byte{0x80, 0x20, 0x10, 0x08}
 
+	// Pre-compute vertical line columns and label positions.
+	type vlineCol struct {
+		col        int
+		label      []rune
+		labelStart int // -1 if label doesn't fit
+	}
+	var vcols []vlineCol
+	labelRow := rows / 2
+	for _, vl := range vlines {
+		col := int((1.0 - vl.Frac) * float64(width-1))
+		if col < 1 || col >= width-1 {
+			continue
+		}
+		lr := []rune(vl.Label)
+		vc := vlineCol{col: col, label: lr, labelStart: -1}
+		half := len(lr) / 2
+		start := col - half
+		end := start + len(lr)
+		if start >= 1 && end <= width-1 {
+			vc.labelStart = start
+		}
+		vcols = append(vcols, vc)
+	}
+	// Sort vcols by column (left to right) for overlap detection.
+	for i := 1; i < len(vcols); i++ {
+		for j := i; j > 0 && vcols[j-1].col > vcols[j].col; j-- {
+			vcols[j-1], vcols[j] = vcols[j], vcols[j-1]
+		}
+	}
+	// Remove overlapping labels.
+	for i := 1; i < len(vcols); i++ {
+		if vcols[i].labelStart < 0 {
+			continue
+		}
+		prevEnd := -1
+		for j := i - 1; j >= 0; j-- {
+			if vcols[j].labelStart >= 0 {
+				prevEnd = vcols[j].labelStart + len(vcols[j].label)
+				break
+			}
+		}
+		if prevEnd > 0 && vcols[i].labelStart < prevEnd+1 {
+			vcols[i].labelStart = -1
+		}
+	}
+	// Build label character map for the label row.
+	labelChars := make(map[int]rune, len(vcols)*4)
+	for _, vc := range vcols {
+		if vc.labelStart < 0 {
+			continue
+		}
+		for j, ch := range vc.label {
+			labelChars[vc.labelStart+j] = ch
+		}
+	}
+
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 
 	rowStrs := make([]string, rows)
 	for r := 0; r < rows; r++ {
 		bottomDot := (rows - 1 - r) * 4
+		isLabelRow := len(vcols) > 0 && r == labelRow
 
 		dataChars := make([]rune, width)
 		gridChars := make([]rune, width)
@@ -417,7 +515,14 @@ func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []f
 			gridChars[i] = rune(0x2800 + int(pattern))
 		}
 
-		// Compose: data chars in usage color, grid-only chars in muted.
+		// Add vertical line patterns (dashed: even rows only, skip label row).
+		if !isLabelRow && r%2 == 0 {
+			for _, vc := range vcols {
+				gridChars[vc.col] = rune(int(gridChars[vc.col]) | 0x47)
+			}
+		}
+
+		// Compose: data chars in usage color, grid/label chars in muted.
 		var b strings.Builder
 		type run struct {
 			isData bool
@@ -432,6 +537,14 @@ func GraphWithGrid(data []float64, width, rows int, maxVal float64, gridPcts []f
 			// Merge grid dots into data character.
 			merged := rune(int(ch) | (int(gridChars[i]) - 0x2800))
 			isData := hasData[i]
+
+			// On label row, replace braille with label text at label positions.
+			if isLabelRow {
+				if lch, ok := labelChars[i]; ok {
+					merged = lch
+					isData = false
+				}
+			}
 
 			if len(runs) > 0 && runs[len(runs)-1].isData == isData {
 				runs[len(runs)-1].chars = append(runs[len(runs)-1].chars, merged)

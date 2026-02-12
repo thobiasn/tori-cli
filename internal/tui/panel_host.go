@@ -30,13 +30,13 @@ var bytesAxis = graphAxis{
 // muted percentage labels on the right margin. The value string is placed at
 // the bottom-right of the last graph row. Returns the rendered lines.
 // An optional color overrides the default per-row UsageColor.
-func gridGraph(data []float64, value string, innerW, rows int, theme *Theme, color ...lipgloss.Color) []string {
+func gridGraph(data []float64, value string, innerW, rows int, windowSec int64, theme *Theme, color ...lipgloss.Color) []string {
 	graphW := innerW - len(value) - 2
 	if graphW < 10 {
 		graphW = 10
 	}
 	gridPcts := []float64{0, 50, 80, 100}
-	graph := GraphWithGrid(data, graphW, rows, 100, gridPcts, theme, color...)
+	graph := GraphWithGrid(data, graphW, rows, 100, gridPcts, timeMarkers(windowSec), theme, color...)
 	graphLines := strings.Split(graph, "\n")
 
 	gridLabels := make(map[int]string)
@@ -69,7 +69,7 @@ func gridGraph(data []float64, value string, innerW, rows int, theme *Theme, col
 // autoGridGraph renders a braille graph auto-scaled to the observed data range.
 // Unlike gridGraph which uses a fixed 0-100 scale, this adapts the Y axis to
 // the data's observed maximum, making small variations visible.
-func autoGridGraph(data []float64, value string, innerW, rows int, theme *Theme, color lipgloss.Color, axis graphAxis) []string {
+func autoGridGraph(data []float64, value string, innerW, rows int, windowSec int64, theme *Theme, color lipgloss.Color, axis graphAxis) []string {
 	if len(data) == 0 {
 		return nil
 	}
@@ -91,7 +91,7 @@ func autoGridGraph(data []float64, value string, innerW, rows int, theme *Theme,
 	}
 
 	gridPcts := []float64{0, 50, 100}
-	graph := GraphWithGrid(data, graphW, rows, maxVal, gridPcts, theme, color)
+	graph := GraphWithGrid(data, graphW, rows, maxVal, gridPcts, timeMarkers(windowSec), theme, color)
 	graphLines := strings.Split(graph, "\n")
 
 	// Labels: ceiling at top row, mid at 50% (unless ceilOnly).
@@ -167,7 +167,7 @@ func formatAutoLabel(v float64) string {
 
 // renderCPUPanel renders the CPU panel with a multi-row braille graph.
 // windowLabel is appended to the title (e.g. "CPU · 1h"); empty for Live.
-func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, height int, theme *Theme, windowLabel string) string {
+func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, height int, theme *Theme, windowLabel string, windowSec int64) string {
 	title := "CPU · " + windowLabel
 	if host == nil {
 		return Box(title, "  waiting for data...", width, height, theme)
@@ -184,7 +184,7 @@ func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, width, hei
 	var lines []string
 
 	if len(cpuHistory) > 0 {
-		lines = append(lines, gridGraph(cpuHistory, cpuVal, innerW, graphRows, theme)...)
+		lines = append(lines, gridGraph(cpuHistory, cpuVal, innerW, graphRows, windowSec, theme)...)
 	} else {
 		lines = append(lines, fmt.Sprintf(" CPU %s", cpuVal))
 	}
@@ -219,7 +219,7 @@ func memDivider(label, value string, width int, labelColor lipgloss.Color, theme
 
 // renderMemPanel renders the memory panel with a grid-backed braille graph (like CPU).
 // windowLabel is appended to the title; empty for Live.
-func renderMemPanel(host *protocol.HostMetrics, usedHistory []float64, width, height int, theme *Theme, windowLabel string) string {
+func renderMemPanel(host *protocol.HostMetrics, usedHistory []float64, width, height int, theme *Theme, windowLabel string, windowSec int64) string {
 	title := "Memory · " + windowLabel
 	if host == nil {
 		return Box(title, "  waiting for data...", width, height, theme)
@@ -237,7 +237,7 @@ func renderMemPanel(host *protocol.HostMetrics, usedHistory []float64, width, he
 	var lines []string
 
 	if len(usedHistory) > 0 {
-		lines = append(lines, gridGraph(usedHistory, memVal, innerW, graphRows, theme, theme.MemGraph)...)
+		lines = append(lines, gridGraph(usedHistory, memVal, innerW, graphRows, windowSec, theme, theme.MemGraph)...)
 	} else {
 		lines = append(lines, fmt.Sprintf(" Mem %s", memVal))
 	}

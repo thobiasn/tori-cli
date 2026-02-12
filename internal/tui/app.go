@@ -433,6 +433,11 @@ func (a *App) windowLabel() string {
 	return timeWindows[a.windowIdx].label
 }
 
+// windowSeconds returns the seconds value for the current time window (0 = Live).
+func (a *App) windowSeconds() int64 {
+	return timeWindows[a.windowIdx].seconds
+}
+
 func (a *App) handleServerPicker(key string) (App, tea.Cmd) {
 	// Number keys 1-9 select a server.
 	if key >= "1" && key <= "9" {
