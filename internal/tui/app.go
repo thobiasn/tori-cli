@@ -287,7 +287,11 @@ func (a *App) handleSessionMetrics(s *Session, m *protocol.MetricsUpdate) tea.Cm
 	s.Containers = m.Containers
 	s.Rates.Update(m.Timestamp, m.Networks, m.Containers)
 
-	if m.Host != nil {
+	// Only push to ring buffers in live mode; historical windows show
+	// a static snapshot from the backfill query.
+	live := a.windowSeconds() == 0
+
+	if m.Host != nil && live {
 		s.HostCPUHistory.Push(m.Host.CPUPercent)
 		s.HostMemHistory.Push(m.Host.MemPercent)
 		pushMemHistories(s, m.Host)
@@ -297,19 +301,23 @@ func (a *App) handleSessionMetrics(s *Session, m *protocol.MetricsUpdate) tea.Cm
 	current := make(map[string]bool, len(m.Containers))
 	for _, c := range m.Containers {
 		current[c.ID] = true
-		if _, ok := s.CPUHistory[c.ID]; !ok {
-			s.CPUHistory[c.ID] = NewRingBuffer[float64](ringBufSize)
+		if live {
+			if _, ok := s.CPUHistory[c.ID]; !ok {
+				s.CPUHistory[c.ID] = NewRingBuffer[float64](ringBufSize)
+			}
+			if _, ok := s.MemHistory[c.ID]; !ok {
+				s.MemHistory[c.ID] = NewRingBuffer[float64](ringBufSize)
+			}
+			s.CPUHistory[c.ID].Push(c.CPUPercent)
+			s.MemHistory[c.ID].Push(float64(c.MemUsage))
 		}
-		if _, ok := s.MemHistory[c.ID]; !ok {
-			s.MemHistory[c.ID] = NewRingBuffer[float64](ringBufSize)
-		}
-		s.CPUHistory[c.ID].Push(c.CPUPercent)
-		s.MemHistory[c.ID].Push(float64(c.MemUsage))
 	}
-	for id := range s.CPUHistory {
-		if !current[id] {
-			delete(s.CPUHistory, id)
-			delete(s.MemHistory, id)
+	if live {
+		for id := range s.CPUHistory {
+			if !current[id] {
+				delete(s.CPUHistory, id)
+				delete(s.MemHistory, id)
+			}
 		}
 	}
 

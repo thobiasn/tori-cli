@@ -1293,17 +1293,27 @@ func TestDownsampleContainers(t *testing.T) {
 		t.Errorf("bbb = %d points, want 5", counts["bbb"])
 	}
 
-	// Short series (<=n) returned as-is without time-bucketing.
+	// Short series (<=n) still gets time-aware bucketing with zero-fill.
 	small := make([]protocol.TimedContainerMetrics, 3)
 	for i := range small {
 		small[i] = protocol.TimedContainerMetrics{
 			Timestamp:        int64(i),
-			ContainerMetrics: protocol.ContainerMetrics{ID: "ccc"},
+			ContainerMetrics: protocol.ContainerMetrics{ID: "ccc", CPUPercent: 1},
 		}
 	}
 	same := downsampleContainers(small, 10, 0, 10)
-	if len(same) != 3 {
-		t.Errorf("short series: len = %d, want 3", len(same))
+	if len(same) != 10 {
+		t.Errorf("short series: len = %d, want 10", len(same))
+	}
+	// 3 points at ts 0-2 fit in the first 3 buckets; remaining 7 are zero-filled.
+	var cccZero int
+	for _, m := range same {
+		if m.CPUPercent == 0 {
+			cccZero++
+		}
+	}
+	if cccZero != 7 {
+		t.Errorf("short series zero buckets = %d, want 7", cccZero)
 	}
 
 	// Partial coverage: data only in second half of window.
@@ -1314,7 +1324,6 @@ func TestDownsampleContainers(t *testing.T) {
 			ContainerMetrics: protocol.ContainerMetrics{ID: "ddd", CPUPercent: float64(i)},
 		})
 	}
-	// 10 points > 5 buckets, so time-bucketing is applied.
 	// Window 0-20, 5 buckets of 4s each. First 2.5 buckets empty, last 2.5 have data.
 	out2 := downsampleContainers(partial, 5, 0, 20)
 	dddCount := 0
