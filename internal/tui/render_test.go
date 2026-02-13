@@ -768,3 +768,41 @@ func TestWrapTextFits(t *testing.T) {
 		t.Errorf("short text should fit in one line, got %v", lines)
 	}
 }
+
+func TestWrapTextNewlines(t *testing.T) {
+	// Newlines should produce separate lines, each wrapped independently.
+	lines := wrapText("aaa\nbbb\nccc", 10)
+	want := []string{"aaa", "bbb", "ccc"}
+	if len(lines) != len(want) {
+		t.Fatalf("wrapText newlines = %v, want %v", lines, want)
+	}
+	for i, l := range lines {
+		if l != want[i] {
+			t.Errorf("wrapText[%d] = %q, want %q", i, l, want[i])
+		}
+	}
+
+	// Long lines between newlines should still wrap.
+	lines = wrapText("abcdef\ngh", 4)
+	want = []string{"abcd", "ef", "gh"}
+	if len(lines) != len(want) {
+		t.Fatalf("wrapText long+newline = %v, want %v", lines, want)
+	}
+	for i, l := range lines {
+		if l != want[i] {
+			t.Errorf("wrapText[%d] = %q, want %q", i, l, want[i])
+		}
+	}
+
+	// Empty lines are preserved.
+	lines = wrapText("a\n\nb", 10)
+	want = []string{"a", "", "b"}
+	if len(lines) != len(want) {
+		t.Fatalf("wrapText empty line = %v, want %v", lines, want)
+	}
+	for i, l := range lines {
+		if l != want[i] {
+			t.Errorf("wrapText[%d] = %q, want %q", i, l, want[i])
+		}
+	}
+}

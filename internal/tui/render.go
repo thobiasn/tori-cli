@@ -988,13 +988,17 @@ func wrapText(s string, width int) []string {
 	if width <= 0 {
 		return nil
 	}
-	runes := []rune(s)
 	var lines []string
-	for len(runes) > width {
-		lines = append(lines, string(runes[:width]))
-		runes = runes[width:]
-	}
-	if len(runes) > 0 {
+	for _, line := range strings.Split(s, "\n") {
+		runes := []rune(line)
+		if len(runes) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+		for len(runes) > width {
+			lines = append(lines, string(runes[:width]))
+			runes = runes[width:]
+		}
 		lines = append(lines, string(runes))
 	}
 	return lines
