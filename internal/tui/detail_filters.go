@@ -294,9 +294,11 @@ func newMaskedField(format string, now time.Time) maskedField {
 	}
 }
 
-func (f *maskedField) typeRune(r rune) {
+// typeRune types a digit at the cursor and advances. Returns true when the
+// field is fully populated (signals auto-advance to next field).
+func (f *maskedField) typeRune(r rune) bool {
 	if r < '0' || r > '9' || f.cursor >= len(f.slots) {
-		return
+		return false
 	}
 	f.slots[f.cursor] = r
 	f.typed[f.cursor] = true
@@ -305,6 +307,7 @@ func (f *maskedField) typeRune(r rune) {
 	for f.cursor < len(f.slots) && !f.editable[f.cursor] {
 		f.cursor++
 	}
+	return f.cursor >= len(f.slots)
 }
 
 func (f *maskedField) backspace() {
@@ -630,11 +633,17 @@ func updateFilterModal(det *DetailState, key string, cfg DisplayConfig) tea.Cmd 
 					m.text += key
 				}
 			case 1:
-				m.fromDate.typeRune(rune(key[0]))
+				if m.fromDate.typeRune(rune(key[0])) {
+					m.focus = 2
+				}
 			case 2:
-				m.fromTime.typeRune(rune(key[0]))
+				if m.fromTime.typeRune(rune(key[0])) {
+					m.focus = 3
+				}
 			case 3:
-				m.toDate.typeRune(rune(key[0]))
+				if m.toDate.typeRune(rune(key[0])) {
+					m.focus = 4
+				}
 			case 4:
 				m.toTime.typeRune(rune(key[0]))
 			}
