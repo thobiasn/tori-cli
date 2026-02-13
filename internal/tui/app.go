@@ -958,7 +958,7 @@ func (a *App) viewHints() string {
 	case viewAlerts:
 		return "j/k Move  a Ack  s Silence"
 	case viewDetail:
-		return "j/k Scroll  c Container  g Group  s Stream  f Filter"
+		return "j/k Scroll  g Group  s Stream  f Filter"
 	}
 	return ""
 }

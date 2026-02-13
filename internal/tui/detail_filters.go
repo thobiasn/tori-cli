@@ -12,9 +12,6 @@ import (
 )
 
 func (s *DetailState) matchesFilter(entry protocol.LogEntryMsg) bool {
-	if s.filterContainerID != "" && entry.ContainerID != s.filterContainerID {
-		return false
-	}
 	if s.filterStream != "" && entry.Stream != s.filterStream {
 		return false
 	}
@@ -46,7 +43,7 @@ func (s *DetailState) filteredData() []protocol.LogEntryMsg {
 		return nil
 	}
 	all := s.logs.Data()
-	if s.filterContainerID == "" && s.filterStream == "" && s.searchText == "" && s.filterFrom == 0 && s.filterTo == 0 {
+	if s.filterStream == "" && s.searchText == "" && s.filterFrom == 0 && s.filterTo == 0 {
 		return all
 	}
 	var out []protocol.LogEntryMsg
@@ -56,32 +53,6 @@ func (s *DetailState) filteredData() []protocol.LogEntryMsg {
 		}
 	}
 	return out
-}
-
-func (s *DetailState) cycleContainerFilter(contInfo []protocol.ContainerInfo) {
-	// In single-container mode, no container cycling.
-	if !s.isGroupMode() {
-		return
-	}
-	ids := s.projectIDs
-	if len(ids) == 0 {
-		return
-	}
-	if s.filterContainerID == "" {
-		s.filterContainerID = ids[0]
-		return
-	}
-	for i, id := range ids {
-		if id == s.filterContainerID {
-			if i+1 < len(ids) {
-				s.filterContainerID = ids[i+1]
-			} else {
-				s.filterContainerID = ""
-			}
-			return
-		}
-	}
-	s.filterContainerID = ""
 }
 
 func (s *DetailState) cycleProjectFilter(contInfo []protocol.ContainerInfo) {
@@ -144,7 +115,7 @@ func injectDeploySeparators(entries []protocol.LogEntryMsg) []protocol.LogEntryM
 	return out
 }
 
-func renderDetailLogs(s *DetailState, label string, width, height int, theme *Theme, focused bool, tsFormat string) string {
+func renderDetailLogs(s *DetailState, label string, showNames bool, width, height int, theme *Theme, focused bool, tsFormat string) string {
 	boxH := height - 1 // leave room for shortcut footer
 	innerH := boxH - 2
 	if innerH < 1 {
@@ -194,7 +165,7 @@ func renderDetailLogs(s *DetailState, label string, width, height int, theme *Th
 
 	var lines []string
 	for i, entry := range visible {
-		line := formatLogLine(entry, innerW, theme, tsFormat)
+		line := formatLogLine(entry, innerW, theme, tsFormat, showNames)
 		if i == cursorIdx {
 			line = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(line), innerW))
 		}
@@ -227,14 +198,6 @@ func renderDetailLogFooter(s *DetailState, width int, theme *Theme, tsFormat str
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 
 	var parts []string
-
-	if s.isGroupMode() {
-		contLabel := "all"
-		if s.filterContainerID != "" {
-			contLabel = Truncate(s.filterContainerID[:min(12, len(s.filterContainerID))], 12)
-		}
-		parts = append(parts, "c: "+muted.Render(contLabel))
-	}
 
 	streamLabel := "all"
 	if s.filterStream != "" {
@@ -508,9 +471,8 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 			det.filterFrom = 0
 			det.filterTo = 0
 			det.resetLogPosition()
-		} else if det.filterStream != "" || det.filterContainerID != "" {
+		} else if det.filterStream != "" {
 			det.filterStream = ""
-			det.filterContainerID = ""
 			det.resetLogPosition()
 		} else {
 			a.active = viewDashboard
@@ -529,10 +491,6 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		default:
 			det.filterStream = ""
 		}
-		det.resetLogPosition()
-		return nil
-	case "c":
-		det.cycleContainerFilter(s.ContInfo)
 		det.resetLogPosition()
 		return nil
 	case "g":

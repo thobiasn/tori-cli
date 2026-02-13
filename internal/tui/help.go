@@ -32,7 +32,6 @@ var detailViewHelp = `
  Navigation
    j/k, ↑/↓    Move cursor / scroll
    Enter        Expand/collapse line
-   c            Cycle container filter
    g            Cycle project filter
    s            Cycle stream (all/stdout/stderr)
    f            Open filter

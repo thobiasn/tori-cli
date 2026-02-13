@@ -28,8 +28,7 @@ type DetailState struct {
 	logExpanded int // -1 = none
 
 	// Filters.
-	filterContainerID string // within-group container filter (c key)
-	filterProject     string // project filter (g key, only meaningful in group mode)
+	filterProject string // project filter (g key, only meaningful in group mode)
 	filterStream      string // "", "stdout", "stderr"
 	searchText        string // applied text filter
 	filterFrom        int64  // applied from timestamp (0 = no filter)
@@ -71,7 +70,6 @@ func (s *DetailState) reset() {
 	s.logScroll = 0
 	s.logCursor = 0
 	s.logExpanded = -1
-	s.filterContainerID = ""
 	s.filterProject = ""
 	s.filterStream = ""
 	s.searchText = ""
@@ -331,7 +329,7 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 	}
 	var logBox string
 	if det.logs != nil && logH > 3 {
-		logBox = renderDetailLogs(det, containerName, width, logH, theme, true, a.tsFormat())
+		logBox = renderDetailLogs(det, containerName, false, width, logH, theme, true, a.tsFormat())
 	}
 
 	result := metricsBox + "\n" + logBox
@@ -387,7 +385,7 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 
 	var logBox string
 	if det.logs != nil && logH > 3 {
-		logBox = renderDetailLogs(det, det.project, width, logH, theme, true, a.tsFormat())
+		logBox = renderDetailLogs(det, det.project, true, width, logH, theme, true, a.tsFormat())
 	}
 
 	result := metricsBox + "\n" + logBox
