@@ -316,7 +316,7 @@ func updateAlertView(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		av.expanded = -1
 	case "a":
 		// Acknowledge selected alert.
-		if av.cursor < len(filtered) {
+		if s.Client != nil && av.cursor < len(filtered) {
 			alert := filtered[av.cursor]
 			if alert.ResolvedAt == 0 && !alert.Acknowledged {
 				return ackAlertCmd(s.Client, alert.ID)
@@ -364,6 +364,9 @@ func updateSilencePicker(s *Session, av *AlertViewState, key string) tea.Cmd {
 		dur := silenceDurations[av.silenceCursor].secs
 		rule := av.silenceRule
 		av.silenceMode = false
+		if s.Client == nil {
+			return nil
+		}
 		return silenceAlertCmd(s.Client, rule, dur)
 	case "esc":
 		av.silenceMode = false

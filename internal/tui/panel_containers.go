@@ -9,7 +9,8 @@ import (
 )
 
 // renderContainerPanel renders the container list with grouping and cursor.
-func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cursor int, alerts map[int64]*protocol.AlertEvent, contInfo []protocol.ContainerInfo, rc RenderContext) string {
+// When focused is true, the cursor row uses Reverse; when false, accent foreground.
+func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cursor int, alerts map[int64]*protocol.AlertEvent, contInfo []protocol.ContainerInfo, rc RenderContext, focused bool) string {
 	innerH := rc.Height - 2
 	if innerH < 1 {
 		innerH = 1
@@ -72,7 +73,11 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 			muted.Render(runLabel))
 
 		if pos == cursor {
-			headerLine = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(headerLine), innerW))
+			if focused {
+				headerLine = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(headerLine), innerW))
+			} else {
+				headerLine = lipgloss.NewStyle().Foreground(theme.Accent).Render(Truncate(stripANSI(headerLine), innerW))
+			}
 		}
 		lines = append(lines, TruncateStyled(headerLine, innerW))
 		pos++
@@ -107,7 +112,11 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 			}
 			row := fmt.Sprintf(" %s %s%-*s  %s  %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
 			if pos == cursor {
-				row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
+				if focused {
+					row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
+				} else {
+					row = lipgloss.NewStyle().Foreground(theme.Accent).Render(Truncate(stripANSI(row), innerW))
+				}
 			} else if isMuted {
 				row = muted.Render(stripANSI(row))
 			}
