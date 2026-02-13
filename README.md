@@ -12,7 +12,7 @@ Existing tools either require a full monitoring stack (Grafana + Prometheus + Lo
 ┌─────────────────────────────────────────────┐
 │  Your Machine                               │
 │  ┌───────────────────────────────────────┐  │
-│  │  tori connect user@host               │  │
+│  │  tori user@host                       │  │
 │  │  TUI Client (Bubbletea)               │  │
 │  └──────────────┬────────────────────────┘  │
 └─────────────────┼───────────────────────────┘
@@ -49,7 +49,7 @@ Existing tools either require a full monitoring stack (Grafana + Prometheus + Lo
 - Exposes a Unix socket for client connections
 - Runs as a systemd service or Docker container
 
-**TUI Client** (`tori connect`) — runs on your local machine:
+**TUI Client** (`tori`) — runs on your local machine:
 
 - Connects to the agent via SSH-forwarded Unix socket
 - Dashboard view: container status, host metrics, resource usage
@@ -293,22 +293,28 @@ proc = "/host/proc"
 sys = "/host/sys"
 ```
 
-The socket is mounted to `/run/tori` on the host so `tori connect` can find it over SSH as usual.
+The socket is mounted to `/run/tori` on the host so `tori` can find it over SSH as usual.
 
 ## Connect
 
 ```bash
 # Connect to all configured servers
-tori connect
+tori
 
-# Connect to a specific configured server
-tori connect prod
+# Connect via SSH
+tori user@myserver.com
 
-# Or connect directly via SSH
-tori connect user@myserver.com
+# With custom SSH port
+tori user@host --port 2222
 
-# Direct socket (local development)
-tori connect --socket /run/tori/tori.sock
+# With specific key
+tori user@host --identity ~/.ssh/id_ed25519
+
+# Custom remote socket
+tori user@host --remote-socket /custom/tori.sock
+
+# Direct local socket
+tori --socket /run/tori/tori.sock
 ```
 
 When connected to multiple servers, press `S` to open the server picker and switch between them. Each server has isolated data — switching is instant since all sessions receive data concurrently.

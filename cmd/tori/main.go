@@ -26,19 +26,10 @@ func main() {
 		return
 	}
 
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "usage: tori <agent|connect> [flags]\n")
-		os.Exit(1)
-	}
-
-	switch os.Args[1] {
-	case "agent":
+	if len(os.Args) >= 2 && os.Args[1] == "agent" {
 		runAgent(os.Args[2:])
-	case "connect":
-		runConnect(os.Args[2:])
-	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\nusage: tori <agent|connect> [flags]\n", os.Args[1])
-		os.Exit(1)
+	} else {
+		runClient(os.Args[1:])
 	}
 }
 
@@ -104,10 +95,17 @@ func runAgent(args []string) {
 	}
 }
 
-func runConnect(args []string) {
-	fs := flag.NewFlagSet("connect", flag.ExitOnError)
+func runClient(args []string) {
+	fs := flag.NewFlagSet("tori", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage:\n  tori [user@host] [flags]\n  tori agent [flags]\n\nFlags:\n")
+		fs.PrintDefaults()
+	}
 	socketPath := fs.String("socket", "", "path to agent socket (direct connection)")
 	configPath := fs.String("config", "", "path to client config")
+	port := fs.Int("port", 0, "SSH port (default: 22)")
+	identity := fs.String("identity", "", "SSH identity file")
+	remoteSock := fs.String("remote-socket", "/run/tori/tori.sock", "remote agent socket path")
 	fs.Parse(args)
 
 	positional := fs.Arg(0)
@@ -118,26 +116,16 @@ func runConnect(args []string) {
 		runSingleSession("local", *socketPath, nil)
 
 	case positional != "" && strings.Contains(positional, "@"):
-		// Ad-hoc SSH: tori connect user@host — uses stdin for prompts (pre-TUI).
-		tunnel, err := tui.NewTunnel(positional, "/run/tori/tori.sock")
+		// Ad-hoc SSH: tori user@host — uses stdin for prompts (pre-TUI).
+		tunnel, err := tui.NewTunnel(positional, *remoteSock, tui.SSHOptions{
+			Port:         *port,
+			IdentityFile: *identity,
+		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "tunnel: %v\n", err)
 			os.Exit(1)
 		}
 		runSingleSession(positional, tunnel.LocalSocket(), tunnel)
-
-	case positional != "":
-		// Named server from config — connect lazily with auto_connect=true.
-		cfg := loadClientConfig(*configPath)
-		srv, ok := cfg.Servers[positional]
-		if !ok {
-			fmt.Fprintf(os.Stderr, "unknown server %q in config\n", positional)
-			os.Exit(1)
-		}
-		srv.AutoConnect = true
-		sess := tui.NewSession(positional, nil, nil)
-		sess.Config = srv
-		runSessions(map[string]*tui.Session{positional: sess}, cfg.Display)
 
 	default:
 		// No args: ensure config exists, create lazy sessions.
@@ -189,20 +177,6 @@ func runConnect(args []string) {
 		}
 		runSessions(sessions, cfg.Display)
 	}
-}
-
-func loadClientConfig(path string) *tui.Config {
-	cfgPath, err := tui.EnsureDefaultConfig(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "config: %v\n", err)
-		os.Exit(1)
-	}
-	cfg, err := tui.LoadConfig(cfgPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "load config %s: %v\n", cfgPath, err)
-		os.Exit(1)
-	}
-	return cfg
 }
 
 // defaultDisplayConfig returns the default display config for direct connections
