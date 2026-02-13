@@ -293,19 +293,13 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 		}
 	}
 
-	// Title: "name — state — N alerts"
-	title := "Detail"
+	// Title for the info box (name + alert count, no state).
+	title := "Info"
 	if ci != nil {
 		title = stripANSI(ci.Name)
-		if cm != nil {
-			stateInd := theme.StateIndicator(cm.State)
-			title += " ── " + stateInd + " " + stripANSI(cm.State)
-		}
 	} else if cm != nil {
-		stateInd := theme.StateIndicator(cm.State)
-		title = stripANSI(cm.Name) + " ── " + stateInd + " " + stripANSI(cm.State)
+		title = stripANSI(cm.Name)
 	}
-	// Show alert count in title.
 	alertCount := len(containerAlerts(s.Alerts, det.containerID))
 	if alertCount > 0 {
 		title += fmt.Sprintf(" ── %d alert", alertCount)
@@ -314,8 +308,8 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 		}
 	}
 
-	// 1/3 metrics, 2/3 logs.
-	metricsH := height / 3
+	// 1/3 top row, 2/3 logs.
+	metricsH := height / 4
 	if metricsH < 11 {
 		metricsH = 11
 	}
@@ -325,9 +319,19 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 		logH = 5
 	}
 
-	rc := RenderContext{Width: width, Height: metricsH, Theme: theme, WindowLabel: a.windowLabel(), WindowSec: a.windowSeconds()}
-	metricsContent := renderDetailMetrics(s, det, cm, rc)
-	metricsBox := Box(title, metricsContent, width, metricsH, theme)
+	// Left: info box. Right: graph boxes (no outer wrapper).
+	infoW := width * 22 / 100
+	if infoW < 28 {
+		infoW = 28
+	}
+	graphW := width - infoW
+
+	infoBox := renderDetailInfoBox(s, det, cm, ci, title, infoW, metricsH, theme)
+
+	rc := RenderContext{Width: graphW, Height: metricsH, Theme: theme, WindowLabel: a.windowLabel(), WindowSec: a.windowSeconds()}
+	graphs := renderDetailMetrics(s, det, cm, rc)
+
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top, infoBox, graphs)
 
 	// Inline alerts section (non-focusable).
 	var alertBox string
@@ -351,7 +355,7 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 		logBox = renderDetailLogs(det, containerName, false, width, logH, theme, true, a.tsFormat())
 	}
 
-	result := metricsBox
+	result := topRow
 	if alertBox != "" {
 		result += "\n" + alertBox
 	}
@@ -362,7 +366,7 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 	theme := &a.theme
 	det := &s.Detail
 
-	// Build title: "project — N/M running — K alerts"
+	// Build title for the containers box.
 	total := len(det.projectIDs)
 	running := 0
 	for _, id := range det.projectIDs {
@@ -375,7 +379,6 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 	}
 	title := det.project + fmt.Sprintf(" ── %d/%d running", running, total)
 
-	// Count alerts for all containers in project.
 	alertCount := 0
 	for _, id := range det.projectIDs {
 		alertCount += len(containerAlerts(s.Alerts, id))
@@ -387,8 +390,8 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 		}
 	}
 
-	// 1/3 metrics, 2/3 logs.
-	metricsH := height / 3
+	// 1/3 top row, 2/3 logs.
+	metricsH := height / 4
 	if metricsH < 11 {
 		metricsH = 11
 	}
@@ -398,9 +401,19 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 		logH = 5
 	}
 
-	rc := RenderContext{Width: width, Height: metricsH, Theme: theme, WindowLabel: a.windowLabel(), WindowSec: a.windowSeconds()}
-	metricsContent := renderDetailGroupMetrics(s, det, rc)
-	metricsBox := Box(title, metricsContent, width, metricsH, theme)
+	// Left: containers table. Right: graph boxes (no outer wrapper).
+	tableW := width * 26 / 100
+	if tableW < 30 {
+		tableW = 30
+	}
+	graphW := width - tableW
+
+	tableBox := renderDetailContainersBox(s, det, title, tableW, metricsH, theme)
+
+	rc := RenderContext{Width: graphW, Height: metricsH, Theme: theme, WindowLabel: a.windowLabel(), WindowSec: a.windowSeconds()}
+	graphs := renderDetailGroupMetrics(s, det, rc)
+
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top, tableBox, graphs)
 
 	// Inline alerts section (non-focusable).
 	var alertBox string
@@ -421,7 +434,7 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 		logBox = renderDetailLogs(det, det.project, true, width, logH, theme, true, a.tsFormat())
 	}
 
-	result := metricsBox
+	result := topRow
 	if alertBox != "" {
 		result += "\n" + alertBox
 	}
@@ -430,7 +443,6 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 
 func renderDetailGroupMetrics(s *Session, det *DetailState, rc RenderContext) string {
 	theme := rc.Theme
-	innerW := rc.Width - 2
 
 	// Aggregate CPU/MEM across all containers in the group.
 	var totalCPU float64
@@ -446,16 +458,13 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, rc RenderContext) st
 		}
 	}
 
-	// Per-container table: header + one row per container + blank separator.
-	tableLines := 2 + len(det.projectIDs)
-	graphBudget := rc.Height - 2 - tableLines
+	graphBudget := rc.Height
 	if graphBudget < 5 {
 		graphBudget = 5
 	}
 
-	// Side-by-side CPU and MEM inner boxes (65/35 split).
-	leftW := innerW * 65 / 100
-	rightW := innerW - leftW
+	leftW := rc.Width * 2 / 3
+	rightW := rc.Width - leftW
 	graphRows := graphBudget - 2 // inner box borders
 	if graphRows < 1 {
 		graphRows = 1
@@ -486,41 +495,7 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, rc RenderContext) st
 		Box(cpuTitle, cpuContent, leftW, graphBudget, theme),
 		Box(memTitle, memContent, rightW, graphBudget, theme))
 
-	var lines []string
-	lines = append(lines, strings.Split(graphs, "\n")...)
-
-	lines = append(lines, "")
-
-	// Per-container summary table.
-	muted := lipgloss.NewStyle().Foreground(theme.Muted)
-	lines = append(lines, muted.Render(" CONTAINER           STATE   H    CPU     MEM  ↻"))
-	for _, id := range det.projectIDs {
-		name := containerNameByID(id, s.ContInfo)
-		if name == "" {
-			name = id[:min(12, len(id))]
-		}
-		var cm *protocol.ContainerMetrics
-		for i := range s.Containers {
-			if s.Containers[i].ID == id {
-				cm = &s.Containers[i]
-				break
-			}
-		}
-		if cm != nil {
-			indicator := theme.StateIndicator(cm.State)
-			health := theme.HealthIndicator(cm.Health)
-			restarts := formatRestarts(cm.RestartCount, theme)
-			line := fmt.Sprintf(" %s %-18s %-8s %s %5.1f%% %6s  %s",
-				indicator, Truncate(name, 18), Truncate(cm.State, 8),
-				health, cm.CPUPercent, FormatBytes(cm.MemUsage), restarts)
-			lines = append(lines, TruncateStyled(line, innerW))
-		} else {
-			line := fmt.Sprintf("   %-18s %-8s –     —      —   —", Truncate(name, 18), "—")
-			lines = append(lines, muted.Render(Truncate(line, innerW)))
-		}
-	}
-
-	return strings.Join(lines, "\n")
+	return graphs
 }
 
 func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMetrics, rc RenderContext) string {
@@ -528,18 +503,14 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 		return "  Waiting for metrics..."
 	}
 	theme := rc.Theme
-	innerW := rc.Width - 2
 
-	// Info lines: NET+BLK, PID+HC, IMG+UP = 3 fixed.
-	infoLines := 3
-	graphBudget := rc.Height - 2 - infoLines
+	graphBudget := rc.Height
 	if graphBudget < 5 {
 		graphBudget = 5
 	}
 
-	// Side-by-side CPU and MEM inner boxes (65/35 split).
-	leftW := innerW * 65 / 100
-	rightW := innerW - leftW
+	leftW := rc.Width * 2 / 3
+	rightW := rc.Width - leftW
 	graphRows := graphBudget - 2 // inner box borders
 	if graphRows < 1 {
 		graphRows = 1
@@ -569,39 +540,126 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 		Box(cpuTitle, cpuContent, leftW, graphBudget, theme),
 		Box(memTitle, memContent, rightW, graphBudget, theme))
 
-	var lines []string
-	lines = append(lines, strings.Split(graphs, "\n")...)
+	return graphs
+}
 
-	// NET + BLK on one line.
-	rates := s.Rates.ContainerRates[det.containerID]
-	rxStyle := lipgloss.NewStyle().Foreground(theme.Healthy)
-	txStyle := lipgloss.NewStyle().Foreground(theme.Accent)
-	lines = append(lines, fmt.Sprintf(" NET  %s %s  %s %s    BLK  %s %s  %s %s",
-		rxStyle.Render("▼"), FormatBytesRate(rates.NetRxRate),
-		txStyle.Render("▲"), FormatBytesRate(rates.NetTxRate),
-		rxStyle.Render("R"), FormatBytesRate(rates.BlockReadRate),
-		txStyle.Render("W"), FormatBytesRate(rates.BlockWriteRate)))
+// renderDetailInfoBox renders the container info panel for single-container detail.
+func renderDetailInfoBox(s *Session, det *DetailState, cm *protocol.ContainerMetrics, ci *protocol.ContainerInfo, title string, width, height int, theme *Theme) string {
+	if cm == nil {
+		return Box(title, "  Waiting...", width, height, theme)
+	}
+	innerW := width - 2
 
-	// PID + RESTARTS + HC on one line.
-	uptime := formatContainerUptime(cm.State, cm.StartedAt, cm.ExitCode)
-	lines = append(lines, fmt.Sprintf(" PID  %d    %s    HC %s",
-		cm.PIDs, formatRestarts(cm.RestartCount, theme), theme.HealthText(cm.Health)))
-
-	// IMG + UP on one line.
 	var image string
-	for _, ci := range s.ContInfo {
-		if ci.ID == det.containerID {
-			image = stripANSI(ci.Image)
-			break
-		}
+	if ci != nil {
+		image = stripANSI(ci.Image)
 	}
 	if image == "" {
 		image = stripANSI(cm.Image)
 	}
-	imgLine := fmt.Sprintf(" IMG  %s    UP %s", Truncate(image, innerW-20), uptime)
-	lines = append(lines, Truncate(imgLine, innerW))
 
-	return strings.Join(lines, "\n")
+	uptime := formatContainerUptime(cm.State, cm.StartedAt, cm.ExitCode)
+	stateInd := theme.StateIndicator(cm.State)
+	status := stateInd + " " + stripANSI(cm.State)
+	if uptime != "" {
+		status += " · " + uptime
+	}
+
+	health := theme.HealthText(cm.Health)
+	restarts := formatRestarts(cm.RestartCount, theme)
+
+	rates := s.Rates.ContainerRates[det.containerID]
+	rxStyle := lipgloss.NewStyle().Foreground(theme.Healthy)
+	txStyle := lipgloss.NewStyle().Foreground(theme.Accent)
+
+	valCol := innerW - 10 // label column ~9 chars + leading space
+
+	var lines []string
+	lines = append(lines, fmt.Sprintf(" %-8s %s", "Image", Truncate(image, valCol)))
+	lines = append(lines, fmt.Sprintf(" %-8s %s", "Status", TruncateStyled(status, valCol)))
+	lines = append(lines, fmt.Sprintf(" %-8s %d", "PID", cm.PIDs))
+	lines = append(lines, fmt.Sprintf(" %-8s %s  %s", "Health", health, restarts))
+	lines = append(lines, "")
+	lines = append(lines, fmt.Sprintf(" Net %s  %-10s Net %s  %s",
+		rxStyle.Render("▼"), FormatBytesRate(rates.NetRxRate),
+		txStyle.Render("▲"), FormatBytesRate(rates.NetTxRate)))
+	lines = append(lines, fmt.Sprintf(" Blk %s  %-10s Blk %s  %s",
+		rxStyle.Render("R"), FormatBytesRate(rates.BlockReadRate),
+		txStyle.Render("W"), FormatBytesRate(rates.BlockWriteRate)))
+
+	return Box(title, strings.Join(lines, "\n"), width, height, theme)
+}
+
+// renderDetailContainersBox renders the per-container table for group detail.
+func renderDetailContainersBox(s *Session, det *DetailState, title string, width, height int, theme *Theme) string {
+	innerW := width - 2
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+
+	// Fixed columns: ● (2) + STATUS(7) + CPU(5) + MEM(6) + UP(3) + H(1) + spacing(12) = 36
+	fixedW := 36
+	nameW := innerW - fixedW - 1
+	if nameW < 6 {
+		nameW = 6
+	}
+
+	var lines []string
+	header := fmt.Sprintf(" %-*s   %-7s  %5s  %6s  %3s  %s", nameW, "NAME", "STATUS", "CPU", "MEM", "UP", "H")
+	lines = append(lines, muted.Render(Truncate(header, innerW)))
+
+	for _, id := range det.projectIDs {
+		name := containerNameByID(id, s.ContInfo)
+		if name == "" {
+			name = id[:min(12, len(id))]
+		}
+		var cm *protocol.ContainerMetrics
+		for i := range s.Containers {
+			if s.Containers[i].ID == id {
+				cm = &s.Containers[i]
+				break
+			}
+		}
+		if cm != nil {
+			indicator := theme.StateIndicator(cm.State)
+			health := theme.HealthIndicator(cm.Health)
+			up := compactUptime(cm.State, cm.StartedAt)
+			line := fmt.Sprintf(" %s %-*s   %-7s  %4.1f%%  %6s  %3s  %s",
+				indicator, nameW-2, Truncate(name, nameW-2),
+				Truncate(cm.State, 7),
+				cm.CPUPercent, FormatBytes(cm.MemUsage),
+				up, health)
+			lines = append(lines, TruncateStyled(line, innerW))
+		} else {
+			line := fmt.Sprintf("   %-*s   %-7s  %5s  %6s  %3s  %s",
+				nameW-2, Truncate(name, nameW-2), "—", "—", "—", "—", "–")
+			lines = append(lines, muted.Render(Truncate(line, innerW)))
+		}
+	}
+
+	return Box(title, strings.Join(lines, "\n"), width, height, theme)
+}
+
+// compactUptime returns a short uptime string like "4d", "2h", "5m".
+func compactUptime(state string, startedAt int64) string {
+	if state != "running" || startedAt <= 0 {
+		return "—"
+	}
+	secs := time.Now().Unix() - startedAt
+	if secs < 0 {
+		secs = 0
+	}
+	days := int(secs / 86400)
+	if days > 0 {
+		return fmt.Sprintf("%dd", days)
+	}
+	hours := int(secs / 3600)
+	if hours > 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	mins := int(secs / 60)
+	if mins > 0 {
+		return fmt.Sprintf("%dm", mins)
+	}
+	return "<1m"
 }
 
 func historyData(hist map[string]*RingBuffer[float64], id string) []float64 {
