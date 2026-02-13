@@ -15,8 +15,8 @@ import (
 type dashFocus int
 
 const (
-	focusContainers dashFocus = iota
-	focusServers
+	focusServers    dashFocus = iota // default: servers focused on open
+	focusContainers
 )
 
 // DashboardState holds dashboard-specific state.
@@ -450,7 +450,6 @@ func updateServerFocus(a *App, key string) tea.Cmd {
 			s.Err = nil
 			return func() tea.Msg { return connectServerMsg{name: s.Name} }
 		}
-		a.dashFocus = focusContainers
 	}
 	return nil
 }

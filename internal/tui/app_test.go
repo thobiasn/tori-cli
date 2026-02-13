@@ -194,19 +194,20 @@ func TestAppViewSwitchTab(t *testing.T) {
 	}
 
 	// Tab on dashboard toggles focus between servers and containers.
+	// Default is focusServers, so first tab goes to focusContainers.
 	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
 	a = model.(App)
 	if a.active != viewDashboard {
 		t.Errorf("tab on dashboard should stay on dashboard, got %d", a.active)
 	}
-	if a.dashFocus != focusServers {
-		t.Errorf("tab should toggle to focusServers, got %d", a.dashFocus)
+	if a.dashFocus != focusContainers {
+		t.Errorf("tab should toggle to focusContainers, got %d", a.dashFocus)
 	}
 
 	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
 	a = model.(App)
-	if a.dashFocus != focusContainers {
-		t.Errorf("tab should toggle back to focusContainers, got %d", a.dashFocus)
+	if a.dashFocus != focusServers {
+		t.Errorf("tab should toggle back to focusServers, got %d", a.dashFocus)
 	}
 
 	// Tab from alerts should go to dashboard.

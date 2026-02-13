@@ -86,7 +86,7 @@ type App struct {
 	err              error
 	showHelp         bool
 	showServerPicker bool
-	dashFocus        dashFocus // focusContainers (default) or focusServers
+	dashFocus        dashFocus // focusServers (default) or focusContainers
 	serverCursor     int       // index into sessionOrder
 
 	// Lazy connection state.

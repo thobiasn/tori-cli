@@ -187,6 +187,7 @@ func TestCursorGroupName(t *testing.T) {
 
 func TestUpdateDashboardCursorNav(t *testing.T) {
 	a := newTestApp()
+	a.dashFocus = focusContainers
 	s := a.session()
 	s.Dash.groups = []containerGroup{
 		{name: "app", containers: []protocol.ContainerMetrics{{ID: "c1"}, {ID: "c2"}}},
@@ -216,6 +217,7 @@ func TestUpdateDashboardCursorNav(t *testing.T) {
 
 func TestUpdateDashboardCollapseToggle(t *testing.T) {
 	a := newTestApp()
+	a.dashFocus = focusContainers
 	s := a.session()
 	s.Dash.groups = []containerGroup{
 		{name: "app", containers: []protocol.ContainerMetrics{{ID: "c1"}}},
@@ -235,6 +237,7 @@ func TestUpdateDashboardCollapseToggle(t *testing.T) {
 
 func TestUpdateDashboardToggleTrackingContainer(t *testing.T) {
 	a := newTestApp()
+	a.dashFocus = focusContainers
 	s := a.session()
 	c1, c2 := net.Pipe()
 	defer c1.Close()
@@ -259,6 +262,7 @@ func TestUpdateDashboardToggleTrackingContainer(t *testing.T) {
 
 func TestUpdateDashboardToggleTrackingGroup(t *testing.T) {
 	a := newTestApp()
+	a.dashFocus = focusContainers
 	s := a.session()
 	c1, c2 := net.Pipe()
 	defer c1.Close()
@@ -282,6 +286,7 @@ func TestUpdateDashboardToggleTrackingGroup(t *testing.T) {
 
 func TestUpdateDashboardToggleTrackingOtherGroup(t *testing.T) {
 	a := newTestApp()
+	a.dashFocus = focusContainers
 	s := a.session()
 	s.Dash.groups = []containerGroup{
 		{name: "other", containers: []protocol.ContainerMetrics{
@@ -333,6 +338,7 @@ func TestIsContainerTracked(t *testing.T) {
 
 func TestUpdateDashboardEnterGroupHeader(t *testing.T) {
 	a := newTestApp()
+	a.dashFocus = focusContainers
 	s := a.session()
 	c1, c2 := net.Pipe()
 	defer c1.Close()
@@ -366,6 +372,7 @@ func TestUpdateDashboardEnterGroupHeader(t *testing.T) {
 
 func TestUpdateDashboardEnterOtherGroupNoOp(t *testing.T) {
 	a := newTestApp()
+	a.dashFocus = focusContainers
 	s := a.session()
 	s.Dash.groups = []containerGroup{
 		{name: "other", containers: []protocol.ContainerMetrics{
