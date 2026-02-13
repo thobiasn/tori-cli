@@ -445,10 +445,16 @@ func updateServerFocus(a *App, key string) tea.Cmd {
 		}
 	case "enter":
 		s := a.sessions[a.sessionOrder[a.serverCursor]]
-		if s != nil && (s.ConnState == ConnNone || s.ConnState == ConnError) {
-			s.ConnState = ConnNone // reset error state for retry
+		if s == nil {
+			break
+		}
+		switch s.ConnState {
+		case ConnNone, ConnError:
+			s.ConnState = ConnNone
 			s.Err = nil
 			return func() tea.Msg { return connectServerMsg{name: s.Name} }
+		case ConnReady:
+			return func() tea.Msg { return disconnectServerMsg{name: s.Name} }
 		}
 	}
 	return nil

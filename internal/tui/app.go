@@ -61,6 +61,7 @@ type sshPromptState struct {
 
 // Message types for lazy connections.
 type connectServerMsg struct{ name string }
+type disconnectServerMsg struct{ name string }
 type sshPromptMsg struct {
 	server  string
 	prompt  string
@@ -306,6 +307,30 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		s.ConnMsg = "connecting..."
 		a.connecting = msg.name
 		return a, connectServerCmd(msg.name, s.Config, a.ctx)
+
+	case disconnectServerMsg:
+		s := a.sessions[msg.name]
+		if s == nil {
+			return a, nil
+		}
+		if s.Client != nil {
+			s.Client.Close()
+			s.Client = nil
+		}
+		if s.Tunnel != nil {
+			s.Tunnel.Close()
+			s.Tunnel = nil
+		}
+		s.ConnState = ConnNone
+		s.ConnMsg = "disconnected"
+		s.Err = nil
+		s.Host = nil
+		s.Disks = nil
+		s.Containers = nil
+		s.ContInfo = nil
+		s.Alerts = make(map[int64]*protocol.AlertEvent)
+		s.Dash.groups = nil
+		return a, nil
 
 	case sshPromptMsg:
 		prompt := msg.prompt
