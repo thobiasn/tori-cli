@@ -16,6 +16,7 @@ type dashFocus int
 
 const (
 	focusServers    dashFocus = iota // default: servers focused on open
+	focusAlerts
 	focusContainers
 )
 
@@ -24,6 +25,9 @@ type DashboardState struct {
 	cursor    int
 	collapsed map[string]bool
 	groups    []containerGroup
+
+	alertCursor      int
+	alertExpandModal *alertExpandModal // nil = closed
 }
 
 type containerGroup struct {
@@ -156,7 +160,7 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		leftW := hostW * 65 / 100
 		rightW := hostW - leftW
 
-		alertPanel := renderAlertPanel(s.Alerts, hostW, theme, a.tsFormat())
+		alertPanel := renderAlertPanel(s.Alerts, hostW, theme, a.tsFormat(), s.Dash.alertCursor, a.dashFocus == focusAlerts)
 
 		cpuPanel := renderCPUPanel(cpuHistory, s.Host, RenderContext{Width: leftW, Height: cpuH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
 		// Split right column: memory on top, disks on bottom.
@@ -194,7 +198,7 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		return strings.Join([]string{topRow, contPanel}, "\n")
 	}
 
-	alertPanel := renderAlertPanel(s.Alerts, width, theme, a.tsFormat())
+	alertPanel := renderAlertPanel(s.Alerts, width, theme, a.tsFormat(), s.Dash.alertCursor, a.dashFocus == focusAlerts)
 
 	// Narrow (80-99): stacked layout with server panel.
 	// 2 lines per server (name + status) + dividers between + borders.
@@ -315,16 +319,31 @@ func updateDashboard(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	key := msg.String()
 
 	if key == "tab" {
-		if a.dashFocus == focusContainers {
-			a.dashFocus = focusServers
-		} else {
+		hasAlerts := len(s.Alerts) > 0
+		switch a.dashFocus {
+		case focusServers:
+			if hasAlerts {
+				a.dashFocus = focusAlerts
+			} else {
+				a.dashFocus = focusContainers
+			}
+		case focusAlerts:
 			a.dashFocus = focusContainers
+		case focusContainers:
+			a.dashFocus = focusServers
 		}
 		return nil
 	}
 
 	if a.dashFocus == focusServers {
-		return updateServerFocus(a, key)
+		return updateServerFocus(a, s, key)
+	}
+
+	if a.dashFocus == focusAlerts {
+		if s.Dash.alertExpandModal != nil {
+			return updateDashAlertExpandModal(&s.Dash, s.Name, key)
+		}
+		return updateDashAlertFocus(s, key)
 	}
 
 	switch key {
@@ -425,7 +444,7 @@ func toggleTracking(s *Session) tea.Cmd {
 }
 
 // updateServerFocus handles keys when the server panel has focus.
-func updateServerFocus(a *App, key string) tea.Cmd {
+func updateServerFocus(a *App, s *Session, key string) tea.Cmd {
 	switch key {
 	case "j", "down":
 		if a.serverCursor < len(a.sessionOrder)-1 {
@@ -444,17 +463,70 @@ func updateServerFocus(a *App, key string) tea.Cmd {
 			}
 		}
 	case "enter":
-		s := a.sessions[a.sessionOrder[a.serverCursor]]
-		if s == nil {
+		srv := a.sessions[a.sessionOrder[a.serverCursor]]
+		if srv == nil {
 			break
 		}
-		switch s.ConnState {
+		switch srv.ConnState {
 		case ConnNone, ConnError:
-			s.ConnState = ConnNone
-			s.Err = nil
-			return func() tea.Msg { return connectServerMsg{name: s.Name} }
+			srv.ConnState = ConnNone
+			srv.Err = nil
+			return func() tea.Msg { return connectServerMsg{name: srv.Name} }
 		case ConnReady:
-			a.dashFocus = focusContainers
+			if len(s.Alerts) > 0 {
+				a.dashFocus = focusAlerts
+			} else {
+				a.dashFocus = focusContainers
+			}
+		}
+	}
+	return nil
+}
+
+// updateDashAlertFocus handles keys when the alerts panel has focus.
+func updateDashAlertFocus(s *Session, key string) tea.Cmd {
+	sorted := sortedAlerts(s.Alerts)
+	n := len(sorted)
+	if n == 0 {
+		return nil
+	}
+	switch key {
+	case "j", "down":
+		if s.Dash.alertCursor < n-1 {
+			s.Dash.alertCursor++
+		}
+	case "k", "up":
+		if s.Dash.alertCursor > 0 {
+			s.Dash.alertCursor--
+		}
+	case "enter":
+		if s.Dash.alertCursor < n {
+			e := sorted[s.Dash.alertCursor]
+			s.Dash.alertExpandModal = &alertExpandModal{
+				alert:  alertEventToMsg(e),
+				server: s.Name,
+			}
+		}
+	}
+	return nil
+}
+
+// updateDashAlertExpandModal handles keys inside the dashboard alert expand modal.
+func updateDashAlertExpandModal(dash *DashboardState, server, key string) tea.Cmd {
+	m := dash.alertExpandModal
+	switch key {
+	case "esc", "enter":
+		dash.alertExpandModal = nil
+	case "j", "down":
+		m.scroll++
+	case "k", "up":
+		if m.scroll > 0 {
+			m.scroll--
+		}
+	case "g":
+		if cid := alertInstanceContainerID(m.alert.InstanceKey); cid != "" {
+			dash.alertExpandModal = nil
+			return func() tea.Msg { return alertGoToContainerMsg{containerID: cid} }
 		}
 	}
 	return nil

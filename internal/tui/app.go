@@ -468,6 +468,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		s.Alertv.expandModal = nil
+		s.Dash.alertExpandModal = nil
 		s.Detail.containerID = msg.containerID
 		s.Detail.project = ""
 		s.Detail.svcProject = ""
@@ -779,7 +780,9 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		(a.session().Detail.filterModal != nil || a.session().Detail.expandModal != nil)
 	alertModalActive := a.active == viewAlerts && a.session() != nil &&
 		a.session().Alertv.expandModal != nil
-	detailModalActive = detailModalActive || alertModalActive
+	dashAlertModalActive := a.active == viewDashboard && a.session() != nil &&
+		a.session().Dash.alertExpandModal != nil
+	detailModalActive = detailModalActive || alertModalActive || dashAlertModalActive
 
 	// Zoom time window (+/- keys) — only on views with graphs.
 	if !detailModalActive && (key == "+" || key == "=" || key == "-") {
@@ -994,6 +997,8 @@ func (a App) View() string {
 		modal = helpOverlay(a.active, a.width, a.height, &a.theme)
 	case a.sshPrompt != nil:
 		modal = a.renderSSHPromptModal(a.width, a.height)
+	case a.active == viewDashboard && s.Dash.alertExpandModal != nil:
+		modal = renderAlertExpandModal(s.Dash.alertExpandModal, a.width, a.height, &a.theme, a.tsFormat())
 	case a.active == viewAlerts && s.Alertv.silenceMode:
 		modal = renderSilencePicker(&s.Alertv, &a.theme)
 	case a.active == viewAlerts && s.Alertv.expandModal != nil:
@@ -1015,31 +1020,30 @@ func (a *App) renderViewFooter() string {
 	muted := lipgloss.NewStyle().Foreground(a.theme.Muted)
 	switch a.active {
 	case viewDashboard:
-		return " " + muted.Render("Tab Focus  j/k Move  Space Fold  Enter Open  t Track")
+		s := a.sessions[a.activeSession]
+		if s != nil && s.Dash.alertExpandModal != nil {
+			return " " + muted.Render("Tab Focus  j/k Move")
+		}
+		switch a.dashFocus {
+		case focusServers:
+			return " " + muted.Render("Tab Focus  j/k Move  Enter Select")
+		case focusAlerts:
+			return " " + muted.Render("Tab Focus  j/k Move  Enter Expand")
+		default:
+			return " " + muted.Render("Tab Focus  j/k Move  Space Fold  Enter Open  t Track")
+		}
 	case viewAlerts:
 		s := a.sessions[a.activeSession]
 		if s != nil && s.Alertv.silenceMode {
-			return " " + muted.Render("j/k Move  Enter Confirm  Esc Cancel")
+			return ""
 		}
 		if s != nil && s.Alertv.expandModal != nil {
-			footer := "j/k Scroll  Esc Close"
-			if alertInstanceContainerID(s.Alertv.expandModal.alert.InstanceKey) != "" {
-				footer += "  g Container"
-			}
-			return " " + muted.Render(footer)
+			return ""
 		}
 		if s != nil && s.Alertv.subView == 1 {
 			return " " + muted.Render("Tab Focus  j/k Move  s Silence")
 		}
-		footer := "Tab Focus  j/k Move  r Resolved  a Ack  s Silence  Enter Expand"
-		if s != nil {
-			items := buildSectionItems(s.Alertv.alerts, s.Alertv.showResolved)
-			if s.Alertv.cursor < len(items) && !items[s.Alertv.cursor].isHeader {
-				if alertInstanceContainerID(items[s.Alertv.cursor].alert.InstanceKey) != "" {
-					footer += "  g Container"
-				}
-			}
-		}
+		footer := "Tab Focus  j/k Move  r Resolved  a Ack  s Silence  Enter Expand  g Container"
 		return " " + muted.Render(footer)
 	case viewDetail:
 		return a.renderDetailFooter()

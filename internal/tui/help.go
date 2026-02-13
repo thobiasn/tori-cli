@@ -2,14 +2,16 @@ package tui
 
 import (
 	"strings"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 var dashboardHelp = `
  Navigation
-   Tab          Focus servers/containers
+   Tab          Focus servers/alerts/containers
    j/k, ↑/↓    Move cursor
+   Enter        Expand alert / open detail
    Space        Collapse/expand group
-   Enter        Open container/group detail
    t            Toggle tracking
    +/-          Zoom time window
    1-2          Switch view
@@ -55,6 +57,11 @@ func helpOverlay(active view, width, height int, theme *Theme) string {
 	}
 
 	lines := strings.Split(strings.TrimSpace(text), "\n")
+
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+	lines = append(lines, "")
+	lines = append(lines, " "+muted.Render("Esc Close"))
+
 	boxW := 42
 	if boxW > width-4 {
 		boxW = width - 4

@@ -674,6 +674,8 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, tsFor
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 	label := lipgloss.NewStyle().Foreground(theme.Muted)
 
+	footerLine := " " + muted.Render("j/k Scroll  Esc Close")
+
 	// Metadata header.
 	var header []string
 	header = append(header, label.Render(" server:    ")+m.server)
@@ -686,8 +688,8 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, tsFor
 	header = append(header, label.Render(" stream:    ")+m.entry.Stream)
 	header = append(header, " "+muted.Render(strings.Repeat("─", innerW-2)))
 
-	// Content area = total inner height minus header lines.
-	contentH := innerH - len(header)
+	// Content area = total inner height minus header lines minus footer.
+	contentH := innerH - len(header) - 1
 	if contentH < 1 {
 		contentH = 1
 	}
@@ -726,6 +728,12 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, tsFor
 	for _, l := range wrapped[start:end] {
 		lines = append(lines, " "+l)
 	}
+	// Pad to push footer to bottom.
+	used := len(lines) + 1 // +1 for footer
+	for i := used; i < innerH; i++ {
+		lines = append(lines, "")
+	}
+	lines = append(lines, footerLine)
 
 	content := strings.Join(lines, "\n")
 	return Box("Log", content, modalW, modalH, theme)

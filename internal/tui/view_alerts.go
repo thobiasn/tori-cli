@@ -411,6 +411,7 @@ func renderRulesPanel(a *App, s *Session, width, height int, focused bool) strin
 }
 
 func renderSilencePicker(s *AlertViewState, theme *Theme) string {
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 	var lines []string
 	lines = append(lines, fmt.Sprintf(" Silence %s for:", Truncate(s.silenceRule, 20)))
 	for i, d := range silenceDurations {
@@ -420,9 +421,10 @@ func renderSilencePicker(s *AlertViewState, theme *Theme) string {
 		}
 		lines = append(lines, marker+d.label)
 	}
+	lines = append(lines, " "+muted.Render("j/k Move  Enter Confirm  Esc Cancel"))
 	content := strings.Join(lines, "\n")
-	pickerW := 30
-	pickerH := len(silenceDurations) + 3
+	pickerW := 40
+	pickerH := len(lines) + 2
 	return Box("Silence", content, pickerW, pickerH, theme)
 }
 
@@ -475,7 +477,15 @@ func renderAlertExpandModal(m *alertExpandModal, width, height int, theme *Theme
 		innerH = 1
 	}
 
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 	label := lipgloss.NewStyle().Foreground(theme.Muted)
+
+	// Inline footer.
+	footer := "j/k Scroll  Esc Close"
+	if alertInstanceContainerID(m.alert.InstanceKey) != "" {
+		footer += "  g Container"
+	}
+	footerLine := " " + muted.Render(footer)
 
 	// Status text.
 	var status string
@@ -505,14 +515,22 @@ func renderAlertExpandModal(m *alertExpandModal, width, height int, theme *Theme
 
 	// If there's a message, add separator and scrollable content.
 	if m.alert.Message == "" {
-		content := strings.Join(header, "\n")
+		var lines []string
+		lines = append(lines, header...)
+		// Pad to push footer to bottom.
+		used := len(lines) + 1 // +1 for footer
+		for i := used; i < innerH; i++ {
+			lines = append(lines, "")
+		}
+		lines = append(lines, footerLine)
+		content := strings.Join(lines, "\n")
 		return Box("Alert", content, modalW, modalH, theme)
 	}
 
-	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 	header = append(header, " "+muted.Render(strings.Repeat("─", innerW-2)))
 
-	contentH := innerH - len(header)
+	// Reserve 1 line for footer.
+	contentH := innerH - len(header) - 1
 	if contentH < 1 {
 		contentH = 1
 	}
@@ -542,6 +560,12 @@ func renderAlertExpandModal(m *alertExpandModal, width, height int, theme *Theme
 	for _, l := range wrapped[start:end] {
 		lines = append(lines, " "+l)
 	}
+	// Pad to push footer to bottom.
+	used := len(lines) + 1 // +1 for footer
+	for i := used; i < innerH; i++ {
+		lines = append(lines, "")
+	}
+	lines = append(lines, footerLine)
 
 	content := strings.Join(lines, "\n")
 	return Box("Alert", content, modalW, modalH, theme)
