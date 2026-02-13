@@ -492,6 +492,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if s := a.session(); s != nil {
 			s.Alertv.stale = true
 			s.Alertv.rulesStale = true
+			if a.active == viewAlerts && s.Client != nil {
+				return a, s.Alertv.onSwitch(s.Client)
+			}
 		}
 		return a, nil
 
@@ -1046,6 +1049,10 @@ func (a *App) renderViewFooter() string {
 		footer := "Tab Focus  j/k Move  r Resolved  a Ack  s Silence  Enter Expand  g Container"
 		return " " + muted.Render(footer)
 	case viewDetail:
+		s := a.sessions[a.activeSession]
+		if s != nil && (s.Detail.expandModal != nil || s.Detail.filterModal != nil) {
+			return ""
+		}
 		return a.renderDetailFooter()
 	}
 	return ""

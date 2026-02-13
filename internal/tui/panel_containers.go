@@ -31,8 +31,8 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 		trackedState[ci.ID] = ci.Tracked
 	}
 
-	// Fixed-width columns: state(1) + sp(1) + alert(2) + 2sp + health(1) + 2sp + cpu(6) + 2sp + mem(6) + 2sp + uptime(7) + sp(1) + restart(3) = ~34
-	fixedCols := 34
+	// Fixed-width columns: state(1) + sp(1) + alert(2) + 3sp + health(1) + 3sp + cpu(6) + 3sp + mem(6) + 3sp + uptime(7) + sp(1) + restart(3) = ~38
+	fixedCols := 38
 	nameW := innerW - fixedCols - 2 // 2 for leading/trailing space
 	if nameW < 8 {
 		nameW = 8
@@ -42,8 +42,8 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 
 	// Build column header (pinned above scroll region).
-	headerStats := fmt.Sprintf("%6s  %6s  %-7s", "CPU", "MEM", "UPTIME")
-	headerLine := muted.Render(fmt.Sprintf(" %s %s%-*s  %s  %s %s", " ", "  ", nameW, "", "H", headerStats, " ↻"))
+	headerStats := fmt.Sprintf("%6s   %6s   %-7s", "CPU", "MEM", "UPTIME")
+	headerLine := muted.Render(fmt.Sprintf(" %s %s%-*s   %s   %s %s", " ", "  ", nameW, "", "H", headerStats, " ↻"))
 
 	var lines []string
 	pos := 0
@@ -106,11 +106,11 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 			var stats string
 			isMuted := !tracked
 			if tracked && c.State == "running" {
-				stats = fmt.Sprintf("%5.1f%%  %6s  %-7s", c.CPUPercent, FormatBytes(c.MemUsage), Truncate(uptime, 7))
+				stats = fmt.Sprintf("%5.1f%%   %6s   %-7s", c.CPUPercent, FormatBytes(c.MemUsage), Truncate(uptime, 7))
 			} else {
-				stats = fmt.Sprintf("%6s  %6s  %-7s", "—", "—", Truncate(uptime, 7))
+				stats = fmt.Sprintf("%6s   %6s   %-7s", "—", "—", Truncate(uptime, 7))
 			}
-			row := fmt.Sprintf(" %s %s%-*s  %s  %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
+			row := fmt.Sprintf(" %s %s%-*s   %s   %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
 			if pos == cursor {
 				if focused {
 					row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))

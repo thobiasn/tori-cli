@@ -319,15 +319,25 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 	if metricsH < 11 {
 		metricsH = 11
 	}
-	logH := height - metricsH - 1
+	logH := height - metricsH
 	if logH < 5 {
-		metricsH = height - 6
+		metricsH = height - 5
 		logH = 5
 	}
 
 	rc := RenderContext{Width: width, Height: metricsH, Theme: theme, WindowLabel: a.windowLabel(), WindowSec: a.windowSeconds()}
 	metricsContent := renderDetailMetrics(s, det, cm, rc)
 	metricsBox := Box(title, metricsContent, width, metricsH, theme)
+
+	// Inline alerts section (non-focusable).
+	var alertBox string
+	if ca := containerAlerts(s.Alerts, det.containerID); len(ca) > 0 {
+		alertBox = renderDetailAlerts(ca, width, height/6, theme)
+		logH -= countLines(alertBox)
+		if logH < 3 {
+			logH = 3
+		}
+	}
 
 	// Bottom section: logs.
 	containerName := ""
@@ -341,7 +351,11 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 		logBox = renderDetailLogs(det, containerName, false, width, logH, theme, true, a.tsFormat())
 	}
 
-	return metricsBox + "\n" + logBox
+	result := metricsBox
+	if alertBox != "" {
+		result += "\n" + alertBox
+	}
+	return result + "\n" + logBox
 }
 
 func renderDetailGroup(a *App, s *Session, width, height int) string {
@@ -378,9 +392,9 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 	if metricsH < 11 {
 		metricsH = 11
 	}
-	logH := height - metricsH - 1
+	logH := height - metricsH
 	if logH < 5 {
-		metricsH = height - 6
+		metricsH = height - 5
 		logH = 5
 	}
 
@@ -388,12 +402,30 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 	metricsContent := renderDetailGroupMetrics(s, det, rc)
 	metricsBox := Box(title, metricsContent, width, metricsH, theme)
 
+	// Inline alerts section (non-focusable).
+	var alertBox string
+	var groupAlerts []*protocol.AlertEvent
+	for _, id := range det.projectIDs {
+		groupAlerts = append(groupAlerts, containerAlerts(s.Alerts, id)...)
+	}
+	if len(groupAlerts) > 0 {
+		alertBox = renderDetailAlerts(groupAlerts, width, height/6, theme)
+		logH -= countLines(alertBox)
+		if logH < 3 {
+			logH = 3
+		}
+	}
+
 	var logBox string
 	if det.logs != nil && logH > 3 {
 		logBox = renderDetailLogs(det, det.project, true, width, logH, theme, true, a.tsFormat())
 	}
 
-	return metricsBox + "\n" + logBox
+	result := metricsBox
+	if alertBox != "" {
+		result += "\n" + alertBox
+	}
+	return result + "\n" + logBox
 }
 
 func renderDetailGroupMetrics(s *Session, det *DetailState, rc RenderContext) string {
@@ -421,8 +453,8 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, rc RenderContext) st
 		graphBudget = 5
 	}
 
-	// Side-by-side CPU and MEM inner boxes.
-	leftW := innerW / 2
+	// Side-by-side CPU and MEM inner boxes (65/35 split).
+	leftW := innerW * 65 / 100
 	rightW := innerW - leftW
 	graphRows := graphBudget - 2 // inner box borders
 	if graphRows < 1 {
@@ -461,7 +493,7 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, rc RenderContext) st
 
 	// Per-container summary table.
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
-	lines = append(lines, muted.Render(" CONTAINER          STATE     CPU     MEM"))
+	lines = append(lines, muted.Render(" CONTAINER           STATE   H    CPU     MEM  ↻"))
 	for _, id := range det.projectIDs {
 		name := containerNameByID(id, s.ContInfo)
 		if name == "" {
@@ -476,12 +508,14 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, rc RenderContext) st
 		}
 		if cm != nil {
 			indicator := theme.StateIndicator(cm.State)
-			line := fmt.Sprintf(" %s %-18s %-8s %5.1f%% %6s",
+			health := theme.HealthIndicator(cm.Health)
+			restarts := formatRestarts(cm.RestartCount, theme)
+			line := fmt.Sprintf(" %s %-18s %-8s %s %5.1f%% %6s  %s",
 				indicator, Truncate(name, 18), Truncate(cm.State, 8),
-				cm.CPUPercent, FormatBytes(cm.MemUsage))
+				health, cm.CPUPercent, FormatBytes(cm.MemUsage), restarts)
 			lines = append(lines, TruncateStyled(line, innerW))
 		} else {
-			line := fmt.Sprintf("   %-18s %-8s    —      —", Truncate(name, 18), "—")
+			line := fmt.Sprintf("   %-18s %-8s –     —      —   —", Truncate(name, 18), "—")
 			lines = append(lines, muted.Render(Truncate(line, innerW)))
 		}
 	}
@@ -503,8 +537,8 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 		graphBudget = 5
 	}
 
-	// Side-by-side CPU and MEM inner boxes.
-	leftW := innerW / 2
+	// Side-by-side CPU and MEM inner boxes (65/35 split).
+	leftW := innerW * 65 / 100
 	rightW := innerW - leftW
 	graphRows := graphBudget - 2 // inner box borders
 	if graphRows < 1 {
@@ -617,5 +651,31 @@ func containerAlerts(alerts map[int64]*protocol.AlertEvent, containerID string) 
 		}
 	}
 	return out
+}
+
+// renderDetailAlerts renders a compact, non-focusable alerts section.
+func renderDetailAlerts(alerts []*protocol.AlertEvent, width, maxH int, theme *Theme) string {
+	innerW := width - 2
+	var lines []string
+	for _, a := range alerts {
+		sev := severityTag(a.Severity, theme)
+		msg := Truncate(a.Message, innerW-25)
+		line := fmt.Sprintf(" %s  %-16s %s", sev, Truncate(a.RuleName, 16), msg)
+		lines = append(lines, Truncate(line, innerW))
+	}
+	h := len(lines) + 2
+	if maxH > 2 && h > maxH {
+		h = maxH
+		lines = lines[:maxH-2]
+	}
+	return Box("Alerts", strings.Join(lines, "\n"), width, h, theme)
+}
+
+// countLines returns the number of visual lines in a rendered string.
+func countLines(s string) int {
+	if s == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
 }
 

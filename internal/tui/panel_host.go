@@ -21,9 +21,8 @@ var pctAxis = graphAxis{
 }
 
 var bytesAxis = graphAxis{
-	ceilFn:   niceMaxBytes,
-	labelFn:  func(v float64) string { return FormatBytes(uint64(v)) },
-	ceilOnly: true,
+	ceilFn:  niceMaxBytes,
+	labelFn: func(v float64) string { return FormatBytes(uint64(v)) },
 }
 
 // gridGraph renders a braille graph with grid lines at 0/50/80/100% and

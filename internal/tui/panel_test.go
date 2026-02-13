@@ -9,7 +9,7 @@ import (
 
 func TestRenderAlertPanelEmpty(t *testing.T) {
 	theme := DefaultTheme()
-	got := renderAlertPanel(nil, 60, &theme, "2006-01-02 15:04:05", 0, false)
+	got := renderAlertPanel(nil, 60, 0, &theme, "2006-01-02 15:04:05", 0, false)
 	if !strings.Contains(got, "all clear") {
 		t.Errorf("empty alerts should show 'all clear', got:\n%s", got)
 	}
@@ -21,7 +21,7 @@ func TestRenderAlertPanelWithAlerts(t *testing.T) {
 		1: {ID: 1, RuleName: "high_cpu", Severity: "critical", FiredAt: 1700000000, Message: "CPU at 95%"},
 		2: {ID: 2, RuleName: "disk_full", Severity: "warning", FiredAt: 1700000060, Message: "Disk 90%"},
 	}
-	got := renderAlertPanel(alerts, 80, &theme, "2006-01-02 15:04:05", 0, false)
+	got := renderAlertPanel(alerts, 80, 0, &theme, "2006-01-02 15:04:05", 0, false)
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "Alerts (2)") {
 		t.Errorf("should show count, got:\n%s", plain)

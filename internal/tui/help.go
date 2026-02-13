@@ -62,7 +62,7 @@ func helpOverlay(active view, width, height int, theme *Theme) string {
 	lines = append(lines, "")
 	lines = append(lines, " "+muted.Render("Esc Close"))
 
-	boxW := 42
+	boxW := 50
 	if boxW > width-4 {
 		boxW = width - 4
 	}

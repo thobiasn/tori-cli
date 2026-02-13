@@ -154,13 +154,11 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 	windowLabel := a.windowLabel()
 
 	if width >= 100 {
-		// Wide: server panel (fixed 20) spans alert+host rows on the left.
+		// Wide: server panel left, host metrics right; alert panel full-width below; containers at bottom.
 		srvW := 32
 		hostW := width - srvW
 		leftW := hostW * 65 / 100
 		rightW := hostW - leftW
-
-		alertPanel := renderAlertPanel(s.Alerts, hostW, theme, a.tsFormat(), s.Dash.alertCursor, a.dashFocus == focusAlerts)
 
 		cpuPanel := renderCPUPanel(cpuHistory, s.Host, RenderContext{Width: leftW, Height: cpuH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
 		// Split right column: memory on top, disks on bottom.
@@ -189,16 +187,16 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		rightCol := lipgloss.JoinVertical(lipgloss.Left, memPanel, diskPanel)
 		hostRow := lipgloss.JoinHorizontal(lipgloss.Top, cpuPanel, rightCol)
 
-		rightContent := lipgloss.JoinVertical(lipgloss.Left, alertPanel, hostRow)
-		serverPanel := renderServerPanel(a, alertH+cpuH, srvW)
-		topRow := lipgloss.JoinHorizontal(lipgloss.Top, serverPanel, rightContent)
+		serverPanel := renderServerPanel(a, cpuH, srvW)
+		topRow := lipgloss.JoinHorizontal(lipgloss.Top, serverPanel, hostRow)
 
-		contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, RenderContext{Width: width, Height: middleH, Theme: theme}, a.dashFocus == focusContainers)
+		alertPanel := renderAlertPanel(s.Alerts, width, alertH, theme, a.tsFormat(), s.Dash.alertCursor, a.dashFocus == focusAlerts)
 
-		return strings.Join([]string{topRow, contPanel}, "\n")
+		contH := middleH
+		contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, RenderContext{Width: width, Height: contH, Theme: theme}, a.dashFocus == focusContainers)
+
+		return strings.Join([]string{topRow, alertPanel, contPanel}, "\n")
 	}
-
-	alertPanel := renderAlertPanel(s.Alerts, width, theme, a.tsFormat(), s.Dash.alertCursor, a.dashFocus == focusAlerts)
 
 	// Narrow (80-99): stacked layout with server panel.
 	// 2 lines per server (name + status) + dividers between + borders.
@@ -240,9 +238,10 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 	cpuPanel := renderCPUPanel(cpuHistory, s.Host, RenderContext{Width: width, Height: cpuPanelH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
 	memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), RenderContext{Width: width, Height: narrowMemH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
 	diskPanel := renderDiskPanel(s.Disks, swapTotal2, swapUsed2, width, diskH, theme)
+	alertPanel := renderAlertPanel(s.Alerts, width, alertH, theme, a.tsFormat(), s.Dash.alertCursor, a.dashFocus == focusAlerts)
 	contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, RenderContext{Width: width, Height: contH, Theme: theme}, a.dashFocus == focusContainers)
 
-	return strings.Join([]string{alertPanel, serverPanel, cpuPanel, memPanel, diskPanel, contPanel}, "\n")
+	return strings.Join([]string{serverPanel, cpuPanel, memPanel, diskPanel, alertPanel, contPanel}, "\n")
 }
 
 // renderServerPanel renders the server list panel.

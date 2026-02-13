@@ -31,9 +31,14 @@ func alertEventToMsg(e *protocol.AlertEvent) protocol.AlertMsg {
 }
 
 // renderAlertPanel renders the dashboard alert bar.
-func renderAlertPanel(alerts map[int64]*protocol.AlertEvent, width int, theme *Theme, tsFormat string, cursor int, focused bool) string {
+// If height > 0, the panel is constrained to that height; otherwise it self-sizes.
+func renderAlertPanel(alerts map[int64]*protocol.AlertEvent, width, height int, theme *Theme, tsFormat string, cursor int, focused bool) string {
 	if len(alerts) == 0 {
-		return Box("Alerts -- all clear", "", width, 3, theme)
+		h := 3
+		if height > 0 {
+			h = height
+		}
+		return Box("Alerts -- all clear", "", width, h, theme)
 	}
 
 	sorted := sortedAlerts(alerts)
@@ -64,6 +69,17 @@ func renderAlertPanel(alerts map[int64]*protocol.AlertEvent, width int, theme *T
 	h := len(lines) + 2 // borders
 	if h < 3 {
 		h = 3
+	}
+	if height > 0 && h > height {
+		h = height
+		// Truncate visible lines to fit.
+		maxLines := h - 2
+		if maxLines < 0 {
+			maxLines = 0
+		}
+		if len(lines) > maxLines {
+			lines = lines[:maxLines]
+		}
 	}
 	return Box(title, strings.Join(lines, "\n"), width, h, theme, focused)
 }
