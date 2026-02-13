@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -690,7 +692,15 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, tsFor
 		contentH = 1
 	}
 
-	wrapped := wrapText(m.entry.Message, innerW-2)
+	msg := m.entry.Message
+	if json.Valid([]byte(msg)) {
+		var buf bytes.Buffer
+		if json.Indent(&buf, []byte(msg), "", "  ") == nil {
+			msg = buf.String()
+		}
+	}
+
+	wrapped := wrapText(msg, innerW-2)
 	if len(wrapped) == 0 {
 		wrapped = []string{""}
 	}
