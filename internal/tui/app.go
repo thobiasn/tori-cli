@@ -85,9 +85,8 @@ type App struct {
 	windowIdx        int // index into timeWindows (0 = Live)
 	theme            Theme
 	err              error
-	showHelp         bool
-	showServerPicker bool
-	dashFocus        dashFocus // focusServers (default) or focusContainers
+	showHelp  bool
+	dashFocus dashFocus // focusServers (default) or focusContainers
 	serverCursor     int       // index into sessionOrder
 
 	displayCfg DisplayConfig // date/time format config
@@ -737,15 +736,6 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
-	// Server picker.
-	if a.showServerPicker {
-		return a.handleServerPicker(key)
-	}
-	if key == "S" && len(a.sessions) > 1 && a.active != viewDashboard {
-		a.showServerPicker = true
-		return a, nil
-	}
-
 	// When detail search mode is active, only tab and esc are handled globally.
 	detailSearchActive := a.active == viewDetail && a.session() != nil && a.session().Detail.searchMode
 
@@ -858,24 +848,6 @@ func (a *App) windowSeconds() int64 {
 	return timeWindows[a.windowIdx].seconds
 }
 
-func (a *App) handleServerPicker(key string) (App, tea.Cmd) {
-	// Number keys 1-9 select a server.
-	if key >= "1" && key <= "9" {
-		idx := int(key[0]-'0') - 1
-		if idx < len(a.sessionOrder) {
-			prev := a.activeSession
-			a.activeSession = a.sessionOrder[idx]
-			a.serverCursor = idx
-			if a.activeSession != prev {
-				a.showServerPicker = false
-				return *a, a.onViewSwitch()
-			}
-		}
-	}
-	a.showServerPicker = false
-	return *a, nil
-}
-
 func (a *App) handleViewSwitch(key string) (tea.Cmd, bool) {
 	prev := a.active
 	switch key {
@@ -972,43 +944,11 @@ func (a App) View() string {
 		content = helpOverlay(a.active, a.width, contentH, &a.theme)
 	}
 
-	if a.showServerPicker {
-		content = a.renderServerPicker(a.width, contentH)
-	}
-
 	if a.sshPrompt != nil {
 		content = a.renderSSHPromptModal(a.width, contentH)
 	}
 
 	return content + "\n" + a.renderFooter()
-}
-
-func (a *App) renderServerPicker(width, height int) string {
-	var lines []string
-	for i, name := range a.sessionOrder {
-		marker := "  "
-		if name == a.activeSession {
-			marker = "> "
-		}
-		lines = append(lines, fmt.Sprintf(" %s%d  %s", marker, i+1, name))
-	}
-	content := ""
-	for i, l := range lines {
-		if i > 0 {
-			content += "\n"
-		}
-		content += l
-	}
-	pickerW := 30
-	if pickerW > width-4 {
-		pickerW = width - 4
-	}
-	pickerH := len(lines) + 2
-	if pickerH > height-2 {
-		pickerH = height - 2
-	}
-	picker := Box("Servers", content, pickerW, pickerH, &a.theme)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, picker)
 }
 
 func (a *App) viewHints() string {
@@ -1049,11 +989,7 @@ func (a *App) renderFooter() string {
 
 	// Show server name when multi-server.
 	if len(a.sessions) > 1 {
-		if a.active == viewDashboard {
-			footer += fmt.Sprintf("  [%s]", a.activeSession)
-		} else {
-			footer += fmt.Sprintf("  [%s]  S Switch", a.activeSession)
-		}
+		footer += fmt.Sprintf("  [%s]", a.activeSession)
 	}
 
 	if hints := a.viewHints(); hints != "" {

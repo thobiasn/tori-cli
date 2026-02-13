@@ -281,55 +281,6 @@ func TestAppViewRendersWithoutPanic(t *testing.T) {
 	}
 }
 
-func TestAppServerPickerToggle(t *testing.T) {
-	// Multi-server setup.
-	s1 := NewSession("prod", nil, nil)
-	s2 := NewSession("staging", nil, nil)
-	a := NewApp(map[string]*Session{"prod": s1, "staging": s2}, DisplayConfig{DateFormat: "2006-01-02", TimeFormat: "15:04:05"})
-	a.width = 120
-	a.height = 40
-
-	// S should NOT open picker on dashboard (server panel replaces it).
-	model, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")})
-	a = model.(App)
-	if a.showServerPicker {
-		t.Error("S should not open picker on dashboard")
-	}
-
-	// Switch to alerts view, then S opens picker.
-	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
-	a = model.(App)
-	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")})
-	a = model.(App)
-	if !a.showServerPicker {
-		t.Error("S should open server picker on alerts view")
-	}
-
-	// "2" selects second server.
-	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
-	a = model.(App)
-	if a.showServerPicker {
-		t.Error("picker should close after selection")
-	}
-	if a.activeSession != "staging" {
-		t.Errorf("activeSession = %q, want staging", a.activeSession)
-	}
-	if a.serverCursor != 1 {
-		t.Errorf("serverCursor = %d, want 1", a.serverCursor)
-	}
-}
-
-func TestAppServerPickerSingleServer(t *testing.T) {
-	a := newTestApp()
-
-	// S should NOT open picker when single server.
-	model, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")})
-	a = model.(App)
-	if a.showServerPicker {
-		t.Error("S should not open picker for single server")
-	}
-}
-
 func TestHandleMetricsBackfill(t *testing.T) {
 	s := newTestSession()
 	// ContInfo maps service keys to current container IDs.
