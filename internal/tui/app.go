@@ -462,6 +462,31 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case alertGoToContainerMsg:
+		s := a.session()
+		if s == nil || s.Client == nil {
+			return a, nil
+		}
+		s.Alertv.expandModal = nil
+		s.Detail.containerID = msg.containerID
+		s.Detail.project = ""
+		s.Detail.svcProject = ""
+		s.Detail.svcService = ""
+		for _, ci := range s.ContInfo {
+			if ci.ID == msg.containerID {
+				if ci.Project != "" && ci.Service != "" {
+					s.Detail.svcProject = ci.Project
+					s.Detail.svcService = ci.Service
+				} else if ci.Name != "" {
+					s.Detail.svcService = ci.Name
+				}
+				break
+			}
+		}
+		s.Detail.reset()
+		a.active = viewDetail
+		return a, s.Detail.onSwitch(s.Client, a.windowSeconds(), s.RetentionDays)
+
 	case alertActionDoneMsg:
 		if s := a.session(); s != nil {
 			s.Alertv.stale = true
@@ -997,12 +1022,25 @@ func (a *App) renderViewFooter() string {
 			return " " + muted.Render("j/k Move  Enter Confirm  Esc Cancel")
 		}
 		if s != nil && s.Alertv.expandModal != nil {
-			return " " + muted.Render("j/k Scroll  Esc Close")
+			footer := "j/k Scroll  Esc Close"
+			if alertInstanceContainerID(s.Alertv.expandModal.alert.InstanceKey) != "" {
+				footer += "  g Container"
+			}
+			return " " + muted.Render(footer)
 		}
 		if s != nil && s.Alertv.subView == 1 {
 			return " " + muted.Render("Tab Focus  j/k Move  s Silence")
 		}
-		return " " + muted.Render("Tab Focus  j/k Move  r Resolved  a Ack  s Silence  Enter Expand")
+		footer := "Tab Focus  j/k Move  r Resolved  a Ack  s Silence  Enter Expand"
+		if s != nil {
+			items := buildSectionItems(s.Alertv.alerts, s.Alertv.showResolved)
+			if s.Alertv.cursor < len(items) && !items[s.Alertv.cursor].isHeader {
+				if alertInstanceContainerID(items[s.Alertv.cursor].alert.InstanceKey) != "" {
+					footer += "  g Container"
+				}
+			}
+		}
+		return " " + muted.Render(footer)
 	case viewDetail:
 		return a.renderDetailFooter()
 	}

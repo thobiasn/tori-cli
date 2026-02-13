@@ -335,10 +335,6 @@ func (a *Agent) shutdown() error {
 	a.socket.Stop()
 	a.logs.Stop()
 
-	if a.alerter != nil {
-		a.alerter.ResolveAll()
-	}
-
 	if err := a.store.Close(); err != nil {
 		slog.Error("close store", "error", err)
 	}

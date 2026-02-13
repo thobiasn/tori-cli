@@ -52,6 +52,10 @@ type alertRulesQueryMsg struct {
 
 type alertActionDoneMsg struct{}
 
+type alertGoToContainerMsg struct {
+	containerID string
+}
+
 var silenceDurations = []struct {
 	label string
 	secs  int64
@@ -333,6 +337,8 @@ func renderAlertsPanel(a *App, s *Session, width, height int, focused bool) stri
 		row := prefix + padded + "  " + status
 		if focused && globalIdx == av.cursor {
 			row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
+		} else if alert.ResolvedAt > 0 {
+			row = lipgloss.NewStyle().Strikethrough(true).Render(stripANSI(row))
 		}
 		lines = append(lines, TruncateStyled(row, innerW))
 	}
@@ -348,7 +354,7 @@ func renderRulesPanel(a *App, s *Session, width, height int, focused bool) strin
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 
 	if len(av.rules) == 0 {
-		header := muted.Render(fmt.Sprintf(" %-6s  %-20s  %s", "SEV", "RULE", "CONDITION"))
+		header := muted.Render(fmt.Sprintf(" %-6s  %-20s  %-5s  %-10s  %s", "SEV", "RULE", "FOR", "ACTIONS", "CONDITION"))
 		content := header + "\n" + "  No alert rules configured"
 		return Box("Rules", content, width, height, theme, focused)
 	}
@@ -357,7 +363,7 @@ func renderRulesPanel(a *App, s *Session, width, height int, focused bool) strin
 
 	// Column header.
 	statusLabel := "STATUS"
-	headerPrefix := fmt.Sprintf(" %-6s  %-20s ", "SEV", "RULE")
+	headerPrefix := fmt.Sprintf(" %-6s  %-20s  %-5s  %-10s ", "SEV", "RULE", "FOR", "ACTIONS")
 	prefixW := len(headerPrefix) + len(statusLabel) + 2
 	condColW := innerW - prefixW
 	if condColW < 0 {
@@ -381,8 +387,10 @@ func renderRulesPanel(a *App, s *Session, width, height int, focused bool) strin
 			status = lipgloss.NewStyle().Foreground(theme.Healthy).Render("ok")
 		}
 
+		forStr := Truncate(rule.For, 5)
+		actions := Truncate(strings.Join(rule.Actions, ","), 10)
 		name := Truncate(rule.Name, 20)
-		prefix := fmt.Sprintf(" %s  %-20s ", sev, name)
+		prefix := fmt.Sprintf(" %s  %-20s  %-5s  %-10s ", sev, name, forStr, actions)
 		prefixW := lipgloss.Width(prefix) + lipgloss.Width(status) + 2
 		condW := innerW - prefixW
 		if condW < 0 {
@@ -418,6 +426,15 @@ func renderSilencePicker(s *AlertViewState, theme *Theme) string {
 	return Box("Silence", content, pickerW, pickerH, theme)
 }
 
+// alertInstanceContainerID extracts the container ID from an alert's instance
+// key. Container-scoped alerts use the format "rulename:containerID".
+func alertInstanceContainerID(instanceKey string) string {
+	if i := strings.Index(instanceKey, ":"); i >= 0 {
+		return instanceKey[i+1:]
+	}
+	return ""
+}
+
 // updateAlertExpandModal handles keys inside the alert expand modal.
 func updateAlertExpandModal(av *AlertViewState, key string) tea.Cmd {
 	m := av.expandModal
@@ -429,6 +446,11 @@ func updateAlertExpandModal(av *AlertViewState, key string) tea.Cmd {
 	case "k", "up":
 		if m.scroll > 0 {
 			m.scroll--
+		}
+	case "g":
+		if cid := alertInstanceContainerID(m.alert.InstanceKey); cid != "" {
+			av.expandModal = nil
+			return func() tea.Msg { return alertGoToContainerMsg{containerID: cid} }
 		}
 	}
 	return nil
@@ -612,6 +634,12 @@ func updateAlertsSubView(a *App, s *Session, key string) tea.Cmd {
 			av.expandModal = &alertExpandModal{
 				alert:  items[av.cursor].alert,
 				server: s.Name,
+			}
+		}
+	case "g":
+		if av.cursor < len(items) && !items[av.cursor].isHeader {
+			if cid := alertInstanceContainerID(items[av.cursor].alert.InstanceKey); cid != "" {
+				return func() tea.Msg { return alertGoToContainerMsg{containerID: cid} }
 			}
 		}
 	case "esc":
