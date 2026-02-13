@@ -31,7 +31,6 @@ func (s *DetailState) matchesFilter(entry protocol.LogEntryMsg) bool {
 // placing the cursor on the last (newest) matching entry.
 func (s *DetailState) resetLogPosition() {
 	s.logScroll = 0
-	s.logExpanded = -1
 	s.logCursor = len(s.filteredData()) - 1
 	if s.logCursor < 0 {
 		s.logCursor = 0
@@ -116,7 +115,7 @@ func injectDeploySeparators(entries []protocol.LogEntryMsg) []protocol.LogEntryM
 }
 
 func renderDetailLogs(s *DetailState, label string, showNames bool, width, height int, theme *Theme, focused bool, tsFormat string) string {
-	boxH := height - 1 // leave room for shortcut footer
+	boxH := height
 	innerH := boxH - 2
 	if innerH < 1 {
 		innerH = 1
@@ -146,22 +145,6 @@ func renderDetailLogs(s *DetailState, label string, showNames bool, width, heigh
 		cursorIdx = len(visible) - 1
 		s.logCursor = cursorIdx
 	}
-	expandIdx := s.logExpanded
-	var expandLines int
-	if expandIdx >= 0 && expandIdx < len(visible) {
-		expandLines = len(wrapText(visible[expandIdx].Message, innerW-2))
-	}
-
-	// If expansion would overflow, trim entries from the top.
-	if expandLines > 0 && len(visible)+expandLines > innerH {
-		trim := len(visible) + expandLines - innerH
-		if trim > len(visible) {
-			trim = len(visible)
-		}
-		visible = visible[trim:]
-		cursorIdx -= trim
-		expandIdx -= trim
-	}
 
 	// Compute the max container name width for aligned columns.
 	nameW := 0
@@ -180,12 +163,6 @@ func renderDetailLogs(s *DetailState, label string, showNames bool, width, heigh
 			line = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(line), innerW))
 		}
 		lines = append(lines, line)
-		if i == expandIdx {
-			wrapped := wrapText(entry.Message, innerW-2)
-			for _, wl := range wrapped {
-				lines = append(lines, "  "+wl)
-			}
-		}
 	}
 
 	title := "Logs"
@@ -200,47 +177,7 @@ func renderDetailLogs(s *DetailState, label string, showNames bool, width, heigh
 		title += " ── LIVE"
 	}
 
-	box := Box(title, strings.Join(lines, "\n"), width, boxH, theme, focused)
-	return box + "\n" + renderDetailLogFooter(s, innerW, theme, tsFormat)
-}
-
-func renderDetailLogFooter(s *DetailState, width int, theme *Theme, tsFormat string) string {
-	muted := lipgloss.NewStyle().Foreground(theme.Muted)
-
-	var parts []string
-
-	streamLabel := "all"
-	if s.filterStream != "" {
-		streamLabel = s.filterStream
-	}
-	parts = append(parts, "s: "+muted.Render(streamLabel))
-
-	// Filter summary.
-	if s.searchText != "" || s.filterFrom != 0 || s.filterTo != 0 {
-		var filterParts []string
-		if s.searchText != "" {
-			filterParts = append(filterParts, fmt.Sprintf("%q", s.searchText))
-		}
-		if s.filterFrom != 0 || s.filterTo != 0 {
-			from := "…"
-			if s.filterFrom != 0 {
-				from = time.Unix(s.filterFrom, 0).Format(tsFormat)
-			}
-			to := "…"
-			if s.filterTo != 0 {
-				to = time.Unix(s.filterTo, 0).Format(tsFormat)
-			}
-			filterParts = append(filterParts, from+"–"+to)
-		}
-		parts = append(parts, "f: "+strings.Join(filterParts, " "))
-	} else {
-		parts = append(parts, "f: filter")
-	}
-
-	parts = append(parts, "Esc clear")
-
-	footer := " " + strings.Join(parts, " | ")
-	return Truncate(footer, width)
+	return Box(title, strings.Join(lines, "\n"), width, boxH, theme, focused)
 }
 
 // maskedField is a fixed-width input derived from a Go time format string.
@@ -440,13 +377,26 @@ func renderFilterModal(m *logFilterModal, width, height int, theme *Theme, cfg D
 		return muted.Render(ch)
 	}
 
-	textField := func(val string, focused bool) string {
-		maxW := innerW - 4
-		display := Truncate(val, maxW-1)
+	// textFieldLines wraps the text input value across multiple lines.
+	// Returns wrapped lines; the cursor block is appended when focused.
+	textFieldLines := func(val string, focused bool) []string {
+		maxW := innerW - 4 // "  [" prefix (3) + "]" suffix (1)
 		if focused {
-			return display + cursorStyle.Render(" ")
+			maxW-- // reserve space for cursor block
 		}
-		return display
+		if maxW < 4 {
+			maxW = 4
+		}
+		var wrapped []string
+		if val == "" {
+			wrapped = []string{""}
+		} else {
+			wrapped = wrapText(val, maxW)
+		}
+		if focused {
+			wrapped[len(wrapped)-1] += cursorStyle.Render(" ")
+		}
+		return wrapped
 	}
 
 	// "date" and "time" headers aligned with the "[" of each field.
@@ -462,7 +412,19 @@ func renderFilterModal(m *logFilterModal, width, height int, theme *Theme, cfg D
 	var lines []string
 	lines = append(lines, "")
 	lines = append(lines, "  Text")
-	lines = append(lines, "  "+bracket("[", m.focus == 0)+textField(m.text, m.focus == 0)+bracket("]", m.focus == 0))
+	textLines := textFieldLines(m.text, m.focus == 0)
+	for i, tl := range textLines {
+		switch {
+		case len(textLines) == 1:
+			lines = append(lines, "  "+bracket("[", m.focus == 0)+tl+bracket("]", m.focus == 0))
+		case i == 0:
+			lines = append(lines, "  "+bracket("[", m.focus == 0)+tl)
+		case i == len(textLines)-1:
+			lines = append(lines, "   "+tl+bracket("]", m.focus == 0))
+		default:
+			lines = append(lines, "   "+tl)
+		}
+	}
 	lines = append(lines, "")
 	lines = append(lines, strings.Repeat(" ", prefix)+muted.Render(hdrDate+"time"))
 	lines = append(lines, "  From  "+bracket("[", m.focus == 1)+m.fromDate.render(m.focus == 1, theme)+bracket("]", m.focus == 1)+"   "+bracket("[", m.focus == 2)+m.fromTime.render(m.focus == 2, theme)+bracket("]", m.focus == 2))
@@ -481,6 +443,11 @@ func renderFilterModal(m *logFilterModal, width, height int, theme *Theme, cfg D
 func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	det := &s.Detail
 	key := msg.String()
+
+	// Expand modal captures all keys when open.
+	if det.expandModal != nil {
+		return updateExpandModal(det, key)
+	}
 
 	// Filter modal captures all keys when open.
 	if det.filterModal != nil {
@@ -547,7 +514,7 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 
 	data := det.filteredData()
 	// Compute innerH for cursor bounds (same formula as renderDetail).
-	contentH := a.height - 1
+	contentH := a.height - 2
 	metricsH := contentH / 3
 	if metricsH < 11 {
 		metricsH = 11
@@ -556,7 +523,7 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	if logH < 5 {
 		logH = 5
 	}
-	innerH := logH - 3 // box borders (2) + shortcut footer (1)
+	innerH := logH - 2 // box borders (2)
 	if innerH < 1 {
 		innerH = 1
 	}
@@ -578,19 +545,35 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		} else if det.logScroll > 0 {
 			det.logScroll--
 		}
-		det.logExpanded = -1
 	case "k", "up":
 		if det.logCursor > 0 {
 			det.logCursor--
 		} else if det.logScroll < maxScroll {
 			det.logScroll++
 		}
-		det.logExpanded = -1
 	case "enter":
-		if det.logExpanded == det.logCursor {
-			det.logExpanded = -1
-		} else {
-			det.logExpanded = det.logCursor
+		if det.logCursor >= 0 && det.logCursor < len(data) {
+			// Resolve cursor to the visible entry at this position.
+			end := len(data) - det.logScroll
+			if end > len(data) {
+				end = len(data)
+			}
+			start := end - innerH
+			if start < 0 {
+				start = 0
+			}
+			idx := start + det.logCursor
+			if idx >= 0 && idx < len(data) {
+				project := det.project
+				if project == "" {
+					project = det.svcProject
+				}
+				det.expandModal = &logExpandModal{
+					entry:   data[idx],
+					server:  s.Name,
+					project: project,
+				}
+			}
 		}
 	}
 	return nil
@@ -650,5 +633,90 @@ func updateFilterModal(det *DetailState, key string, cfg DisplayConfig) tea.Cmd 
 		}
 	}
 	return nil
+}
+
+// updateExpandModal handles keys inside the log expand modal.
+func updateExpandModal(det *DetailState, key string) tea.Cmd {
+	m := det.expandModal
+	switch key {
+	case "esc", "enter":
+		det.expandModal = nil
+	case "j", "down":
+		m.scroll++
+	case "k", "up":
+		if m.scroll > 0 {
+			m.scroll--
+		}
+	}
+	return nil
+}
+
+// renderExpandModal renders a centered modal overlay showing the full log message.
+func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, tsFormat string) string {
+	modalW := width * 3 / 4
+	if modalW < 40 {
+		modalW = 40
+	}
+	if modalW > width-4 {
+		modalW = width - 4
+	}
+	modalH := height
+	innerW := modalW - 2
+	innerH := modalH - 2
+	if innerH < 1 {
+		innerH = 1
+	}
+
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+	label := lipgloss.NewStyle().Foreground(theme.Muted)
+
+	// Metadata header.
+	var header []string
+	header = append(header, label.Render(" server:    ")+m.server)
+	if m.project != "" {
+		header = append(header, label.Render(" project:   ")+m.project)
+	}
+	header = append(header, label.Render(" container: ")+m.entry.ContainerName)
+	header = append(header, "")
+	header = append(header, label.Render(" timestamp: ")+FormatTimestamp(m.entry.Timestamp, tsFormat))
+	header = append(header, label.Render(" stream:    ")+m.entry.Stream)
+	header = append(header, " "+muted.Render(strings.Repeat("─", innerW-2)))
+
+	// Content area = total inner height minus header lines.
+	contentH := innerH - len(header)
+	if contentH < 1 {
+		contentH = 1
+	}
+
+	wrapped := wrapText(m.entry.Message, innerW-2)
+	if len(wrapped) == 0 {
+		wrapped = []string{""}
+	}
+
+	// Clamp scroll.
+	maxScroll := len(wrapped) - contentH
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.scroll > maxScroll {
+		m.scroll = maxScroll
+	}
+
+	// Visible slice.
+	start := m.scroll
+	end := start + contentH
+	if end > len(wrapped) {
+		end = len(wrapped)
+	}
+
+	var lines []string
+	lines = append(lines, header...)
+	for _, l := range wrapped[start:end] {
+		lines = append(lines, " "+l)
+	}
+
+	content := strings.Join(lines, "\n")
+	modal := Box("Log", content, modalW, modalH, theme)
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
 }
 

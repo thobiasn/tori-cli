@@ -120,8 +120,8 @@ func TestDetailReset(t *testing.T) {
 	if s.logCursor != 0 {
 		t.Errorf("logCursor = %d, want 0", s.logCursor)
 	}
-	if s.logExpanded != -1 {
-		t.Errorf("logExpanded = %d, want -1", s.logExpanded)
+	if s.expandModal != nil {
+		t.Error("expandModal should be nil after reset")
 	}
 	if s.filterStream != "" {
 		t.Errorf("filterStream = %q, want empty", s.filterStream)

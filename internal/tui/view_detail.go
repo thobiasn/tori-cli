@@ -22,10 +22,11 @@ type DetailState struct {
 	svcProject string // compose project (or "" for non-compose)
 	svcService string // compose service label (or container name for non-compose)
 
-	logs        *RingBuffer[protocol.LogEntryMsg]
-	logScroll   int
-	logCursor   int // index in visible entries (always ≥ 0)
-	logExpanded int // -1 = none
+	logs      *RingBuffer[protocol.LogEntryMsg]
+	logScroll int
+	logCursor int // index in visible entries (always ≥ 0)
+
+	expandModal *logExpandModal // nil = closed
 
 	// Filters.
 	filterProject string // project filter (g key, only meaningful in group mode)
@@ -50,6 +51,14 @@ type logFilterModal struct {
 	toTime   maskedField
 }
 
+// logExpandModal holds state for the full-message expand overlay.
+type logExpandModal struct {
+	entry   protocol.LogEntryMsg
+	server  string
+	project string
+	scroll  int
+}
+
 type detailLogQueryMsg struct {
 	entries     []protocol.LogEntryMsg
 	containerID string // which detail view requested this
@@ -69,7 +78,7 @@ func (s *DetailState) reset() {
 	s.logs = NewRingBuffer[protocol.LogEntryMsg](5000)
 	s.logScroll = 0
 	s.logCursor = 0
-	s.logExpanded = -1
+	s.expandModal = nil
 	s.filterProject = ""
 	s.filterStream = ""
 	s.searchText = ""
@@ -335,6 +344,8 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 	result := metricsBox + "\n" + logBox
 	if det.filterModal != nil {
 		result = metricsBox + "\n" + renderFilterModal(det.filterModal, width, logH, theme, a.displayCfg)
+	} else if det.expandModal != nil {
+		result = metricsBox + "\n" + renderExpandModal(det.expandModal, width, logH, theme, a.tsFormat())
 	}
 	return result
 }
@@ -391,6 +402,8 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 	result := metricsBox + "\n" + logBox
 	if det.filterModal != nil {
 		result = metricsBox + "\n" + renderFilterModal(det.filterModal, width, logH, theme, a.displayCfg)
+	} else if det.expandModal != nil {
+		result = metricsBox + "\n" + renderExpandModal(det.expandModal, width, logH, theme, a.tsFormat())
 	}
 	return result
 }
