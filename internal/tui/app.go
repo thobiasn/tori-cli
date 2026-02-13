@@ -90,11 +90,18 @@ type App struct {
 	dashFocus        dashFocus // focusServers (default) or focusContainers
 	serverCursor     int       // index into sessionOrder
 
+	displayCfg DisplayConfig // date/time format config
+
 	// Lazy connection state.
 	ctx              *appCtx          // shared program reference
 	sshPrompt        *sshPromptState  // active SSH prompt modal (nil = none)
 	autoConnectQueue []string         // servers to auto-connect sequentially
 	connecting       string           // server currently connecting ("" = idle)
+}
+
+// tsFormat returns the combined date+time format string for timestamps.
+func (a *App) tsFormat() string {
+	return a.displayCfg.DateFormat + " " + a.displayCfg.TimeFormat
 }
 
 // session returns the currently active session, or nil.
@@ -103,7 +110,7 @@ func (a *App) session() *Session {
 }
 
 // NewApp creates the root model with one or more sessions.
-func NewApp(sessions map[string]*Session) App {
+func NewApp(sessions map[string]*Session, display DisplayConfig) App {
 	order := make([]string, 0, len(sessions))
 	for name := range sessions {
 		order = append(order, name)
@@ -120,6 +127,7 @@ func NewApp(sessions map[string]*Session) App {
 		sessionOrder:  order,
 		activeSession: active,
 		theme:         DefaultTheme(),
+		displayCfg:    display,
 		ctx:           &appCtx{},
 	}
 }

@@ -126,7 +126,7 @@ func injectDeploySeparators(entries []protocol.LogEntryMsg) []protocol.LogEntryM
 	return out
 }
 
-func renderDetailLogs(s *DetailState, label string, width, height int, theme *Theme, focused bool) string {
+func renderDetailLogs(s *DetailState, label string, width, height int, theme *Theme, focused bool, tsFormat string) string {
 	boxH := height - 1 // leave room for shortcut footer
 	innerH := boxH - 2
 	if innerH < 1 {
@@ -178,7 +178,7 @@ func renderDetailLogs(s *DetailState, label string, width, height int, theme *Th
 
 	var lines []string
 	for i, entry := range visible {
-		line := formatLogLine(entry, innerW, theme)
+		line := formatLogLine(entry, innerW, theme, tsFormat)
 		if i == cursorIdx {
 			line = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(line), innerW))
 		}

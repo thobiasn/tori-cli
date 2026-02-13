@@ -236,10 +236,14 @@ func TestFormatUptime(t *testing.T) {
 
 func TestFormatTimestamp(t *testing.T) {
 	// Use a known timestamp. 1700000000 = 2023-11-14T22:13:20Z
-	got := FormatTimestamp(1700000000)
-	// Just verify it's in HH:MM:SS format (8 chars with colons).
+	got := FormatTimestamp(1700000000, "2006-01-02 15:04:05")
+	if !strings.Contains(got, "2023-11-1") && !strings.Contains(got, ":") {
+		t.Errorf("FormatTimestamp with date+time format = %q, want date and time", got)
+	}
+	// Time-only format still works.
+	got = FormatTimestamp(1700000000, "15:04:05")
 	if len(got) != 8 || got[2] != ':' || got[5] != ':' {
-		t.Errorf("FormatTimestamp(1700000000) = %q, want HH:MM:SS format", got)
+		t.Errorf("FormatTimestamp with time-only = %q, want HH:MM:SS format", got)
 	}
 }
 

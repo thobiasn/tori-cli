@@ -211,7 +211,19 @@ socket = "/run/rook/rook.sock"
 # port = 22
 # identity_file = "~/.ssh/staging_key"
 # auto_connect = true
+
+[display]
+# date_format = "2006-01-02"           # Go time layout (default: ISO date)
+# time_format = "15:04:05"             # Go time layout (default: 24h clock)
 ```
+
+The `[display]` section controls how timestamps appear in logs and alerts. Both fields use [Go time layout](https://pkg.go.dev/time#pkg-constants) strings. Examples:
+
+| Style | `date_format` | `time_format` |
+|---|---|---|
+| ISO 24h (default) | `2006-01-02` | `15:04:05` |
+| US 12h | `01/02` | `3:04PM` |
+| European short | `02 Jan` | `15:04` |
 
 ## Deploy — Binary
 

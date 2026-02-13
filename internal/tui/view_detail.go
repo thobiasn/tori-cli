@@ -315,7 +315,7 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 	}
 	var logBox string
 	if det.logs != nil && logH > 3 {
-		logBox = renderDetailLogs(det, containerName, width, logH, theme, det.logFocused)
+		logBox = renderDetailLogs(det, containerName, width, logH, theme, det.logFocused, a.tsFormat())
 	}
 
 	return metricsBox + "\n" + logBox
@@ -367,7 +367,7 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 
 	var logBox string
 	if det.logs != nil && logH > 3 {
-		logBox = renderDetailLogs(det, det.project, width, logH, theme, det.logFocused)
+		logBox = renderDetailLogs(det, det.project, width, logH, theme, det.logFocused, a.tsFormat())
 	}
 
 	return metricsBox + "\n" + logBox

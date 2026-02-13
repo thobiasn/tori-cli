@@ -156,7 +156,7 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		leftW := hostW * 65 / 100
 		rightW := hostW - leftW
 
-		alertPanel := renderAlertPanel(s.Alerts, hostW, theme)
+		alertPanel := renderAlertPanel(s.Alerts, hostW, theme, a.tsFormat())
 
 		cpuPanel := renderCPUPanel(cpuHistory, s.Host, RenderContext{Width: leftW, Height: cpuH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
 		// Split right column: memory on top, disks on bottom.
@@ -194,7 +194,7 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		return strings.Join([]string{topRow, contPanel}, "\n")
 	}
 
-	alertPanel := renderAlertPanel(s.Alerts, width, theme)
+	alertPanel := renderAlertPanel(s.Alerts, width, theme, a.tsFormat())
 
 	// Narrow (80-99): stacked layout with server panel.
 	// 2 lines per server (name + status) + dividers between + borders.

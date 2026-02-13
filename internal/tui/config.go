@@ -18,9 +18,16 @@ type ServerConfig struct {
 	AutoConnect  bool   `toml:"auto_connect"`  // connect on startup (default: false)
 }
 
+// DisplayConfig controls how dates and times are rendered in the TUI.
+type DisplayConfig struct {
+	DateFormat string `toml:"date_format"`
+	TimeFormat string `toml:"time_format"`
+}
+
 // Config is the client-side configuration.
 type Config struct {
 	Servers map[string]ServerConfig `toml:"servers"`
+	Display DisplayConfig           `toml:"display"`
 }
 
 // DefaultConfigPath returns ~/.config/rook/config.toml using os.UserConfigDir.
@@ -46,6 +53,10 @@ const defaultConfigContent = `# Rook client configuration.
 #   # socket = "/run/rook/rook.sock"
 #   # identity_file = "~/.ssh/id_ed25519"
 #   # auto_connect = true
+#
+# [display]
+# date_format = "2006-01-02"   # Go time layout
+# time_format = "15:04:05"     # Go time layout
 
 [servers.local]
 socket = "/run/rook/rook.sock"
@@ -76,6 +87,12 @@ func LoadConfig(path string) (*Config, error) {
 	var cfg Config
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
+	}
+	if cfg.Display.DateFormat == "" {
+		cfg.Display.DateFormat = "2006-01-02"
+	}
+	if cfg.Display.TimeFormat == "" {
+		cfg.Display.TimeFormat = "15:04:05"
 	}
 	if len(cfg.Servers) == 0 {
 		return nil, fmt.Errorf("load config: no servers defined")

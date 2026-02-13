@@ -137,7 +137,7 @@ func runConnect(args []string) {
 		srv.AutoConnect = true
 		sess := tui.NewSession(positional, nil, nil)
 		sess.Config = srv
-		runSessions(map[string]*tui.Session{positional: sess})
+		runSessions(map[string]*tui.Session{positional: sess}, cfg.Display)
 
 	default:
 		// No args: ensure config exists, create lazy sessions.
@@ -187,7 +187,7 @@ func runConnect(args []string) {
 				sessions[name] = sess
 			}
 		}
-		runSessions(sessions)
+		runSessions(sessions, cfg.Display)
 	}
 }
 
@@ -205,6 +205,12 @@ func loadClientConfig(path string) *tui.Config {
 	return cfg
 }
 
+// defaultDisplayConfig returns the default display config for direct connections
+// that bypass the config file.
+func defaultDisplayConfig() tui.DisplayConfig {
+	return tui.DisplayConfig{DateFormat: "2006-01-02", TimeFormat: "15:04:05"}
+}
+
 func runSingleSession(name, sockPath string, tunnel *tui.Tunnel) {
 	conn, err := net.Dial("unix", sockPath)
 	if err != nil {
@@ -219,10 +225,10 @@ func runSingleSession(name, sockPath string, tunnel *tui.Tunnel) {
 	sess := tui.NewSession(name, client, tunnel)
 	sess.ConnState = tui.ConnReady
 	sess.ConnMsg = "connected"
-	runSessions(map[string]*tui.Session{name: sess})
+	runSessions(map[string]*tui.Session{name: sess}, defaultDisplayConfig())
 }
 
-func runSessions(sessions map[string]*tui.Session) {
+func runSessions(sessions map[string]*tui.Session, display tui.DisplayConfig) {
 	// Determine session order for active session selection.
 	names := make([]string, 0, len(sessions))
 	for name := range sessions {
@@ -239,7 +245,7 @@ func runSessions(sessions map[string]*tui.Session) {
 		}
 	}
 
-	app := tui.NewApp(sessions)
+	app := tui.NewApp(sessions, display)
 
 	// Override active session if we found a ready one that isn't the default.
 	_ = active

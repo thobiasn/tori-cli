@@ -285,7 +285,7 @@ func TestAppServerPickerToggle(t *testing.T) {
 	// Multi-server setup.
 	s1 := NewSession("prod", nil, nil)
 	s2 := NewSession("staging", nil, nil)
-	a := NewApp(map[string]*Session{"prod": s1, "staging": s2})
+	a := NewApp(map[string]*Session{"prod": s1, "staging": s2}, DisplayConfig{DateFormat: "2006-01-02", TimeFormat: "15:04:05"})
 	a.width = 120
 	a.height = 40
 
@@ -586,7 +586,7 @@ func TestAppUpdateMetricsBackfillMsg(t *testing.T) {
 func TestAppMultiServerMessageRouting(t *testing.T) {
 	s1 := NewSession("prod", nil, nil)
 	s2 := NewSession("staging", nil, nil)
-	a := NewApp(map[string]*Session{"prod": s1, "staging": s2})
+	a := NewApp(map[string]*Session{"prod": s1, "staging": s2}, DisplayConfig{DateFormat: "2006-01-02", TimeFormat: "15:04:05"})
 	a.width = 120
 	a.height = 40
 

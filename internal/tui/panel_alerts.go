@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/thobiasn/rook/internal/protocol"
 )
 
 // renderAlertPanel renders the dashboard alert bar.
-func renderAlertPanel(alerts map[int64]*protocol.AlertEvent, width int, theme *Theme) string {
+func renderAlertPanel(alerts map[int64]*protocol.AlertEvent, width int, theme *Theme, tsFormat string) string {
 	if len(alerts) == 0 {
 		return Box("Alerts -- all clear", "", width, 3, theme)
 	}
@@ -28,7 +27,7 @@ func renderAlertPanel(alerts map[int64]*protocol.AlertEvent, width int, theme *T
 	innerW := width - 2
 	var lines []string
 	for _, a := range sorted {
-		ts := time.Unix(a.FiredAt, 0).Format("15:04")
+		ts := FormatTimestamp(a.FiredAt, tsFormat)
 		sev := severityTag(a.Severity, theme)
 		msg := Truncate(a.Message, innerW-25)
 		line := fmt.Sprintf(" %s  %s  %-16s %s", sev, ts, Truncate(a.RuleName, 16), msg)

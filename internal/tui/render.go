@@ -814,10 +814,9 @@ func FormatUptime(seconds float64) string {
 	return fmt.Sprintf("%dm", mins)
 }
 
-// FormatTimestamp formats a Unix timestamp as HH:MM:SS.
-func FormatTimestamp(ts int64) string {
-	t := time.Unix(ts, 0)
-	return t.Format("15:04:05")
+// FormatTimestamp formats a Unix timestamp using the given Go time layout.
+func FormatTimestamp(ts int64, format string) string {
+	return time.Unix(ts, 0).Format(format)
 }
 
 // FormatNumber formats an integer with comma separators (e.g., 2847 → "2,847").
@@ -918,20 +917,24 @@ func wrapText(s string, width int) []string {
 }
 
 // formatLogLine renders a single log entry as a styled string.
-func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme) string {
+func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsFormat string) string {
+	tsStr := FormatTimestamp(entry.Timestamp, tsFormat)
+	tsW := lipgloss.Width(tsStr)
+
 	// Synthetic lifecycle events render as a distinct separator line.
 	if entry.Stream == "event" {
 		style := lipgloss.NewStyle().Foreground(theme.Warning)
-		ts := lipgloss.NewStyle().Foreground(theme.Muted).Render(FormatTimestamp(entry.Timestamp))
-		return ts + " " + style.Render(Truncate(entry.Message, width-9))
+		ts := lipgloss.NewStyle().Foreground(theme.Muted).Render(tsStr)
+		return ts + " " + style.Render(Truncate(entry.Message, width-tsW-1))
 	}
 
-	ts := lipgloss.NewStyle().Foreground(theme.Muted).Render(FormatTimestamp(entry.Timestamp))
+	ts := lipgloss.NewStyle().Foreground(theme.Muted).Render(tsStr)
 	nameColor := ContainerNameColor(entry.ContainerName, theme)
 	name := lipgloss.NewStyle().Foreground(nameColor).Render(fmt.Sprintf("%-14s", Truncate(entry.ContainerName, 14)))
 
-	// ts (8) + space (1) + name (14) + space (1) = 24 chars overhead
-	msgW := width - 24
+	// ts + space (1) + name (14) + space (1) = overhead
+	overhead := tsW + 1 + 14 + 1
+	msgW := width - overhead
 	if msgW < 10 {
 		msgW = 10
 	}

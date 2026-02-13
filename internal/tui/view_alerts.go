@@ -102,6 +102,7 @@ func (s *AlertViewState) onSwitch(c *Client) tea.Cmd {
 // renderAlertView renders the full-screen alert history.
 func renderAlertView(a *App, s *Session, width, height int) string {
 	theme := &a.theme
+	tsFormat := a.tsFormat()
 	av := &s.Alertv
 	innerH := height - 3
 	if innerH < 1 {
@@ -163,7 +164,7 @@ func renderAlertView(a *App, s *Session, width, height int) string {
 	for i, alert := range visible {
 		globalIdx := start + i
 		sev := severityTag(alert.Severity, theme)
-		ts := time.Unix(alert.FiredAt, 0).Format("15:04")
+		ts := FormatTimestamp(alert.FiredAt, tsFormat)
 		rule := Truncate(alert.RuleName, 16)
 		msg := Truncate(alert.Message, innerW-40)
 
@@ -183,14 +184,14 @@ func renderAlertView(a *App, s *Session, width, height int) string {
 		lines = append(lines, TruncateStyled(row, innerW))
 
 		if globalIdx == av.expanded {
-			firedStr := time.Unix(alert.FiredAt, 0).Format("2006-01-02 15:04:05")
+			firedStr := FormatTimestamp(alert.FiredAt, tsFormat)
 			lines = append(lines, muted.Render("   Condition: ")+alert.Condition)
 			if alert.InstanceKey != "" {
 				lines = append(lines, muted.Render("   Instance:  ")+alert.InstanceKey)
 			}
 			lines = append(lines, muted.Render("   Fired:     ")+firedStr)
 			if alert.ResolvedAt > 0 {
-				resolvedStr := time.Unix(alert.ResolvedAt, 0).Format("2006-01-02 15:04:05")
+				resolvedStr := FormatTimestamp(alert.ResolvedAt, tsFormat)
 				lines = append(lines, muted.Render("   Resolved:  ")+resolvedStr)
 			}
 			if alert.Message != "" {
