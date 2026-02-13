@@ -39,6 +39,11 @@ func New(cfg *Config, cfgPath string) (*Agent, error) {
 		return nil, fmt.Errorf("docker collector: %w", err)
 	}
 
+	// Resolve alerts left unresolved by a previous crash/kill.
+	if err := store.ResolveOrphanedAlerts(context.Background(), time.Now()); err != nil {
+		slog.Warn("failed to resolve orphaned alerts", "error", err)
+	}
+
 	// Load persisted tracking state. Non-fatal if it fails.
 	containers, projects, err := store.LoadTracking(context.Background())
 	if err != nil {
@@ -84,6 +89,7 @@ func New(cfg *Config, cfgPath string) (*Agent, error) {
 	}
 
 	a.events = NewEventWatcher(docker, hub)
+	a.events.SetAlerter(a.alerter)
 	a.socket = NewSocketServer(hub, store, docker, a.alerter, cfg.Storage.RetentionDays)
 	return a, nil
 }
@@ -183,12 +189,14 @@ func (a *Agent) applyConfig(newCfg *Config) {
 		}
 		a.alerter = alerter
 		a.socket.SetAlerter(alerter)
+		a.events.SetAlerter(alerter)
 	} else {
 		if a.alerter != nil {
 			a.alerter.ResolveAll()
 		}
 		a.alerter = nil
 		a.socket.SetAlerter(nil)
+		a.events.SetAlerter(nil)
 	}
 
 	a.cfg.Alerts = newCfg.Alerts
@@ -321,6 +329,10 @@ func (a *Agent) shutdown() error {
 	a.events.Wait()
 	a.socket.Stop()
 	a.logs.Stop()
+
+	if a.alerter != nil {
+		a.alerter.ResolveAll()
+	}
 
 	if err := a.store.Close(); err != nil {
 		slog.Error("close store", "error", err)

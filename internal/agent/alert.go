@@ -152,18 +152,18 @@ func (a *Alerter) EvaluateContainerEvent(ctx context.Context, cm ContainerMetric
 		if r.condition.Scope != "container" {
 			continue
 		}
+		// Skip numeric rules — events don't carry metric data (CPU/mem = 0),
+		// which would cause false resolution of numeric alerts.
+		if !r.condition.IsStr {
+			continue
+		}
 		ec := &evalContext{
 			rule:        r,
 			key:         r.name + ":" + cm.ID,
 			containerID: cm.ID,
 			label:       cm.Name,
 		}
-		var matched bool
-		if r.condition.IsStr {
-			matched = compareStr(containerFieldStr(&cm, r.condition.Field), r.condition.Op, r.condition.StrVal)
-		} else {
-			matched = compareNum(containerFieldNum(&cm, r.condition.Field), r.condition.Op, r.condition.NumVal)
-		}
+		matched := compareStr(containerFieldStr(&cm, r.condition.Field), r.condition.Op, r.condition.StrVal)
 		a.transition(ctx, ec, matched, now)
 	}
 

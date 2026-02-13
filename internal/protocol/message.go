@@ -94,6 +94,7 @@ type ContainerEvent struct {
 	Action      string `msgpack:"action"`
 	Project     string `msgpack:"project,omitempty"`
 	Service     string `msgpack:"service,omitempty"`
+	Health      string `msgpack:"health,omitempty"`
 }
 
 // --- Request-response messages ---

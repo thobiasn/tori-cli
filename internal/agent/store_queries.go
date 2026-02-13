@@ -139,6 +139,47 @@ func (s *Store) ResolveAlert(ctx context.Context, id int64, resolvedAt time.Time
 	return err
 }
 
+// ResolveOrphanedAlerts resolves all alerts with resolved_at IS NULL.
+// Called on agent startup to clean up alerts left by a previous crash.
+func (s *Store) ResolveOrphanedAlerts(ctx context.Context, resolvedAt time.Time) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE alerts SET resolved_at = ? WHERE resolved_at IS NULL`,
+		resolvedAt.Unix(),
+	)
+	return err
+}
+
+// QueryFiringAlerts returns all currently firing (unresolved) alerts.
+func (s *Store) QueryFiringAlerts(ctx context.Context) ([]Alert, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, rule_name, severity, condition, instance_key, fired_at, resolved_at, message, acknowledged
+		 FROM alerts WHERE resolved_at IS NULL ORDER BY fired_at DESC LIMIT 1000`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []Alert
+	for rows.Next() {
+		var a Alert
+		var firedAt int64
+		var resolvedAt *int64
+		var ack int
+		if err := rows.Scan(&a.ID, &a.RuleName, &a.Severity, &a.Condition, &a.InstanceKey,
+			&firedAt, &resolvedAt, &a.Message, &ack); err != nil {
+			return nil, err
+		}
+		a.FiredAt = time.Unix(firedAt, 0)
+		if resolvedAt != nil {
+			t := time.Unix(*resolvedAt, 0)
+			a.ResolvedAt = &t
+		}
+		a.Acknowledged = ack != 0
+		result = append(result, a)
+	}
+	return result, rows.Err()
+}
+
 // --- Query methods ---
 
 func (s *Store) QueryHostMetrics(ctx context.Context, start, end int64) ([]TimedHostMetrics, error) {

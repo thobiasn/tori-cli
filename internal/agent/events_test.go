@@ -337,6 +337,164 @@ func TestEventExecCreateIgnored(t *testing.T) {
 	}
 }
 
+func TestEventStateChangeTriggersAlert(t *testing.T) {
+	ew, _, _, src := testEventWatcher(t, nil, nil)
+
+	// Create an alerter with a "container exited" rule.
+	s := testStore(t)
+	n := NewNotifier(&NotifyConfig{})
+	alerter, err := NewAlerter(map[string]AlertConfig{
+		"exited": {
+			Condition: "container.state == 'exited'",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	}, s, n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alerter.now = func() time.Time { return time.Now() }
+	ew.SetAlerter(alerter)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go ew.watch(ctx)
+
+	// Container dies.
+	src.msgCh <- events.Message{
+		Action: events.ActionDie,
+		Actor: events.Actor{
+			ID:         "abc123",
+			Attributes: map[string]string{"name": "web", "image": "nginx"},
+		},
+		Time: 1700000000,
+	}
+
+	// Wait for the event to be processed.
+	time.Sleep(100 * time.Millisecond)
+
+	alerter.mu.Lock()
+	inst := alerter.instances["exited:abc123"]
+	alerter.mu.Unlock()
+
+	if inst == nil || inst.state != stateFiring {
+		t.Error("expected exited:abc123 to be firing after die event")
+	}
+}
+
+func TestEventHealthStatusTriggersAlert(t *testing.T) {
+	ew, _, hub, src := testEventWatcher(t, nil, nil)
+
+	s := testStore(t)
+	n := NewNotifier(&NotifyConfig{})
+	alerter, err := NewAlerter(map[string]AlertConfig{
+		"unhealthy": {
+			Condition: "container.health == 'unhealthy'",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	}, s, n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alerter.now = func() time.Time { return time.Now() }
+	ew.SetAlerter(alerter)
+
+	_, ch := hub.Subscribe(TopicContainers)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go ew.watch(ctx)
+
+	// Docker emits health_status events with a suffix.
+	src.msgCh <- events.Message{
+		Action: "health_status: unhealthy",
+		Actor: events.Actor{
+			ID:         "abc123",
+			Attributes: map[string]string{"name": "web", "image": "nginx"},
+		},
+		Time: 1700000000,
+	}
+
+	// Verify hub message has health field.
+	select {
+	case msg := <-ch:
+		event := msg.(*protocol.ContainerEvent)
+		if event.Health != "unhealthy" {
+			t.Errorf("health = %q, want unhealthy", event.Health)
+		}
+		if event.Action != "health_status" {
+			t.Errorf("action = %q, want health_status", event.Action)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for hub message")
+	}
+
+	// Verify alert fired.
+	alerter.mu.Lock()
+	inst := alerter.instances["unhealthy:abc123"]
+	alerter.mu.Unlock()
+
+	if inst == nil || inst.state != stateFiring {
+		t.Error("expected unhealthy:abc123 to be firing after health_status event")
+	}
+}
+
+func TestEventNumericAlertNotAffected(t *testing.T) {
+	ew, _, _, src := testEventWatcher(t, nil, nil)
+
+	s := testStore(t)
+	n := NewNotifier(&NotifyConfig{})
+	alerter, err := NewAlerter(map[string]AlertConfig{
+		"high_cpu": {
+			Condition: "container.cpu_percent > 80",
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+	}, s, n)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alerter.now = func() time.Time { return time.Now() }
+
+	// Pre-fire the CPU alert via regular Evaluate.
+	alerter.Evaluate(context.Background(), &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "abc123", Name: "web", State: "running", CPUPercent: 95}},
+	})
+	if alerter.instances["high_cpu:abc123"].state != stateFiring {
+		t.Fatal("expected high_cpu:abc123 firing before event")
+	}
+
+	ew.SetAlerter(alerter)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go ew.watch(ctx)
+
+	// Container state event — should NOT affect numeric CPU alert.
+	src.msgCh <- events.Message{
+		Action: events.ActionStart,
+		Actor: events.Actor{
+			ID:         "abc123",
+			Attributes: map[string]string{"name": "web", "image": "nginx"},
+		},
+		Time: 1700000001,
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	alerter.mu.Lock()
+	inst := alerter.instances["high_cpu:abc123"]
+	alerter.mu.Unlock()
+
+	if inst == nil || inst.state != stateFiring {
+		t.Error("expected high_cpu:abc123 to still be firing (numeric rules skipped by event eval)")
+	}
+}
+
 func TestEventPausePublished(t *testing.T) {
 	ew, _, hub, src := testEventWatcher(t, nil, nil)
 

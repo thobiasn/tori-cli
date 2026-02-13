@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types/events"
@@ -17,6 +18,9 @@ import (
 type EventWatcher struct {
 	docker *DockerCollector
 	hub    *Hub
+
+	alerterMu sync.RWMutex
+	alerter   *Alerter
 
 	// Injectable for tests; production uses docker.client.Events.
 	eventsFn func(ctx context.Context, opts events.ListOptions) (<-chan events.Message, <-chan error)
@@ -38,6 +42,13 @@ func NewEventWatcher(docker *DockerCollector, hub *Hub) *EventWatcher {
 // Wait blocks until Run() has exited.
 func (ew *EventWatcher) Wait() {
 	<-ew.done
+}
+
+// SetAlerter replaces the alerter used for event-driven alert evaluation.
+func (ew *EventWatcher) SetAlerter(a *Alerter) {
+	ew.alerterMu.Lock()
+	defer ew.alerterMu.Unlock()
+	ew.alerter = a
 }
 
 // Run starts the event watcher. It reconnects with exponential backoff on
@@ -129,15 +140,25 @@ const (
 
 func (ew *EventWatcher) handleEvent(msg events.Message) {
 	action := msg.Action
-	// Docker exec actions have suffixes like "exec_create: /bin/sh".
-	// Normalize by taking the prefix before ": ".
-	if i := strings.Index(string(action), ": "); i >= 0 {
-		action = events.Action(string(action)[:i])
+	actionStr := string(action)
+
+	// health_status events have a suffix like "health_status: unhealthy".
+	// Extract the health value before the generic ": " stripping.
+	var health string
+	if strings.HasPrefix(actionStr, "health_status") {
+		if i := strings.Index(actionStr, ": "); i >= 0 {
+			health = actionStr[i+2:]
+		}
+		action = "health_status"
+	} else if i := strings.Index(actionStr, ": "); i >= 0 {
+		// Docker exec actions have suffixes like "exec_create: /bin/sh".
+		action = events.Action(actionStr[:i])
 	}
 
 	isDestroy := action == events.ActionDestroy
+	isHealth := action == "health_status"
 	state, known := actionStateMap[action]
-	if !known && !isDestroy {
+	if !known && !isDestroy && !isHealth {
 		return // Ignore actions we don't care about.
 	}
 
@@ -156,8 +177,10 @@ func (ew *EventWatcher) handleEvent(msg events.Message) {
 	publishState := state
 	if isDestroy {
 		publishState = "destroyed"
+	} else if isHealth {
+		publishState = "running" // container is still running during health checks
 	}
-	ew.hub.Publish(TopicContainers, &protocol.ContainerEvent{
+	event := &protocol.ContainerEvent{
 		Timestamp:   msg.Time,
 		ContainerID: id,
 		Name:        name,
@@ -166,5 +189,29 @@ func (ew *EventWatcher) handleEvent(msg events.Message) {
 		Action:      truncate(string(action), maxActionLen),
 		Project:     project,
 		Service:     service,
-	})
+		Health:      truncate(health, maxNameLen),
+	}
+	ew.hub.Publish(TopicContainers, event)
+
+	// Trigger alert evaluation for state/health changes.
+	if !isDestroy {
+		ew.alerterMu.RLock()
+		alerter := ew.alerter
+		ew.alerterMu.RUnlock()
+
+		if alerter != nil {
+			cm := ContainerMetrics{
+				ID:      id,
+				Name:    name,
+				State:   state,
+				Health:  health,
+				Project: project,
+				Service: service,
+			}
+			if isHealth {
+				cm.State = "running"
+			}
+			alerter.EvaluateContainerEvent(context.Background(), cm)
+		}
+	}
 }

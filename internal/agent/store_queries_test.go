@@ -1005,6 +1005,85 @@ func TestPruneDoesNotShrinkDBFile(t *testing.T) {
 		prePrune.Size(), postPrune.Size(), float64(postPrune.Size())/float64(prePrune.Size())*100)
 }
 
+func TestResolveOrphanedAlerts(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Insert two unresolved alerts and one resolved.
+	s.InsertAlert(ctx, &Alert{
+		RuleName: "rule_a", Severity: "critical", Condition: "test",
+		InstanceKey: "rule_a:aaa", FiredAt: ts, Message: "firing a",
+	})
+	id2, _ := s.InsertAlert(ctx, &Alert{
+		RuleName: "rule_b", Severity: "warning", Condition: "test",
+		InstanceKey: "rule_b:bbb", FiredAt: ts, Message: "firing b",
+	})
+	s.InsertAlert(ctx, &Alert{
+		RuleName: "rule_c", Severity: "warning", Condition: "test",
+		InstanceKey: "rule_c:ccc", FiredAt: ts, Message: "already resolved",
+	})
+	// Resolve rule_c manually.
+	s.ResolveAlert(ctx, 3, ts.Add(time.Minute))
+
+	// Resolve orphaned alerts.
+	resolveTime := ts.Add(5 * time.Minute)
+	if err := s.ResolveOrphanedAlerts(ctx, resolveTime); err != nil {
+		t.Fatal(err)
+	}
+
+	// All alerts should now be resolved.
+	var unresolvedCount int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts WHERE resolved_at IS NULL").Scan(&unresolvedCount); err != nil {
+		t.Fatal(err)
+	}
+	if unresolvedCount != 0 {
+		t.Errorf("unresolved alerts = %d, want 0", unresolvedCount)
+	}
+
+	// The orphaned alerts should have the new resolve time.
+	var resolvedAt int64
+	if err := s.db.QueryRow("SELECT resolved_at FROM alerts WHERE id = ?", id2).Scan(&resolvedAt); err != nil {
+		t.Fatal(err)
+	}
+	if resolvedAt != resolveTime.Unix() {
+		t.Errorf("resolved_at = %d, want %d", resolvedAt, resolveTime.Unix())
+	}
+}
+
+func TestQueryFiringAlerts(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Insert one firing and one resolved alert.
+	s.InsertAlert(ctx, &Alert{
+		RuleName: "firing_rule", Severity: "critical", Condition: "test",
+		InstanceKey: "firing_rule:aaa", FiredAt: ts, Message: "still firing",
+	})
+	id2, _ := s.InsertAlert(ctx, &Alert{
+		RuleName: "resolved_rule", Severity: "warning", Condition: "test",
+		InstanceKey: "resolved_rule:bbb", FiredAt: ts, Message: "resolved",
+	})
+	s.ResolveAlert(ctx, id2, ts.Add(time.Minute))
+
+	results, err := s.QueryFiringAlerts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d firing alerts, want 1", len(results))
+	}
+	if results[0].RuleName != "firing_rule" {
+		t.Errorf("rule_name = %q, want firing_rule", results[0].RuleName)
+	}
+	if results[0].ResolvedAt != nil {
+		t.Error("firing alert should have nil ResolvedAt")
+	}
+}
+
 func TestLogStorageScaling(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

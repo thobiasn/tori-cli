@@ -673,11 +673,10 @@ func TestEvaluateContainerEventStateFires(t *testing.T) {
 	}
 }
 
-func TestEvaluateContainerEventCPUAlertResolvedByZeroStats(t *testing.T) {
-	// EvaluateContainerEvent passes zero-stat ContainerMetrics (events don't
-	// carry CPU/mem data). A firing cpu_percent alert will see 0 > 80 = false
-	// and resolve. This is correct — the event watcher only calls this on
-	// start/die/stop/kill, and the regular collect cycle will re-fire if needed.
+func TestEvaluateContainerEventSkipsNumericRules(t *testing.T) {
+	// EvaluateContainerEvent now skips numeric rules entirely — events don't
+	// carry metric data (CPU/mem = 0), which would cause false resolution.
+	// Only string fields (state, health) are evaluated via events.
 	alerts := map[string]AlertConfig{
 		"high_cpu": {
 			Condition: "container.cpu_percent > 80",
@@ -685,7 +684,7 @@ func TestEvaluateContainerEventCPUAlertResolvedByZeroStats(t *testing.T) {
 			Actions:   []string{"notify"},
 		},
 	}
-	a, s := testAlerter(t, alerts)
+	a, _ := testAlerter(t, alerts)
 	ctx := context.Background()
 
 	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -699,7 +698,7 @@ func TestEvaluateContainerEventCPUAlertResolvedByZeroStats(t *testing.T) {
 		t.Fatal("expected high_cpu:aaa firing")
 	}
 
-	// Event evaluation with zero CPU resolves the alert.
+	// Event evaluation should skip the numeric rule entirely — alert stays firing.
 	now = now.Add(10 * time.Second)
 	a.EvaluateContainerEvent(ctx, ContainerMetrics{
 		ID:    "aaa",
@@ -707,17 +706,8 @@ func TestEvaluateContainerEventCPUAlertResolvedByZeroStats(t *testing.T) {
 		State: "running",
 	})
 
-	if a.instances["high_cpu:aaa"] != nil && a.instances["high_cpu:aaa"].state == stateFiring {
-		t.Error("expected high_cpu:aaa to be resolved (zero CPU from event)")
-	}
-
-	// Verify the alert was created and resolved.
-	var count int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts WHERE rule_name = 'high_cpu'").Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 1 {
-		t.Errorf("alert rows = %d, want 1", count)
+	if a.instances["high_cpu:aaa"].state != stateFiring {
+		t.Error("expected high_cpu:aaa to still be firing (numeric rules skipped by event eval)")
 	}
 }
 

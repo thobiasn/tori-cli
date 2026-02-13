@@ -359,6 +359,30 @@ func (c *connState) containerInProject(containerID, project string) bool {
 
 func (c *connState) subscribeAlerts() {
 	c.subscribeSimple(TopicAlerts, protocol.TypeAlertEvent)
+
+	// Send current firing alerts so reconnecting clients see existing state.
+	alerts, err := c.ss.store.QueryFiringAlerts(c.ctx)
+	if err != nil {
+		slog.Warn("query firing alerts for snapshot", "error", err)
+		return
+	}
+	for _, a := range alerts {
+		event := &protocol.AlertEvent{
+			ID:          a.ID,
+			RuleName:    a.RuleName,
+			Severity:    a.Severity,
+			Condition:   a.Condition,
+			InstanceKey: a.InstanceKey,
+			FiredAt:     a.FiredAt.Unix(),
+			Message:     a.Message,
+			State:       "firing",
+		}
+		env, err := protocol.NewEnvelope(protocol.TypeAlertEvent, 0, event)
+		if err != nil {
+			continue
+		}
+		c.writeMsg(env)
+	}
 }
 
 func (c *connState) subscribeContainers() {
