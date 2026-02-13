@@ -142,7 +142,7 @@ func Box(title, content string, width, height int, theme *Theme, focused ...bool
 		pad := innerW - lineW
 		if pad < 0 {
 			pad = 0
-			line = Truncate(line, innerW)
+			line = TruncateStyled(line, innerW)
 		}
 		b.WriteString(borderStyle.Render("│"))
 		b.WriteString(line)
@@ -944,6 +944,36 @@ func stripANSI(s string) string {
 	return b.String()
 }
 
+// sanitizeLogMsg strips ANSI escape sequences, replaces tabs with spaces,
+// and removes control characters that would corrupt terminal rendering
+// (carriage returns, cursor movement, etc.).
+func sanitizeLogMsg(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	inEscape := false
+	for _, r := range s {
+		if r == '\x1b' {
+			inEscape = true
+			continue
+		}
+		if inEscape {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEscape = false
+			}
+			continue
+		}
+		switch {
+		case r == '\t':
+			b.WriteString("    ")
+		case r < 0x20 && r != '\n':
+			// Drop control characters (\r, \b, etc.) but keep newline.
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // ContainerNameColor returns a deterministic color for a container name
 // using FNV-32a hash into the theme's container palette.
 func ContainerNameColor(name string, theme *Theme) lipgloss.Color {
@@ -993,7 +1023,7 @@ func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsFormat
 		if msgW < 10 {
 			msgW = 10
 		}
-		return strings.Repeat(" ", leftW) + " " + divider + " " + style.Render(Truncate(entry.Message, msgW))
+		return strings.Repeat(" ", leftW) + " " + divider + " " + style.Render(Truncate(sanitizeLogMsg(entry.Message), msgW))
 	}
 
 	ts := muted.Render(tsStr)
@@ -1019,7 +1049,7 @@ func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsFormat
 	if msgW < 10 {
 		msgW = 10
 	}
-	msg := Truncate(entry.Message, msgW)
+	msg := Truncate(sanitizeLogMsg(entry.Message), msgW)
 
 	if entry.Stream == "stderr" {
 		msg = lipgloss.NewStyle().Foreground(theme.Critical).Render(msg)

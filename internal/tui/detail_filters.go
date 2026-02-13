@@ -694,7 +694,7 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, tsFor
 		contentH = 1
 	}
 
-	msg := m.entry.Message
+	msg := sanitizeLogMsg(m.entry.Message)
 	if json.Valid([]byte(msg)) {
 		var buf bytes.Buffer
 		if json.Indent(&buf, []byte(msg), "", "  ") == nil {

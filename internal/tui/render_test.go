@@ -351,6 +351,37 @@ func TestStripANSI(t *testing.T) {
 	}
 }
 
+func TestSanitizeLogMsg(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"plain text", "plain text"},
+		{"", ""},
+		// ANSI escape sequences are stripped.
+		{"\x1b[31mred\x1b[0m text", "red text"},
+		{"\x1b[1;32mbold green\x1b[0m", "bold green"},
+		// Tabs are replaced with 4 spaces.
+		{"col1\tcol2\tcol3", "col1    col2    col3"},
+		// Carriage returns are removed.
+		{"progress\r100%", "progress100%"},
+		// Mixed control characters.
+		{"hello\r\x1b[Kworld", "helloworld"},
+		// Backspace and other control chars dropped.
+		{"abc\bdef", "abcdef"},
+		// Newlines are preserved.
+		{"line1\nline2", "line1\nline2"},
+		// Combined: ANSI + tabs + CR.
+		{"\x1b[33mwarn\x1b[0m:\tcheck\rfailed", "warn:    checkfailed"},
+	}
+	for _, tt := range tests {
+		got := sanitizeLogMsg(tt.input)
+		if got != tt.want {
+			t.Errorf("sanitizeLogMsg(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 func TestGraph(t *testing.T) {
 	theme := DefaultTheme()
 
