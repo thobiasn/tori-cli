@@ -36,6 +36,42 @@ services:
         severity = "critical"
         actions = ["notify"]
 
+        [alerts.high_cpu]
+        condition = "host.cpu_percent > 90"
+        for = "2m"
+        severity = "warning"
+        actions = ["notify"]
+
+        [alerts.high_memory]
+        condition = "host.memory_percent > 85"
+        for = "1m"
+        severity = "warning"
+        actions = ["notify"]
+
+        [alerts.disk_space]
+        condition = "host.disk_percent > 90"
+        for = "0s"
+        severity = "critical"
+        actions = ["notify"]
+
+        # [alerts.high_load]
+        # condition = "host.load1 > 4"     # tune threshold to your CPU count
+        # for = "5m"
+        # severity = "warning"
+        # actions = ["notify"]
+
+        [alerts.high_swap]
+        condition = "host.swap_percent > 80"
+        for = "2m"
+        severity = "warning"
+        actions = ["notify"]
+
+        [alerts.container_memory]
+        condition = "container.memory_percent > 90"
+        for = "1m"
+        severity = "warning"
+        actions = ["notify"]
+
         [alerts.unhealthy]
         condition = "container.health == 'unhealthy'"
         for = "30s"
@@ -47,9 +83,9 @@ services:
         severity = "critical"
         actions = ["notify"]
 
-        [alerts.high_load]
-        condition = "host.load1 > 4"
-        for = "5m"
+        [alerts.bad_exit]
+        condition = "container.exit_code != 0"
+        for = "0s"
         severity = "warning"
         actions = ["notify"]
 

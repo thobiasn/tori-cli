@@ -131,15 +131,21 @@ for = "0s"
 severity = "critical"
 actions = ["notify"]
 
-[alerts.high_load]
-condition = "host.load1 > 4"
-for = "5m"
-severity = "warning"
-actions = ["notify"]
+# [alerts.high_load]
+# condition = "host.load1 > 4"     # tune threshold to your CPU count
+# for = "5m"
+# severity = "warning"
+# actions = ["notify"]
 
 [alerts.high_swap]
 condition = "host.swap_percent > 80"
 for = "2m"
+severity = "warning"
+actions = ["notify"]
+
+[alerts.container_memory]
+condition = "container.memory_percent > 90"
+for = "1m"
 severity = "warning"
 actions = ["notify"]
 
@@ -229,7 +235,7 @@ The `[display]` section controls how timestamps appear in logs and alerts. Both 
 
 ```bash
 # Install
-curl -fsSL https://get.tori.dev | sh
+curl -fsSL https://get.toricli.sh | sh
 
 # Start the agent
 tori agent --config /etc/tori/config.toml
