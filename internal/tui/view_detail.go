@@ -552,6 +552,36 @@ func historyData(hist map[string]*RingBuffer[float64], id string) []float64 {
 	return nil
 }
 
+// aggregateHistory sums per-index values across multiple container histories (right-aligned).
+func aggregateHistory(histories map[string]*RingBuffer[float64], ids []string) []float64 {
+	maxLen := 0
+	for _, id := range ids {
+		if buf, ok := histories[id]; ok {
+			d := buf.Data()
+			if len(d) > maxLen {
+				maxLen = len(d)
+			}
+		}
+	}
+	if maxLen == 0 {
+		return nil
+	}
+
+	agg := make([]float64, maxLen)
+	for _, id := range ids {
+		buf, ok := histories[id]
+		if !ok {
+			continue
+		}
+		d := buf.Data()
+		offset := maxLen - len(d)
+		for i, v := range d {
+			agg[offset+i] += v
+		}
+	}
+	return agg
+}
+
 // containerAlerts returns active alerts that match a container ID.
 func containerAlerts(alerts map[int64]*protocol.AlertEvent, containerID string) []*protocol.AlertEvent {
 	suffix := ":" + containerID

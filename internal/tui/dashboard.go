@@ -12,6 +12,13 @@ import (
 	"github.com/thobiasn/rook/internal/protocol"
 )
 
+type dashFocus int
+
+const (
+	focusContainers dashFocus = iota
+	focusServers
+)
+
 // DashboardState holds dashboard-specific state.
 type DashboardState struct {
 	cursor    int
@@ -142,12 +149,14 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 	cpuHistory := s.HostCPUHistory.Data()
 	windowLabel := a.windowLabel()
 
-	alertPanel := renderAlertPanel(s.Alerts, width, theme)
-
 	if width >= 100 {
-		// Wide: 4-quadrant layout (side-by-side top and middle).
-		leftW := width * 65 / 100
-		rightW := width - leftW
+		// Wide: server panel (fixed 20) spans alert+host rows on the left.
+		srvW := 32
+		hostW := width - srvW
+		leftW := hostW * 65 / 100
+		rightW := hostW - leftW
+
+		alertPanel := renderAlertPanel(s.Alerts, hostW, theme)
 
 		cpuPanel := renderCPUPanel(cpuHistory, s.Host, RenderContext{Width: leftW, Height: cpuH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
 		// Split right column: memory on top, disks on bottom.
@@ -176,16 +185,26 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		rightCol := lipgloss.JoinVertical(lipgloss.Left, memPanel, diskPanel)
 		hostRow := lipgloss.JoinHorizontal(lipgloss.Top, cpuPanel, rightCol)
 
-		listW := width * 3 / 5
-		midRightW := width - listW
-		contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, RenderContext{Width: listW, Height: middleH, Theme: theme})
-		selPanel := renderSelectedPanel(a, s, RenderContext{Width: midRightW, Height: middleH, Theme: theme})
-		midRow := lipgloss.JoinHorizontal(lipgloss.Top, contPanel, selPanel)
+		rightContent := lipgloss.JoinVertical(lipgloss.Left, alertPanel, hostRow)
+		serverPanel := renderServerPanel(a, alertH+cpuH, srvW)
+		topRow := lipgloss.JoinHorizontal(lipgloss.Top, serverPanel, rightContent)
 
-		return strings.Join([]string{alertPanel, hostRow, midRow}, "\n")
+		contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, RenderContext{Width: width, Height: middleH, Theme: theme}, a.dashFocus == focusContainers)
+
+		return strings.Join([]string{topRow, contPanel}, "\n")
 	}
 
-	// Narrow (80-99): stacked layout.
+	alertPanel := renderAlertPanel(s.Alerts, width, theme)
+
+	// Narrow (80-99): stacked layout with server panel.
+	// 2 lines per server (name + status) + dividers between + borders.
+	n := len(a.sessionOrder)
+	srvH := n*2 + 2
+	if n > 1 {
+		srvH += n - 1 // dividers between servers
+	}
+	serverPanel := renderServerPanel(a, srvH, width)
+
 	diskH := len(s.Disks)*3 + 2
 	if s.Host != nil && s.Host.SwapTotal > 0 {
 		diskH += 3
@@ -205,15 +224,9 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		hostH = cpuPanelH + narrowMemH + diskH
 	}
 
-	remaining := height - alertH - hostH
-	selH := 8
-	contH := remaining - selH
+	contH := height - alertH - srvH - hostH
 	if contH < 4 {
 		contH = 4
-		selH = remaining - contH
-		if selH < 4 {
-			selH = 4
-		}
 	}
 
 	var swapTotal2, swapUsed2 uint64
@@ -223,15 +236,97 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 	cpuPanel := renderCPUPanel(cpuHistory, s.Host, RenderContext{Width: width, Height: cpuPanelH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
 	memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), RenderContext{Width: width, Height: narrowMemH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
 	diskPanel := renderDiskPanel(s.Disks, swapTotal2, swapUsed2, width, diskH, theme)
-	contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, RenderContext{Width: width, Height: contH, Theme: theme})
-	selPanel := renderSelectedPanel(a, s, RenderContext{Width: width, Height: selH, Theme: theme})
+	contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, RenderContext{Width: width, Height: contH, Theme: theme}, a.dashFocus == focusContainers)
 
-	return strings.Join([]string{alertPanel, cpuPanel, memPanel, diskPanel, contPanel, selPanel}, "\n")
+	return strings.Join([]string{alertPanel, serverPanel, cpuPanel, memPanel, diskPanel, contPanel}, "\n")
+}
+
+// renderServerPanel renders the server list panel.
+func renderServerPanel(a *App, height, width int) string {
+	theme := &a.theme
+	innerW := width - 2
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+
+	var lines []string
+	for i, name := range a.sessionOrder {
+		sess := a.sessions[name]
+
+		// Divider between servers.
+		if i > 0 {
+			div := muted.Render(strings.Repeat("─", innerW-2))
+			lines = append(lines, " "+div)
+		}
+
+		// Status indicator color based on connection state.
+		var indicatorColor lipgloss.Color
+		switch sess.ConnState {
+		case ConnReady:
+			indicatorColor = theme.Healthy
+		case ConnConnecting, ConnSSH:
+			indicatorColor = theme.Warning
+		case ConnError:
+			indicatorColor = theme.Critical
+		default:
+			indicatorColor = theme.Muted
+		}
+		indicator := lipgloss.NewStyle().Foreground(indicatorColor).Render("●")
+
+		isCursor := a.dashFocus == focusServers && i == a.serverCursor
+		isActive := a.dashFocus == focusContainers && name == a.activeSession
+
+		// Name line: "● servername" — wrap if needed.
+		namePrefix := fmt.Sprintf(" %s ", indicator)
+		nameW := innerW - 3 // "● " prefix = 3 chars
+		for j, chunk := range wrapText(name, nameW) {
+			var line string
+			if j == 0 {
+				line = namePrefix + chunk
+			} else {
+				line = "   " + chunk
+			}
+			if isCursor {
+				line = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(line), innerW))
+			} else if isActive {
+				line = lipgloss.NewStyle().Foreground(theme.Accent).Render(Truncate(stripANSI(line), innerW))
+			}
+			lines = append(lines, TruncateStyled(line, innerW))
+		}
+
+		// Status message — wrap if needed.
+		statusMsg := sess.ConnMsg
+		if statusMsg == "" {
+			statusMsg = "not connected"
+		}
+		statusW := innerW - 3 // 3-char indent
+		for _, chunk := range wrapText(statusMsg, statusW) {
+			line := "   " + muted.Render(chunk)
+			if isCursor {
+				line = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(line), innerW))
+			}
+			lines = append(lines, TruncateStyled(line, innerW))
+		}
+	}
+
+	return Box("Servers", strings.Join(lines, "\n"), width, height, theme)
 }
 
 // updateDashboard handles keys for the dashboard view.
 func updateDashboard(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	key := msg.String()
+
+	if key == "tab" {
+		if a.dashFocus == focusContainers {
+			a.dashFocus = focusServers
+		} else {
+			a.dashFocus = focusContainers
+		}
+		return nil
+	}
+
+	if a.dashFocus == focusServers {
+		return updateServerFocus(a, key)
+	}
+
 	switch key {
 	case "j", "down":
 		max := maxCursorPos(s.Dash.groups, s.Dash.collapsed)
@@ -248,6 +343,9 @@ func updateDashboard(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 			s.Dash.collapsed[name] = !s.Dash.collapsed[name]
 		}
 	case "enter":
+		if s.Client == nil {
+			return nil
+		}
 		id := cursorContainerID(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
 		if id != "" {
 			s.Detail.containerID = id
@@ -322,6 +420,37 @@ func toggleTracking(s *Session) tea.Cmd {
 			client.SetTracking(ctx, name, "", !tracked)
 			return trackingDoneMsg{server: client.server}
 		}
+	}
+	return nil
+}
+
+// updateServerFocus handles keys when the server panel has focus.
+func updateServerFocus(a *App, key string) tea.Cmd {
+	switch key {
+	case "j", "down":
+		if a.serverCursor < len(a.sessionOrder)-1 {
+			a.serverCursor++
+			a.activeSession = a.sessionOrder[a.serverCursor]
+			if s := a.session(); s != nil && s.Client != nil {
+				return backfillMetrics(s.Client, a.windowSeconds())
+			}
+		}
+	case "k", "up":
+		if a.serverCursor > 0 {
+			a.serverCursor--
+			a.activeSession = a.sessionOrder[a.serverCursor]
+			if s := a.session(); s != nil && s.Client != nil {
+				return backfillMetrics(s.Client, a.windowSeconds())
+			}
+		}
+	case "enter":
+		s := a.sessions[a.sessionOrder[a.serverCursor]]
+		if s != nil && (s.ConnState == ConnNone || s.ConnState == ConnError) {
+			s.ConnState = ConnNone // reset error state for retry
+			s.Err = nil
+			return func() tea.Msg { return connectServerMsg{name: s.Name} }
+		}
+		a.dashFocus = focusContainers
 	}
 	return nil
 }

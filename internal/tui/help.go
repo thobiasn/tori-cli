@@ -8,12 +8,13 @@ import (
 
 var dashboardHelp = `
  Navigation
+   Tab          Focus servers/containers
    j/k, ↑/↓    Move cursor
    Space        Collapse/expand group
    Enter        Open container/group detail
    t            Toggle tracking
    +/-          Zoom time window
-   Tab, 1-2     Switch view
+   1-2          Switch view
    ?            Toggle help
    q            Quit`
 

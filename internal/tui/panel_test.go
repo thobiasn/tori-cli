@@ -142,7 +142,7 @@ func TestRenderContainerPanel(t *testing.T) {
 			{ID: "c2", Name: "db", State: "running", CPUPercent: 0.8, MemUsage: 256 * 1024 * 1024},
 		}, running: 2},
 	}
-	got := renderContainerPanel(groups, map[string]bool{}, 0, nil, nil, RenderContext{Width: 50, Height: 10, Theme: &theme})
+	got := renderContainerPanel(groups, map[string]bool{}, 0, nil, nil, RenderContext{Width: 50, Height: 10, Theme: &theme}, true)
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "myapp") {
 		t.Error("should contain group name")
@@ -155,70 +155,6 @@ func TestRenderContainerPanel(t *testing.T) {
 	}
 }
 
-func TestRenderSelectedPanelContainer(t *testing.T) {
-	a := newTestApp()
-	s := a.session()
-	s.Containers = []protocol.ContainerMetrics{
-		{ID: "c1", Name: "web", State: "running", CPUPercent: 5.5, MemUsage: 128 * 1024 * 1024, MemLimit: 512 * 1024 * 1024, Image: "nginx:latest"},
-	}
-	s.ContInfo = []protocol.ContainerInfo{
-		{ID: "c1", Name: "web", Project: "app"},
-	}
-	s.Dash.groups = buildGroups(s.Containers, s.ContInfo)
-	s.Dash.cursor = 1 // First container.
-
-	// Add some CPU history.
-	s.CPUHistory["c1"] = NewRingBuffer[float64](60)
-	for i := 0; i < 10; i++ {
-		s.CPUHistory["c1"].Push(float64(i * 10))
-	}
-
-	got := renderSelectedPanel(&a, s, RenderContext{Width: 50, Height: 25, Theme: &a.theme})
-	plain := stripANSI(got)
-	if !strings.Contains(plain, "web") {
-		t.Error("should contain container name 'web'")
-	}
-	if !strings.Contains(plain, "5.5%") {
-		t.Error("should contain CPU percentage")
-	}
-	if !strings.Contains(plain, "nginx") {
-		t.Error("should contain image name")
-	}
-}
-
-func TestRenderSelectedPanelGroupHeader(t *testing.T) {
-	a := newTestApp()
-	s := a.session()
-	s.Containers = []protocol.ContainerMetrics{
-		{ID: "c1", Name: "web", State: "running", CPUPercent: 5.0, MemUsage: 100e6},
-		{ID: "c2", Name: "db", State: "running", CPUPercent: 3.0, MemUsage: 200e6},
-	}
-	s.ContInfo = []protocol.ContainerInfo{
-		{ID: "c1", Name: "web", Project: "app"},
-		{ID: "c2", Name: "db", Project: "app"},
-	}
-	s.Dash.groups = buildGroups(s.Containers, s.ContInfo)
-	s.Dash.cursor = 0 // Group header.
-
-	got := renderSelectedPanel(&a, s, RenderContext{Width: 50, Height: 10, Theme: &a.theme})
-	plain := stripANSI(got)
-	if !strings.Contains(plain, "Group: app") {
-		t.Error("should show group summary title")
-	}
-	if !strings.Contains(plain, "2/2 running") {
-		t.Error("should show running count")
-	}
-}
-
-func TestRenderSelectedPanelNoSelection(t *testing.T) {
-	a := newTestApp()
-	s := a.session()
-	got := renderSelectedPanel(&a, s, RenderContext{Width: 50, Height: 10, Theme: &a.theme})
-	plain := stripANSI(got)
-	if !strings.Contains(plain, "Move cursor") {
-		t.Error("should show hint when no container selected")
-	}
-}
 
 func TestRenderContainerPanelCollapsed(t *testing.T) {
 	theme := DefaultTheme()
@@ -227,7 +163,7 @@ func TestRenderContainerPanelCollapsed(t *testing.T) {
 			{ID: "c1", Name: "web", State: "running"},
 		}, running: 1},
 	}
-	got := renderContainerPanel(groups, map[string]bool{"myapp": true}, 0, nil, nil, RenderContext{Width: 50, Height: 10, Theme: &theme})
+	got := renderContainerPanel(groups, map[string]bool{"myapp": true}, 0, nil, nil, RenderContext{Width: 50, Height: 10, Theme: &theme}, true)
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "myapp") {
 		t.Error("collapsed should still show group header")

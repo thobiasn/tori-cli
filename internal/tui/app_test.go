@@ -24,6 +24,7 @@ func newTestApp() App {
 		theme:         DefaultTheme(),
 		width:         120,
 		height:        40,
+		ctx:           &appCtx{},
 	}
 }
 
@@ -192,13 +193,25 @@ func TestAppViewSwitchTab(t *testing.T) {
 		t.Errorf("after '1', active = %d, want viewDashboard", a.active)
 	}
 
-	// Tab should cycle dashboard <-> alerts.
+	// Tab on dashboard toggles focus between servers and containers.
 	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
 	a = model.(App)
-	if a.active != viewAlerts {
-		t.Errorf("tab from dashboard should go to alerts, got %d", a.active)
+	if a.active != viewDashboard {
+		t.Errorf("tab on dashboard should stay on dashboard, got %d", a.active)
+	}
+	if a.dashFocus != focusServers {
+		t.Errorf("tab should toggle to focusServers, got %d", a.dashFocus)
 	}
 
+	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
+	a = model.(App)
+	if a.dashFocus != focusContainers {
+		t.Errorf("tab should toggle back to focusContainers, got %d", a.dashFocus)
+	}
+
+	// Tab from alerts should go to dashboard.
+	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	a = model.(App)
 	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
 	a = model.(App)
 	if a.active != viewDashboard {
@@ -275,11 +288,20 @@ func TestAppServerPickerToggle(t *testing.T) {
 	a.width = 120
 	a.height = 40
 
-	// S opens picker.
+	// S should NOT open picker on dashboard (server panel replaces it).
 	model, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")})
 	a = model.(App)
+	if a.showServerPicker {
+		t.Error("S should not open picker on dashboard")
+	}
+
+	// Switch to alerts view, then S opens picker.
+	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	a = model.(App)
+	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")})
+	a = model.(App)
 	if !a.showServerPicker {
-		t.Error("S should open server picker")
+		t.Error("S should open server picker on alerts view")
 	}
 
 	// "2" selects second server.
@@ -290,6 +312,9 @@ func TestAppServerPickerToggle(t *testing.T) {
 	}
 	if a.activeSession != "staging" {
 		t.Errorf("activeSession = %q, want staging", a.activeSession)
+	}
+	if a.serverCursor != 1 {
+		t.Errorf("serverCursor = %d, want 1", a.serverCursor)
 	}
 }
 

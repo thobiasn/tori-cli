@@ -334,6 +334,10 @@ func TestIsContainerTracked(t *testing.T) {
 func TestUpdateDashboardEnterGroupHeader(t *testing.T) {
 	a := newTestApp()
 	s := a.session()
+	c1, c2 := net.Pipe()
+	defer c1.Close()
+	defer c2.Close()
+	s.Client = NewClient(c1, testServer)
 	s.Dash.groups = []containerGroup{
 		{name: "myapp", containers: []protocol.ContainerMetrics{
 			{ID: "c1", Name: "web"}, {ID: "c2", Name: "db"},
