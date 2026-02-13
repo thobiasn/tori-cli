@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/thobiasn/tori-cli/internal/protocol"
@@ -12,6 +13,9 @@ func TestAlertViewInitialStale(t *testing.T) {
 	s := newAlertViewState()
 	if !s.stale {
 		t.Error("new alert view state should be stale")
+	}
+	if !s.rulesStale {
+		t.Error("new alert view state should have rulesStale")
 	}
 }
 
@@ -40,31 +44,39 @@ func TestAlertViewCursorNavigation(t *testing.T) {
 	s := a.session()
 	a.active = viewAlerts
 	s.Alertv.alerts = []protocol.AlertMsg{
-		{ID: 1, RuleName: "a"}, {ID: 2, RuleName: "b"}, {ID: 3, RuleName: "c"},
+		{ID: 1, RuleName: "a", Severity: "critical", FiredAt: 100},
+		{ID: 2, RuleName: "b", Severity: "critical", FiredAt: 200},
+		{ID: 3, RuleName: "c", Severity: "critical", FiredAt: 300},
 	}
-	s.Alertv.cursor = 0
+
+	// Items: header(FIRING), a, b, c => cursor should start at 1 (first data row).
+	items := buildSectionItems(s.Alertv.alerts, false)
+	clampCursorToItems(&s.Alertv, items)
+	if s.Alertv.cursor != 1 {
+		t.Fatalf("initial cursor = %d, want 1 (first data row)", s.Alertv.cursor)
+	}
 
 	// Move down.
-	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	if s.Alertv.cursor != 1 {
-		t.Errorf("cursor after j = %d, want 1", s.Alertv.cursor)
-	}
-
 	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
 	if s.Alertv.cursor != 2 {
 		t.Errorf("cursor after j = %d, want 2", s.Alertv.cursor)
 	}
 
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if s.Alertv.cursor != 3 {
+		t.Errorf("cursor after j = %d, want 3", s.Alertv.cursor)
+	}
+
 	// At end, shouldn't go further.
 	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	if s.Alertv.cursor != 2 {
-		t.Errorf("cursor should stay at 2, got %d", s.Alertv.cursor)
+	if s.Alertv.cursor != 3 {
+		t.Errorf("cursor should stay at 3, got %d", s.Alertv.cursor)
 	}
 
 	// Move up.
 	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
-	if s.Alertv.cursor != 1 {
-		t.Errorf("cursor after k = %d, want 1", s.Alertv.cursor)
+	if s.Alertv.cursor != 2 {
+		t.Errorf("cursor after k = %d, want 2", s.Alertv.cursor)
 	}
 }
 
@@ -85,9 +97,11 @@ func TestAlertViewSilencePickerFlow(t *testing.T) {
 	a := newTestApp()
 	s := a.session()
 	s.Alertv.alerts = []protocol.AlertMsg{
-		{ID: 1, RuleName: "high_cpu", FiredAt: 100},
+		{ID: 1, RuleName: "high_cpu", Severity: "critical", FiredAt: 100},
 	}
-	s.Alertv.cursor = 0
+	// Clamp cursor to first data row.
+	items := buildSectionItems(s.Alertv.alerts, false)
+	clampCursorToItems(&s.Alertv, items)
 
 	// Open silence picker.
 	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
@@ -134,192 +148,9 @@ func TestAlertViewRenderWithAlerts(t *testing.T) {
 	if !strings.Contains(plain, "high_cpu") {
 		t.Error("should contain high_cpu")
 	}
-	if !strings.Contains(plain, "RESOLVED") {
-		t.Error("should show resolved status")
-	}
-}
-
-func TestAlertViewFilterSeverity(t *testing.T) {
-	a := newTestApp()
-	s := a.session()
-	a.active = viewAlerts
-	s.Alertv.alerts = []protocol.AlertMsg{
-		{ID: 1, RuleName: "a", Severity: "warning", FiredAt: 100},
-		{ID: 2, RuleName: "b", Severity: "critical", FiredAt: 200},
-		{ID: 3, RuleName: "c", Severity: "warning", FiredAt: 300},
-	}
-
-	// Initially no filter — all visible.
-	filtered := s.Alertv.filteredAlerts()
-	if len(filtered) != 3 {
-		t.Errorf("no filter: got %d, want 3", len(filtered))
-	}
-
-	// Press f → warning.
-	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
-	if s.Alertv.filterSeverity != "warning" {
-		t.Errorf("filterSeverity = %q, want warning", s.Alertv.filterSeverity)
-	}
-	filtered = s.Alertv.filteredAlerts()
-	if len(filtered) != 2 {
-		t.Errorf("warning filter: got %d, want 2", len(filtered))
-	}
-
-	// Press f → critical.
-	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
-	if s.Alertv.filterSeverity != "critical" {
-		t.Errorf("filterSeverity = %q, want critical", s.Alertv.filterSeverity)
-	}
-	filtered = s.Alertv.filteredAlerts()
-	if len(filtered) != 1 {
-		t.Errorf("critical filter: got %d, want 1", len(filtered))
-	}
-	if filtered[0].RuleName != "b" {
-		t.Errorf("filtered[0].RuleName = %q, want b", filtered[0].RuleName)
-	}
-
-	// Press f → back to all.
-	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
-	if s.Alertv.filterSeverity != "" {
-		t.Errorf("filterSeverity = %q, want empty", s.Alertv.filterSeverity)
-	}
-}
-
-func TestAlertViewFilterState(t *testing.T) {
-	a := newTestApp()
-	s := a.session()
-	a.active = viewAlerts
-	s.Alertv.alerts = []protocol.AlertMsg{
-		{ID: 1, RuleName: "a", Severity: "warning", FiredAt: 100},                         // active
-		{ID: 2, RuleName: "b", Severity: "critical", FiredAt: 200, Acknowledged: true},     // acknowledged
-		{ID: 3, RuleName: "c", Severity: "warning", FiredAt: 300, ResolvedAt: 400},         // resolved
-		{ID: 4, RuleName: "d", Severity: "critical", FiredAt: 500},                         // active
-	}
-
-	// F → active.
-	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
-	if s.Alertv.filterState != "active" {
-		t.Errorf("filterState = %q, want active", s.Alertv.filterState)
-	}
-	filtered := s.Alertv.filteredAlerts()
-	if len(filtered) != 2 {
-		t.Errorf("active filter: got %d, want 2", len(filtered))
-	}
-
-	// F → acknowledged.
-	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
-	if s.Alertv.filterState != "acknowledged" {
-		t.Errorf("filterState = %q, want acknowledged", s.Alertv.filterState)
-	}
-	filtered = s.Alertv.filteredAlerts()
-	if len(filtered) != 1 {
-		t.Errorf("acknowledged filter: got %d, want 1", len(filtered))
-	}
-
-	// F → resolved.
-	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
-	if s.Alertv.filterState != "resolved" {
-		t.Errorf("filterState = %q, want resolved", s.Alertv.filterState)
-	}
-	filtered = s.Alertv.filteredAlerts()
-	if len(filtered) != 1 {
-		t.Errorf("resolved filter: got %d, want 1", len(filtered))
-	}
-
-	// F → back to all.
-	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
-	if s.Alertv.filterState != "" {
-		t.Errorf("filterState = %q, want empty", s.Alertv.filterState)
-	}
-}
-
-func TestAlertViewFilterCombined(t *testing.T) {
-	a := newTestApp()
-	s := a.session()
-	a.active = viewAlerts
-	s.Alertv.alerts = []protocol.AlertMsg{
-		{ID: 1, RuleName: "a", Severity: "warning", FiredAt: 100},                     // active warning
-		{ID: 2, RuleName: "b", Severity: "critical", FiredAt: 200},                    // active critical
-		{ID: 3, RuleName: "c", Severity: "warning", FiredAt: 300, ResolvedAt: 400},    // resolved warning
-		{ID: 4, RuleName: "d", Severity: "critical", FiredAt: 500, ResolvedAt: 600},   // resolved critical
-	}
-
-	// Set severity=critical, state=active.
-	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")}) // warning
-	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")}) // critical
-	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}}) // active
-
-	filtered := s.Alertv.filteredAlerts()
-	if len(filtered) != 1 {
-		t.Errorf("combined filter: got %d, want 1", len(filtered))
-	}
-	if filtered[0].RuleName != "b" {
-		t.Errorf("filtered[0].RuleName = %q, want b", filtered[0].RuleName)
-	}
-}
-
-func TestAlertViewFilterResetsCursor(t *testing.T) {
-	a := newTestApp()
-	s := a.session()
-	a.active = viewAlerts
-	s.Alertv.alerts = []protocol.AlertMsg{
-		{ID: 1, RuleName: "a", Severity: "warning"},
-		{ID: 2, RuleName: "b", Severity: "critical"},
-	}
-	s.Alertv.cursor = 1
-	s.Alertv.scroll = 1
-	s.Alertv.expandModal = &alertExpandModal{alert: s.Alertv.alerts[1]}
-
-	// Pressing f should not reach the filter because the modal captures keys.
-	// Close modal first, then press f.
-	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyEscape})
-	if s.Alertv.expandModal != nil {
-		t.Error("esc should close expand modal")
-	}
-
-	// Re-set cursor state and press f.
-	s.Alertv.cursor = 1
-	s.Alertv.scroll = 1
-	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
-	if s.Alertv.cursor != 0 {
-		t.Errorf("cursor = %d, want 0", s.Alertv.cursor)
-	}
-	if s.Alertv.scroll != 0 {
-		t.Errorf("scroll = %d, want 0", s.Alertv.scroll)
-	}
-}
-
-func TestAlertViewRenderFilterTitle(t *testing.T) {
-	a := newTestApp()
-	s := a.session()
-	s.Alertv.alerts = []protocol.AlertMsg{
-		{ID: 1, RuleName: "a", Severity: "warning", FiredAt: 100},
-		{ID: 2, RuleName: "b", Severity: "critical", FiredAt: 200},
-	}
-	s.Alertv.filterSeverity = "critical"
-
-	got := renderAlertView(&a, s, 100, 20)
-	plain := stripANSI(got)
-	if !strings.Contains(plain, "1/2") {
-		t.Error("title should show filtered/total count")
-	}
-	if !strings.Contains(plain, "[critical]") {
-		t.Error("title should show active filter label")
-	}
-}
-
-func TestAlertViewRenderNoMatchFilter(t *testing.T) {
-	a := newTestApp()
-	s := a.session()
-	s.Alertv.alerts = []protocol.AlertMsg{
-		{ID: 1, RuleName: "a", Severity: "warning", FiredAt: 100},
-	}
-	s.Alertv.filterSeverity = "critical"
-
-	got := renderAlertView(&a, s, 100, 20)
-	plain := stripANSI(got)
-	if !strings.Contains(plain, "No alerts match") {
-		t.Error("should show no-match message when filter excludes all")
+	// Resolved section is collapsed by default; count should be shown.
+	if !strings.Contains(plain, "RESOLVED (1)") {
+		t.Error("should show resolved count")
 	}
 }
 
@@ -337,5 +168,264 @@ func TestAlertViewRenderSilencePicker(t *testing.T) {
 	}
 	if !strings.Contains(plain, "5m") {
 		t.Error("should show duration options")
+	}
+}
+
+func TestAlertViewSubViewToggle(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	a.active = viewAlerts
+
+	if s.Alertv.subView != 0 {
+		t.Fatal("should start on alerts sub-view")
+	}
+
+	// Tab switches to rules.
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyTab})
+	if s.Alertv.subView != 1 {
+		t.Error("tab should switch to rules sub-view")
+	}
+
+	// Tab switches back.
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyTab})
+	if s.Alertv.subView != 0 {
+		t.Error("tab should switch back to alerts sub-view")
+	}
+}
+
+func TestAlertViewResolvedToggle(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	a.active = viewAlerts
+	s.Alertv.alerts = []protocol.AlertMsg{
+		{ID: 1, RuleName: "a", Severity: "critical", FiredAt: 100},
+		{ID: 2, RuleName: "b", Severity: "warning", FiredAt: 200, ResolvedAt: 300},
+	}
+
+	// Initially resolved is collapsed.
+	items := buildSectionItems(s.Alertv.alerts, s.Alertv.showResolved)
+	// Should have: FIRING header, alert a, RESOLVED header (collapsed).
+	resolvedRows := 0
+	for _, item := range items {
+		if !item.isHeader && item.alert.ResolvedAt > 0 {
+			resolvedRows++
+		}
+	}
+	if resolvedRows != 0 {
+		t.Errorf("resolved rows = %d, want 0 (collapsed)", resolvedRows)
+	}
+
+	// Press r to expand.
+	clampCursorToItems(&s.Alertv, items)
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	if !s.Alertv.showResolved {
+		t.Error("r should toggle showResolved to true")
+	}
+	items = buildSectionItems(s.Alertv.alerts, s.Alertv.showResolved)
+	resolvedRows = 0
+	for _, item := range items {
+		if !item.isHeader && item.alert.ResolvedAt > 0 {
+			resolvedRows++
+		}
+	}
+	if resolvedRows != 1 {
+		t.Errorf("resolved rows = %d, want 1 (expanded)", resolvedRows)
+	}
+
+	// Press r again to collapse.
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	if s.Alertv.showResolved {
+		t.Error("r should toggle showResolved back to false")
+	}
+}
+
+func TestAlertViewSectionGrouping(t *testing.T) {
+	alerts := []protocol.AlertMsg{
+		{ID: 1, RuleName: "a", Severity: "critical", FiredAt: 100},                         // firing
+		{ID: 2, RuleName: "b", Severity: "warning", FiredAt: 200, Acknowledged: true},       // acked
+		{ID: 3, RuleName: "c", Severity: "critical", FiredAt: 300, ResolvedAt: 400},          // resolved
+		{ID: 4, RuleName: "d", Severity: "warning", FiredAt: 500},                            // firing
+	}
+
+	items := buildSectionItems(alerts, true) // showResolved=true
+
+	// Expected: FIRING header, a, d, ACK header, b, RESOLVED header, c
+	headers := 0
+	dataRows := 0
+	for _, item := range items {
+		if item.isHeader {
+			headers++
+		} else {
+			dataRows++
+		}
+	}
+	if headers != 3 {
+		t.Errorf("headers = %d, want 3 (firing, ack, resolved)", headers)
+	}
+	if dataRows != 4 {
+		t.Errorf("data rows = %d, want 4", dataRows)
+	}
+
+	// Verify order: first header is "FIRING".
+	if !strings.Contains(items[0].header, "FIRING") {
+		t.Errorf("first header = %q, want FIRING", items[0].header)
+	}
+}
+
+func TestAlertViewCursorSkipsHeaders(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	a.active = viewAlerts
+	s.Alertv.alerts = []protocol.AlertMsg{
+		{ID: 1, RuleName: "a", Severity: "critical", FiredAt: 100},                    // firing
+		{ID: 2, RuleName: "b", Severity: "warning", FiredAt: 200, Acknowledged: true}, // acked
+	}
+
+	items := buildSectionItems(s.Alertv.alerts, false)
+	// Items: FIRING header (0), a (1), ACK header (2), b (3)
+
+	// Start on first data row.
+	clampCursorToItems(&s.Alertv, items)
+	if s.Alertv.cursor != 1 {
+		t.Fatalf("initial cursor = %d, want 1", s.Alertv.cursor)
+	}
+
+	// Move down — should skip header at index 2, land on index 3.
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if s.Alertv.cursor != 3 {
+		t.Errorf("cursor after j = %d, want 3 (should skip header)", s.Alertv.cursor)
+	}
+
+	// Move up — should skip header at index 2, land on index 1.
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	if s.Alertv.cursor != 1 {
+		t.Errorf("cursor after k = %d, want 1 (should skip header)", s.Alertv.cursor)
+	}
+}
+
+func TestAlertViewRenderSections(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	s.Alertv.alerts = []protocol.AlertMsg{
+		{ID: 1, RuleName: "a", Severity: "critical", FiredAt: 100, Message: "cpu"},
+		{ID: 2, RuleName: "b", Severity: "warning", FiredAt: 200, Acknowledged: true, Message: "disk"},
+		{ID: 3, RuleName: "c", Severity: "warning", FiredAt: 300, ResolvedAt: 400, Message: "mem"},
+	}
+
+	got := renderAlertView(&a, s, 100, 20)
+	plain := stripANSI(got)
+
+	if !strings.Contains(plain, "FIRING (1)") {
+		t.Error("should show FIRING section header")
+	}
+	if !strings.Contains(plain, "ACKNOWLEDGED (1)") {
+		t.Error("should show ACKNOWLEDGED section header")
+	}
+	if !strings.Contains(plain, "RESOLVED (1)") {
+		t.Error("should show RESOLVED section header")
+	}
+	if !strings.Contains(plain, "[Alerts] | Rules") {
+		t.Error("should show tab title with Alerts selected")
+	}
+}
+
+func TestRelativeTime(t *testing.T) {
+	now := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		ts   int64
+		want string
+	}{
+		{now.Add(-30 * time.Second).Unix(), "30s ago"},
+		{now.Add(-5 * time.Minute).Unix(), "5m ago"},
+		{now.Add(-3 * time.Hour).Unix(), "3h ago"},
+		{now.Add(-48 * time.Hour).Unix(), "2d ago"},
+		{0, ""},
+	}
+	for _, tt := range tests {
+		got := relativeTime(now, tt.ts)
+		if got != tt.want {
+			t.Errorf("relativeTime(%d) = %q, want %q", tt.ts, got, tt.want)
+		}
+	}
+}
+
+func TestAlertViewRulesSubView(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	a.active = viewAlerts
+	s.Alertv.subView = 1
+	s.Alertv.rules = []protocol.AlertRuleInfo{
+		{Name: "high_cpu", Condition: "host.cpu_percent > 90", Severity: "critical", FiringCount: 2},
+		{Name: "exited", Condition: "container.state == 'exited'", Severity: "warning", FiringCount: 0},
+	}
+
+	got := renderAlertView(&a, s, 100, 20)
+	plain := stripANSI(got)
+
+	if !strings.Contains(plain, "high_cpu") {
+		t.Error("should show high_cpu rule")
+	}
+	if !strings.Contains(plain, "2 firing") {
+		t.Error("should show firing count for high_cpu")
+	}
+	if !strings.Contains(plain, "ok") {
+		t.Error("should show ok status for exited rule")
+	}
+	if !strings.Contains(plain, "Alerts | [Rules]") {
+		t.Error("should show tab title with Rules selected")
+	}
+}
+
+func TestAlertViewRulesQueryMsg(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	s.Alertv.rulesStale = true
+
+	rules := []protocol.AlertRuleInfo{
+		{Name: "test", Condition: "host.cpu_percent > 80", Severity: "warning"},
+	}
+	model, _ := a.Update(alertRulesQueryMsg{rules: rules})
+	a = model.(App)
+
+	s = a.session()
+	if s.Alertv.rulesStale {
+		t.Error("rulesStale should be false after query result")
+	}
+	if len(s.Alertv.rules) != 1 {
+		t.Errorf("rules = %d, want 1", len(s.Alertv.rules))
+	}
+}
+
+func TestAlertActionDoneSetsRulesStale(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	s.Alertv.rulesStale = false
+
+	model, _ := a.Update(alertActionDoneMsg{})
+	a = model.(App)
+
+	s = a.session()
+	if !s.Alertv.rulesStale {
+		t.Error("alertActionDoneMsg should set rulesStale = true")
+	}
+}
+
+func TestFormatDurationShort(t *testing.T) {
+	tests := []struct {
+		secs int64
+		want string
+	}{
+		{0, ""},
+		{300, "5m"},
+		{3600, "1h"},
+		{7200, "2h"},
+		{86400, "1d"},
+		{172800, "2d"},
+	}
+	for _, tt := range tests {
+		got := formatDurationShort(tt.secs)
+		if got != tt.want {
+			t.Errorf("formatDurationShort(%d) = %q, want %q", tt.secs, got, tt.want)
+		}
 	}
 }

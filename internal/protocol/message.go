@@ -26,6 +26,7 @@ const (
 	TypeActionSilence      MsgType = "action:silence_alert"
 	TypeActionSetTracking  MsgType = "action:set_tracking"
 	TypeQueryTracking      MsgType = "query:tracking"
+	TypeQueryAlertRules    MsgType = "query:alert_rules"
 	TypeResult             MsgType = "result"
 	TypeError              MsgType = "error"
 )
@@ -205,6 +206,22 @@ type AckAlertReq struct {
 type SilenceAlertReq struct {
 	RuleName string `msgpack:"rule_name"`
 	Duration int64  `msgpack:"duration"` // seconds
+}
+
+// AlertRuleInfo describes a configured alert rule and its current status.
+type AlertRuleInfo struct {
+	Name         string   `msgpack:"name"`
+	Condition    string   `msgpack:"condition"`
+	Severity     string   `msgpack:"severity"`
+	For          string   `msgpack:"for,omitempty"`
+	Actions      []string `msgpack:"actions"`
+	FiringCount  int      `msgpack:"firing_count"`
+	SilencedUntil int64   `msgpack:"silenced_until,omitempty"` // unix timestamp, 0 = not silenced
+}
+
+// QueryAlertRulesResp is the response for TypeQueryAlertRules.
+type QueryAlertRulesResp struct {
+	Rules []AlertRuleInfo `msgpack:"rules"`
 }
 
 // Result is the generic success response.

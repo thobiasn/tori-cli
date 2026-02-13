@@ -460,6 +460,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case alertActionDoneMsg:
 		if s := a.session(); s != nil {
 			s.Alertv.stale = true
+			s.Alertv.rulesStale = true
+		}
+		return a, nil
+
+	case alertRulesQueryMsg:
+		if s := a.session(); s != nil {
+			s.Alertv.rules = msg.rules
+			s.Alertv.rulesStale = false
 		}
 		return a, nil
 
@@ -859,6 +867,9 @@ func (a *App) handleViewSwitch(key string) (tea.Cmd, bool) {
 		if a.active == viewDashboard {
 			return nil, false // delegate to dashboard for panel focus toggle
 		}
+		if a.active == viewAlerts {
+			return nil, false // delegate to alert view for sub-view toggle
+		}
 		a.active = viewDashboard
 	case "1":
 		a.active = viewDashboard
@@ -976,7 +987,11 @@ func (a *App) renderViewFooter() string {
 	case viewDashboard:
 		return " " + muted.Render("Tab Focus  j/k Move  Space Fold  Enter Open  t Track")
 	case viewAlerts:
-		return " " + muted.Render("j/k Move  a Ack  s Silence")
+		s := a.sessions[a.activeSession]
+		if s != nil && s.Alertv.subView == 1 {
+			return " " + muted.Render("Tab Alerts  j/k Move  s Silence")
+		}
+		return " " + muted.Render("Tab Rules  j/k Move  r Resolved  a Ack  s Silence")
 	case viewDetail:
 		return a.renderDetailFooter()
 	}

@@ -1107,6 +1107,89 @@ func TestSocketQueryContainersTracked(t *testing.T) {
 	}
 }
 
+func TestSocketQueryAlertRulesNoAlerter(t *testing.T) {
+	s := testStore(t)
+	_, _, path := testSocketServer(t, s) // alerter=nil
+	conn := dial(t, path)
+
+	env := protocol.NewEnvelopeNoBody(protocol.TypeQueryAlertRules, 1)
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Type != protocol.TypeResult {
+		t.Fatalf("expected result, got %q", resp.Type)
+	}
+
+	var rules protocol.QueryAlertRulesResp
+	if err := protocol.DecodeBody(resp.Body, &rules); err != nil {
+		t.Fatal(err)
+	}
+	if len(rules.Rules) != 0 {
+		t.Errorf("rules = %d, want 0 (no alerter)", len(rules.Rules))
+	}
+}
+
+func TestSocketQueryAlertRulesWithAlerter(t *testing.T) {
+	s := testStore(t)
+	alerter, _ := testAlerter(t, map[string]AlertConfig{
+		"high_cpu": {Condition: "host.cpu_percent > 90", Severity: "critical", Actions: []string{"notify"}},
+		"exited":   {Condition: "container.state == 'exited'", Severity: "warning", Actions: []string{"notify"}},
+	})
+	ctx := t.Context()
+
+	// Fire a container alert.
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	alerter.now = func() time.Time { return now }
+	alerter.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
+	})
+
+	_, _, path := testSocketServerWithAlerter(t, s, alerter)
+	conn := dial(t, path)
+
+	env := protocol.NewEnvelopeNoBody(protocol.TypeQueryAlertRules, 1)
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Type != protocol.TypeResult {
+		t.Fatalf("expected result, got %q", resp.Type)
+	}
+
+	var rules protocol.QueryAlertRulesResp
+	if err := protocol.DecodeBody(resp.Body, &rules); err != nil {
+		t.Fatal(err)
+	}
+	if len(rules.Rules) != 2 {
+		t.Fatalf("rules = %d, want 2", len(rules.Rules))
+	}
+
+	// Rules are sorted: exited, high_cpu.
+	if rules.Rules[0].Name != "exited" {
+		t.Errorf("rules[0].Name = %q, want exited", rules.Rules[0].Name)
+	}
+	if rules.Rules[0].FiringCount != 1 {
+		t.Errorf("exited firing count = %d, want 1", rules.Rules[0].FiringCount)
+	}
+	if rules.Rules[1].Name != "high_cpu" {
+		t.Errorf("rules[1].Name = %q, want high_cpu", rules.Rules[1].Name)
+	}
+	if rules.Rules[1].FiringCount != 0 {
+		t.Errorf("high_cpu firing count = %d, want 0", rules.Rules[1].FiringCount)
+	}
+}
+
 func TestSocketQueryMetricsDownsampledSkipsDiskNet(t *testing.T) {
 	s := testStore(t)
 	ctx := t.Context()

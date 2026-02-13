@@ -421,6 +421,60 @@ func (a *Alerter) Silence(ruleName string, dur time.Duration) {
 	a.silences[ruleName] = a.now().Add(dur)
 }
 
+// RuleStatus describes a configured alert rule and its current runtime status.
+type RuleStatus struct {
+	Name          string
+	Condition     string
+	Severity      string
+	For           time.Duration
+	Actions       []string
+	FiringCount   int
+	SilencedUntil time.Time
+}
+
+// QueryRules returns the status of all configured alert rules.
+func (a *Alerter) QueryRules() []RuleStatus {
+	// Count firing instances per rule name.
+	a.mu.Lock()
+	firingCounts := make(map[string]int)
+	for key, inst := range a.instances {
+		if inst.state != stateFiring {
+			continue
+		}
+		r := a.ruleForKey(key)
+		if r != nil {
+			firingCounts[r.name]++
+		}
+	}
+	a.mu.Unlock()
+
+	// Read silence state.
+	a.silencesMu.Lock()
+	now := a.now()
+	silences := make(map[string]time.Time)
+	for name, until := range a.silences {
+		if now.Before(until) {
+			silences[name] = until
+		}
+	}
+	a.silencesMu.Unlock()
+
+	out := make([]RuleStatus, len(a.rules))
+	for i, r := range a.rules {
+		condStr := r.condition.Scope + "." + r.condition.Field + " " + r.condition.Op + " " + conditionValue(&r.condition)
+		out[i] = RuleStatus{
+			Name:          r.name,
+			Condition:     condStr,
+			Severity:      r.severity,
+			For:           r.forDur,
+			Actions:       r.actions,
+			FiringCount:   firingCounts[r.name],
+			SilencedUntil: silences[r.name],
+		}
+	}
+	return out
+}
+
 func (a *Alerter) isSilenced(ruleName string) bool {
 	a.silencesMu.Lock()
 	defer a.silencesMu.Unlock()

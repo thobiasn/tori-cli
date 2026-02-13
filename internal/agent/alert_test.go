@@ -1150,6 +1150,86 @@ func TestDiskMountpointDisappears(t *testing.T) {
 	}
 }
 
+func TestQueryRules(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"high_cpu": {
+			Condition: "host.cpu_percent > 90",
+			Severity:  "critical",
+			For:       Duration{30 * time.Second},
+			Actions:   []string{"notify"},
+		},
+		"exited": {
+			Condition: "container.state == 'exited'",
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, _ := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// No firing instances yet.
+	rules := a.QueryRules()
+	if len(rules) != 2 {
+		t.Fatalf("rules = %d, want 2", len(rules))
+	}
+	// Rules should be sorted alphabetically.
+	if rules[0].Name != "exited" || rules[1].Name != "high_cpu" {
+		t.Errorf("rules not sorted: %s, %s", rules[0].Name, rules[1].Name)
+	}
+	if rules[0].FiringCount != 0 {
+		t.Errorf("exited firing count = %d, want 0", rules[0].FiringCount)
+	}
+	if rules[1].Condition != "host.cpu_percent > 90" {
+		t.Errorf("condition = %q, want 'host.cpu_percent > 90'", rules[1].Condition)
+	}
+	if rules[1].For != 30*time.Second {
+		t.Errorf("for = %v, want 30s", rules[1].For)
+	}
+
+	// Fire some alerts.
+	a.Evaluate(ctx, &MetricSnapshot{
+		Host:       &HostMetrics{CPUPercent: 95},
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
+	})
+
+	// high_cpu has for=30s so should be pending, not firing.
+	rules = a.QueryRules()
+	if rules[0].FiringCount != 1 { // exited:aaa
+		t.Errorf("exited firing count = %d, want 1", rules[0].FiringCount)
+	}
+	if rules[1].FiringCount != 0 { // high_cpu still pending
+		t.Errorf("high_cpu firing count = %d, want 0 (still pending)", rules[1].FiringCount)
+	}
+
+	// Advance past for-duration.
+	now = now.Add(30 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{
+		Host:       &HostMetrics{CPUPercent: 95},
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
+	})
+	rules = a.QueryRules()
+	if rules[1].FiringCount != 1 {
+		t.Errorf("high_cpu firing count = %d, want 1", rules[1].FiringCount)
+	}
+
+	// Silence a rule and verify.
+	a.Silence("exited", 5*time.Minute)
+	rules = a.QueryRules()
+	if rules[0].SilencedUntil.IsZero() {
+		t.Error("exited should be silenced")
+	}
+	expected := now.Add(5 * time.Minute)
+	if !rules[0].SilencedUntil.Equal(expected) {
+		t.Errorf("silenced until = %v, want %v", rules[0].SilencedUntil, expected)
+	}
+	if !rules[1].SilencedUntil.IsZero() {
+		t.Error("high_cpu should not be silenced")
+	}
+}
+
 func TestContainerExitCodeAlert(t *testing.T) {
 	alerts := map[string]AlertConfig{
 		"nonzero_exit": {

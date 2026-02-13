@@ -280,6 +280,19 @@ func (c *Client) QueryAlerts(ctx context.Context, start, end int64) ([]protocol.
 	return r.Alerts, nil
 }
 
+// QueryAlertRules returns the list of configured alert rules and their status.
+func (c *Client) QueryAlertRules(ctx context.Context) ([]protocol.AlertRuleInfo, error) {
+	resp, err := c.Request(ctx, protocol.TypeQueryAlertRules, nil)
+	if err != nil {
+		return nil, err
+	}
+	var r protocol.QueryAlertRulesResp
+	if err := protocol.DecodeBody(resp.Body, &r); err != nil {
+		return nil, err
+	}
+	return r.Rules, nil
+}
+
 // AckAlert acknowledges an alert by ID.
 func (c *Client) AckAlert(ctx context.Context, alertID int64) error {
 	_, err := c.Request(ctx, protocol.TypeActionAckAlert, &protocol.AckAlertReq{AlertID: alertID})

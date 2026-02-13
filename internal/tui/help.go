@@ -19,10 +19,13 @@ var dashboardHelp = `
 var alertViewHelp = `
  Navigation
    j/k, ↑/↓    Move cursor
+   Tab          Toggle Alerts / Rules
+   r            Toggle resolved section
    a            Acknowledge alert
-   s            Silence alert
+   s            Silence alert / rule
+   Enter        Expand alert details
    Esc          Clear selection
-   Tab, 1-2     Switch view
+   1-2          Switch view
    ?            Toggle help
    q            Quit`
 

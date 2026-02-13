@@ -279,6 +279,8 @@ func (c *connState) dispatch(env *protocol.Envelope) {
 		c.setTracking(env)
 	case protocol.TypeQueryTracking:
 		c.queryTracking(env)
+	case protocol.TypeQueryAlertRules:
+		c.queryAlertRules(env.ID)
 
 	default:
 		c.sendError(env.ID, fmt.Sprintf("unknown message type: %s", env.Type))
@@ -666,6 +668,36 @@ func (c *connState) queryTracking(env *protocol.Envelope) {
 		resp.TrackedProjects = []string{}
 	}
 	c.sendResponse(env.ID, &resp)
+}
+
+func (c *connState) queryAlertRules(id uint32) {
+	c.ss.alerterMu.RLock()
+	alerter := c.ss.alerter
+	c.ss.alerterMu.RUnlock()
+
+	var rules []protocol.AlertRuleInfo
+	if alerter != nil {
+		for _, rs := range alerter.QueryRules() {
+			info := protocol.AlertRuleInfo{
+				Name:        rs.Name,
+				Condition:   rs.Condition,
+				Severity:    rs.Severity,
+				Actions:     rs.Actions,
+				FiringCount: rs.FiringCount,
+			}
+			if rs.For > 0 {
+				info.For = rs.For.String()
+			}
+			if !rs.SilencedUntil.IsZero() {
+				info.SilencedUntil = rs.SilencedUntil.Unix()
+			}
+			rules = append(rules, info)
+		}
+	}
+	if rules == nil {
+		rules = []protocol.AlertRuleInfo{}
+	}
+	c.sendResponse(id, &protocol.QueryAlertRulesResp{Rules: rules})
 }
 
 func isClosedErr(err error) bool {

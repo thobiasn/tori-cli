@@ -639,6 +639,62 @@ func TestQueryReqServiceFieldsRoundtrip(t *testing.T) {
 	})
 }
 
+func TestAlertRuleInfoRoundtrip(t *testing.T) {
+	orig := QueryAlertRulesResp{
+		Rules: []AlertRuleInfo{
+			{
+				Name: "high_cpu", Condition: "host.cpu_percent > 90",
+				Severity: "critical", For: "30s",
+				Actions: []string{"notify"}, FiringCount: 2, SilencedUntil: 1700000000,
+			},
+			{
+				Name: "exited", Condition: "container.state == 'exited'",
+				Severity: "warning", Actions: []string{"notify"}, FiringCount: 0,
+			},
+		},
+	}
+
+	env, err := NewEnvelope(TypeResult, 1, &orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if err := WriteMsg(&buf, env); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadMsg(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded QueryAlertRulesResp
+	if err := DecodeBody(got.Body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Rules) != 2 {
+		t.Fatalf("rules len = %d, want 2", len(decoded.Rules))
+	}
+	r := decoded.Rules[0]
+	if r.Name != "high_cpu" {
+		t.Errorf("name = %q, want high_cpu", r.Name)
+	}
+	if r.FiringCount != 2 {
+		t.Errorf("firing_count = %d, want 2", r.FiringCount)
+	}
+	if r.SilencedUntil != 1700000000 {
+		t.Errorf("silenced_until = %d, want 1700000000", r.SilencedUntil)
+	}
+	if r.For != "30s" {
+		t.Errorf("for = %q, want 30s", r.For)
+	}
+	r2 := decoded.Rules[1]
+	if r2.SilencedUntil != 0 {
+		t.Errorf("silenced_until = %d, want 0 (omitempty)", r2.SilencedUntil)
+	}
+}
+
 func TestContainerEventServiceRoundtrip(t *testing.T) {
 	orig := ContainerEvent{
 		Timestamp:   1700000000,

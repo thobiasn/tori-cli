@@ -217,13 +217,16 @@ func TestAppViewSwitchTab(t *testing.T) {
 		t.Errorf("tab should toggle back to focusServers, got %d", a.dashFocus)
 	}
 
-	// Tab from alerts should go to dashboard.
+	// Tab from alerts toggles sub-view (alerts/rules), not back to dashboard.
 	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
 	a = model.(App)
 	model, _ = a.Update(tea.KeyMsg{Type: tea.KeyTab})
 	a = model.(App)
-	if a.active != viewDashboard {
-		t.Errorf("tab from alerts should go to dashboard, got %d", a.active)
+	if a.active != viewAlerts {
+		t.Errorf("tab from alerts should stay on alerts (sub-view toggle), got %d", a.active)
+	}
+	if a.session().Alertv.subView != 1 {
+		t.Errorf("tab should switch to rules sub-view, got %d", a.session().Alertv.subView)
 	}
 }
 

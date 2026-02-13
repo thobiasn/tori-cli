@@ -19,9 +19,14 @@ type AlertViewState struct {
 	expandModal *alertExpandModal // nil = closed
 	stale       bool
 
-	// Filters (empty string = show all).
-	filterSeverity string // "", "warning", "critical"
-	filterState    string // "", "active", "acknowledged", "resolved"
+	// Sub-views: 0 = alerts, 1 = rules.
+	subView      int
+	showResolved bool
+
+	// Rules sub-view.
+	rules       []protocol.AlertRuleInfo
+	rulesCursor int
+	rulesStale  bool
 
 	// Silence picker.
 	silenceMode    bool
@@ -41,6 +46,10 @@ type alertQueryMsg struct {
 	alerts []protocol.AlertMsg
 }
 
+type alertRulesQueryMsg struct {
+	rules []protocol.AlertRuleInfo
+}
+
 type alertActionDoneMsg struct{}
 
 var silenceDurations = []struct {
@@ -55,38 +64,127 @@ var silenceDurations = []struct {
 }
 
 func newAlertViewState() AlertViewState {
-	return AlertViewState{stale: true}
+	return AlertViewState{stale: true, rulesStale: true}
 }
 
-// filteredAlerts returns alerts matching the current severity and state filters.
-func (s *AlertViewState) filteredAlerts() []protocol.AlertMsg {
-	if s.filterSeverity == "" && s.filterState == "" {
-		return s.alerts
-	}
-	var out []protocol.AlertMsg
-	for _, a := range s.alerts {
-		if s.filterSeverity != "" && a.Severity != s.filterSeverity {
-			continue
+// sectionItem represents either a section header or an alert row in the
+// flattened list used for rendering and navigation.
+type sectionItem struct {
+	isHeader bool
+	header   string // section title, e.g. "FIRING (2)"
+	alert    protocol.AlertMsg
+}
+
+// alertSections splits alerts into firing, acknowledged, and resolved groups.
+func alertSections(alerts []protocol.AlertMsg) (firing, acked, resolved []protocol.AlertMsg) {
+	for _, a := range alerts {
+		switch {
+		case a.ResolvedAt > 0:
+			resolved = append(resolved, a)
+		case a.Acknowledged:
+			acked = append(acked, a)
+		default:
+			firing = append(firing, a)
 		}
-		if s.filterState != "" {
-			switch s.filterState {
-			case "active":
-				if a.ResolvedAt != 0 || a.Acknowledged {
-					continue
-				}
-			case "acknowledged":
-				if !a.Acknowledged {
-					continue
-				}
-			case "resolved":
-				if a.ResolvedAt == 0 {
-					continue
-				}
+	}
+	return
+}
+
+// buildSectionItems builds the flat list of headers + alert rows for rendering.
+func buildSectionItems(alerts []protocol.AlertMsg, showResolved bool) []sectionItem {
+	firing, acked, resolved := alertSections(alerts)
+	var items []sectionItem
+
+	if len(firing) > 0 {
+		items = append(items, sectionItem{isHeader: true, header: fmt.Sprintf("FIRING (%d)", len(firing))})
+		for _, a := range firing {
+			items = append(items, sectionItem{alert: a})
+		}
+	}
+	if len(acked) > 0 {
+		items = append(items, sectionItem{isHeader: true, header: fmt.Sprintf("ACKNOWLEDGED (%d)", len(acked))})
+		for _, a := range acked {
+			items = append(items, sectionItem{alert: a})
+		}
+	}
+	if len(resolved) > 0 {
+		if showResolved {
+			items = append(items, sectionItem{isHeader: true, header: fmt.Sprintf("RESOLVED (%d)", len(resolved))})
+			for _, a := range resolved {
+				items = append(items, sectionItem{alert: a})
+			}
+		} else {
+			items = append(items, sectionItem{isHeader: true, header: fmt.Sprintf("RESOLVED (%d) — press r to expand", len(resolved))})
+		}
+	}
+	return items
+}
+
+// clampCursorToItems ensures cursor points to a non-header row.
+func clampCursorToItems(av *AlertViewState, items []sectionItem) {
+	if len(items) == 0 {
+		av.cursor = 0
+		return
+	}
+	if av.cursor >= len(items) {
+		av.cursor = len(items) - 1
+	}
+	if av.cursor < 0 {
+		av.cursor = 0
+	}
+	// If cursor is on a header, move to next data row.
+	if items[av.cursor].isHeader {
+		for i := av.cursor; i < len(items); i++ {
+			if !items[i].isHeader {
+				av.cursor = i
+				return
 			}
 		}
-		out = append(out, a)
+		// All remaining items are headers — search backwards.
+		for i := av.cursor - 1; i >= 0; i-- {
+			if !items[i].isHeader {
+				av.cursor = i
+				return
+			}
+		}
 	}
-	return out
+}
+
+// relativeTime formats a Unix timestamp as a relative time string.
+func relativeTime(now time.Time, ts int64) string {
+	if ts == 0 {
+		return ""
+	}
+	d := now.Sub(time.Unix(ts, 0))
+	if d < 0 {
+		d = 0
+	}
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
+}
+
+// formatDurationShort formats seconds into a short human-readable string.
+func formatDurationShort(seconds int64) string {
+	if seconds <= 0 {
+		return ""
+	}
+	d := time.Duration(seconds) * time.Second
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
 }
 
 func (s *AlertViewState) onSwitch(c *Client) tea.Cmd {
@@ -106,10 +204,30 @@ func (s *AlertViewState) onSwitch(c *Client) tea.Cmd {
 	}
 }
 
+func queryAlertRulesCmd(c *Client) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		rules, err := c.QueryAlertRules(ctx)
+		if err != nil {
+			return alertRulesQueryMsg{}
+		}
+		return alertRulesQueryMsg{rules: rules}
+	}
+}
+
 // renderAlertView renders the full-screen alert history.
 func renderAlertView(a *App, s *Session, width, height int) string {
+	av := &s.Alertv
+
+	if av.subView == 1 {
+		return renderRulesSubView(a, s, width, height)
+	}
+	return renderAlertsSubView(a, s, width, height)
+}
+
+func renderAlertsSubView(a *App, s *Session, width, height int) string {
 	theme := &a.theme
-	tsFormat := a.tsFormat()
 	av := &s.Alertv
 	innerH := height - 3
 	if innerH < 1 {
@@ -117,70 +235,147 @@ func renderAlertView(a *App, s *Session, width, height int) string {
 	}
 	innerW := width - 2
 
-	// Determine visible slice.
-	alerts := av.filteredAlerts()
-	if len(alerts) == 0 {
+	items := buildSectionItems(av.alerts, av.showResolved)
+
+	if len(av.alerts) == 0 {
+		title := alertTabTitle(av)
 		msg := "  No alerts in the last 24 hours"
-		if len(av.alerts) > 0 {
-			msg = "  No alerts match the current filter"
-		}
-		title := alertTitle(av, alerts)
 		return Box(title, msg, width, height-1, theme) + "\n" + renderAlertFooter(av, width, theme)
 	}
 
+	if len(items) == 0 {
+		title := alertTabTitle(av)
+		return Box(title, "", width, height-1, theme) + "\n" + renderAlertFooter(av, width, theme)
+	}
+
+	clampCursorToItems(av, items)
+
 	start := av.scroll
-	if start > len(alerts) {
-		start = len(alerts)
+	if start > len(items) {
+		start = len(items)
 	}
 	end := start + innerH
-	if end > len(alerts) {
-		end = len(alerts)
+	if end > len(items) {
+		end = len(items)
 	}
-	visible := alerts[start:end]
+	visible := items[start:end]
+
+	now := time.Now()
+	accent := lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 
 	var lines []string
-	for i, alert := range visible {
+	for i, item := range visible {
 		globalIdx := start + i
-		sev := severityTag(alert.Severity, theme)
-		ts := FormatTimestamp(alert.FiredAt, tsFormat)
-		rule := Truncate(alert.RuleName, 16)
-		msg := Truncate(alert.Message, innerW-40)
 
+		if item.isHeader {
+			line := " " + accent.Render(item.header)
+			lines = append(lines, TruncateStyled(line, innerW))
+			continue
+		}
+
+		alert := item.alert
+		sev := severityTag(alert.Severity, theme)
+
+		// Build status text.
 		var status string
 		if alert.ResolvedAt > 0 {
-			status = lipgloss.NewStyle().Foreground(theme.Healthy).Render("RESOLVED")
+			status = muted.Render(relativeTime(now, alert.ResolvedAt))
 		} else if alert.Acknowledged {
-			status = lipgloss.NewStyle().Foreground(theme.Muted).Render("ACK")
+			status = muted.Render("ACK")
 		} else {
 			status = lipgloss.NewStyle().Foreground(theme.Critical).Render("ACTIVE")
 		}
 
-		row := fmt.Sprintf(" %s  %s  %-16s %-*s %s", sev, ts, rule, innerW-42, msg, status)
+		// Calculate available space for the message. This prevents the row
+		// from exceeding innerW, which was causing TruncateStyled to strip
+		// all ANSI (the "color bug" from the plan).
+		rule := Truncate(alert.RuleName, 16)
+		prefix := fmt.Sprintf(" %s  %-16s ", sev, rule)
+		prefixW := lipgloss.Width(prefix) + lipgloss.Width(status) + 2
+		msgW := innerW - prefixW
+		if msgW < 0 {
+			msgW = 0
+		}
+		msg := Truncate(alert.Message, msgW)
+		// Pad msg to fill available space so status aligns right.
+		padded := msg + strings.Repeat(" ", max(0, msgW-len(msg)))
+
+		row := prefix + padded + "  " + status
 		if globalIdx == av.cursor {
 			row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
 		}
 		lines = append(lines, TruncateStyled(row, innerW))
 	}
 
-	title := alertTitle(av, alerts)
+	title := alertTabTitle(av)
 	boxH := height - 1
 	content := strings.Join(lines, "\n")
 	box := Box(title, content, width, boxH, theme)
 	return box + "\n" + renderAlertFooter(av, width, theme)
 }
 
-func alertTitle(av *AlertViewState, filtered []protocol.AlertMsg) string {
-	if av.filterSeverity == "" && av.filterState == "" {
-		return fmt.Sprintf("Alerts (%d)", len(filtered))
+func renderRulesSubView(a *App, s *Session, width, height int) string {
+	theme := &a.theme
+	av := &s.Alertv
+	innerH := height - 3
+	if innerH < 1 {
+		innerH = 1
 	}
-	title := fmt.Sprintf("Alerts (%d/%d)", len(filtered), len(av.alerts))
-	if av.filterSeverity != "" {
-		title += " [" + av.filterSeverity + "]"
+	innerW := width - 2
+
+	title := alertTabTitle(av)
+
+	if len(av.rules) == 0 {
+		msg := "  No alert rules configured"
+		return Box(title, msg, width, height-1, theme) + "\n" + renderAlertFooter(av, width, theme)
 	}
-	if av.filterState != "" {
-		title += " [" + av.filterState + "]"
+
+	now := time.Now()
+
+	var lines []string
+	for i, rule := range av.rules {
+		sev := severityTag(rule.Severity, theme)
+
+		// Status.
+		var status string
+		if rule.SilencedUntil > 0 && time.Unix(rule.SilencedUntil, 0).After(now) {
+			remaining := time.Unix(rule.SilencedUntil, 0).Sub(now).Seconds()
+			status = lipgloss.NewStyle().Foreground(theme.Warning).Render("silenced " + formatDurationShort(int64(remaining)))
+		} else if rule.FiringCount > 0 {
+			status = lipgloss.NewStyle().Foreground(theme.Critical).Render(fmt.Sprintf("%d firing", rule.FiringCount))
+		} else {
+			status = lipgloss.NewStyle().Foreground(theme.Healthy).Render("ok")
+		}
+
+		name := Truncate(rule.Name, 20)
+		prefix := fmt.Sprintf(" %s  %-20s ", sev, name)
+		prefixW := lipgloss.Width(prefix) + lipgloss.Width(status) + 2
+		condW := innerW - prefixW
+		if condW < 0 {
+			condW = 0
+		}
+		cond := Truncate(rule.Condition, condW)
+		padded := cond + strings.Repeat(" ", max(0, condW-len(cond)))
+
+		row := prefix + padded + "  " + status
+		if i == av.rulesCursor {
+			row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
+		}
+		lines = append(lines, TruncateStyled(row, innerW))
 	}
-	return title
+
+	boxH := height - 1
+	content := strings.Join(lines, "\n")
+	box := Box(title, content, width, boxH, theme)
+	return box + "\n" + renderAlertFooter(av, width, theme)
+}
+
+func alertTabTitle(av *AlertViewState) string {
+	if av.subView == 0 {
+		return fmt.Sprintf("[Alerts] | Rules")
+	}
+	return fmt.Sprintf("Alerts | [Rules]")
 }
 
 func renderSilencePicker(s *AlertViewState, theme *Theme) string {
@@ -314,7 +509,10 @@ func renderAlertFooter(s *AlertViewState, width int, theme *Theme) string {
 	if s.expandModal != nil {
 		return Truncate(" j/k scroll  Esc/Enter close", width)
 	}
-	return Truncate(" j/k navigate  f filter  a ack  s silence  Enter expand  Esc back  ? Help", width)
+	if s.subView == 1 {
+		return Truncate(" j/k navigate  s silence  Tab alerts  Esc back  ? Help", width)
+	}
+	return Truncate(" j/k navigate  r resolved  a ack  s silence  Enter expand  Tab rules  Esc back  ? Help", width)
 }
 
 // updateAlertView handles keys in the alert view.
@@ -330,12 +528,38 @@ func updateAlertView(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		return updateSilencePicker(s, av, key)
 	}
 
-	filtered := av.filteredAlerts()
+	switch key {
+	case "tab":
+		// Toggle sub-view.
+		if av.subView == 0 {
+			av.subView = 1
+			if s.Client != nil && av.rulesStale {
+				return queryAlertRulesCmd(s.Client)
+			}
+		} else {
+			av.subView = 0
+		}
+		return nil
+	}
+
+	if av.subView == 1 {
+		return updateRulesSubView(a, s, key)
+	}
+	return updateAlertsSubView(a, s, key)
+}
+
+func updateAlertsSubView(a *App, s *Session, key string) tea.Cmd {
+	av := &s.Alertv
+	items := buildSectionItems(av.alerts, av.showResolved)
 
 	switch key {
 	case "j", "down":
-		if av.cursor < len(filtered)-1 {
-			av.cursor++
+		// Move to next non-header item.
+		for next := av.cursor + 1; next < len(items); next++ {
+			if !items[next].isHeader {
+				av.cursor = next
+				break
+			}
 		}
 		// Auto-scroll.
 		innerH := a.height - 4
@@ -346,65 +570,72 @@ func updateAlertView(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 			av.scroll = av.cursor - innerH + 1
 		}
 	case "k", "up":
-		if av.cursor > 0 {
-			av.cursor--
+		// Move to previous non-header item.
+		for prev := av.cursor - 1; prev >= 0; prev-- {
+			if !items[prev].isHeader {
+				av.cursor = prev
+				break
+			}
 		}
 		if av.cursor < av.scroll {
 			av.scroll = av.cursor
 		}
-	case "f":
-		// Cycle severity filter: all → warning → critical → all.
-		switch av.filterSeverity {
-		case "":
-			av.filterSeverity = "warning"
-		case "warning":
-			av.filterSeverity = "critical"
-		default:
-			av.filterSeverity = ""
-		}
-		av.cursor = 0
-		av.scroll = 0
-	case "F":
-		// Cycle state filter: all → active → acknowledged → resolved → all.
-		switch av.filterState {
-		case "":
-			av.filterState = "active"
-		case "active":
-			av.filterState = "acknowledged"
-		case "acknowledged":
-			av.filterState = "resolved"
-		default:
-			av.filterState = ""
-		}
-		av.cursor = 0
-		av.scroll = 0
+	case "r":
+		av.showResolved = !av.showResolved
+		// Rebuild and re-clamp.
+		items = buildSectionItems(av.alerts, av.showResolved)
+		clampCursorToItems(av, items)
 	case "a":
 		// Acknowledge selected alert.
-		if s.Client != nil && av.cursor < len(filtered) {
-			alert := filtered[av.cursor]
+		if s.Client != nil && av.cursor < len(items) && !items[av.cursor].isHeader {
+			alert := items[av.cursor].alert
 			if alert.ResolvedAt == 0 && !alert.Acknowledged {
 				return ackAlertCmd(s.Client, alert.ID)
 			}
 		}
 	case "s":
 		// Open silence picker.
-		if av.cursor < len(filtered) {
-			alert := filtered[av.cursor]
+		if av.cursor < len(items) && !items[av.cursor].isHeader {
+			alert := items[av.cursor].alert
 			av.silenceMode = true
 			av.silenceCursor = 0
 			av.silenceAlertID = alert.ID
 			av.silenceRule = alert.RuleName
 		}
 	case "enter":
-		if av.cursor < len(filtered) {
+		if av.cursor < len(items) && !items[av.cursor].isHeader {
 			av.expandModal = &alertExpandModal{
-				alert:  filtered[av.cursor],
+				alert:  items[av.cursor].alert,
 				server: s.Name,
 			}
 		}
 	case "esc":
 		av.cursor = 0
 		av.scroll = 0
+	}
+	return nil
+}
+
+func updateRulesSubView(a *App, s *Session, key string) tea.Cmd {
+	av := &s.Alertv
+	switch key {
+	case "j", "down":
+		if av.rulesCursor < len(av.rules)-1 {
+			av.rulesCursor++
+		}
+	case "k", "up":
+		if av.rulesCursor > 0 {
+			av.rulesCursor--
+		}
+	case "s":
+		if av.rulesCursor < len(av.rules) {
+			rule := av.rules[av.rulesCursor]
+			av.silenceMode = true
+			av.silenceCursor = 0
+			av.silenceRule = rule.Name
+		}
+	case "esc":
+		av.rulesCursor = 0
 	}
 	return nil
 }
@@ -450,3 +681,4 @@ func silenceAlertCmd(c *Client, rule string, dur int64) tea.Cmd {
 		return alertActionDoneMsg{}
 	}
 }
+
