@@ -95,10 +95,21 @@ func runAgent(args []string) {
 	}
 }
 
-func runClient(args []string) {
-	fs := flag.NewFlagSet("tori", flag.ExitOnError)
+// clientAction describes what runClient should do after parsing flags.
+type clientAction struct {
+	mode       string // "socket", "ssh", "config"
+	socketPath string
+	configPath string
+	host       string
+	remoteSock string
+	sshOpts    tui.SSHOptions
+}
+
+// parseClientArgs parses the client CLI flags and returns the action to take.
+func parseClientArgs(args []string) (*clientAction, error) {
+	fs := flag.NewFlagSet("tori", flag.ContinueOnError)
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage:\n  tori [user@host] [flags]\n  tori agent [flags]\n\nFlags:\n")
+		fmt.Fprintf(fs.Output(), "Usage:\n  tori [user@host] [flags]\n  tori agent [flags]\n\nFlags:\n")
 		fs.PrintDefaults()
 	}
 	socketPath := fs.String("socket", "", "path to agent socket (direct connection)")
@@ -106,30 +117,68 @@ func runClient(args []string) {
 	port := fs.Int("port", 0, "SSH port (default: 22)")
 	identity := fs.String("identity", "", "SSH identity file")
 	remoteSock := fs.String("remote-socket", "/run/tori/tori.sock", "remote agent socket path")
-	fs.Parse(args)
+
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
 
 	positional := fs.Arg(0)
 
+	// Go's flag package stops parsing at the first non-flag argument.
+	// Re-parse trailing args so "user@host --port 2222" works.
+	if rest := fs.Args(); len(rest) > 1 {
+		if err := fs.Parse(rest[1:]); err != nil {
+			return nil, err
+		}
+	}
+
 	switch {
 	case *socketPath != "":
-		// Direct socket: single session, connect eagerly.
-		runSingleSession("local", *socketPath, nil)
+		return &clientAction{
+			mode:       "socket",
+			socketPath: *socketPath,
+		}, nil
 
 	case positional != "" && strings.Contains(positional, "@"):
-		// Ad-hoc SSH: tori user@host — uses stdin for prompts (pre-TUI).
-		tunnel, err := tui.NewTunnel(positional, *remoteSock, tui.SSHOptions{
-			Port:         *port,
-			IdentityFile: *identity,
-		})
+		return &clientAction{
+			mode:       "ssh",
+			host:       positional,
+			remoteSock: *remoteSock,
+			sshOpts: tui.SSHOptions{
+				Port:         *port,
+				IdentityFile: *identity,
+			},
+		}, nil
+
+	default:
+		return &clientAction{
+			mode:       "config",
+			configPath: *configPath,
+		}, nil
+	}
+}
+
+func runClient(args []string) {
+	act, err := parseClientArgs(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+
+	switch act.mode {
+	case "socket":
+		runSingleSession("local", act.socketPath, nil)
+
+	case "ssh":
+		tunnel, err := tui.NewTunnel(act.host, act.remoteSock, act.sshOpts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "tunnel: %v\n", err)
 			os.Exit(1)
 		}
-		runSingleSession(positional, tunnel.LocalSocket(), tunnel)
+		runSingleSession(act.host, tunnel.LocalSocket(), tunnel)
 
-	default:
-		// No args: ensure config exists, create lazy sessions.
-		cfgPath, err := tui.EnsureDefaultConfig(*configPath)
+	case "config":
+		cfgPath, err := tui.EnsureDefaultConfig(act.configPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "config: %v\n", err)
 			os.Exit(1)
