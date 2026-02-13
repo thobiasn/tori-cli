@@ -9,10 +9,10 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// ServerConfig describes how to reach a single rook agent.
+// ServerConfig describes how to reach a single tori agent.
 type ServerConfig struct {
 	Host         string `toml:"host"`          // user@host (SSH)
-	Socket       string `toml:"socket"`        // /run/rook/rook.sock
+	Socket       string `toml:"socket"`        // /run/tori/tori.sock
 	Port         int    `toml:"port"`          // SSH port (default: 22)
 	IdentityFile string `toml:"identity_file"` // path to SSH private key
 	AutoConnect  bool   `toml:"auto_connect"`  // connect on startup (default: false)
@@ -30,27 +30,27 @@ type Config struct {
 	Display DisplayConfig           `toml:"display"`
 }
 
-// DefaultConfigPath returns ~/.config/rook/config.toml using os.UserConfigDir.
+// DefaultConfigPath returns ~/.config/tori/config.toml using os.UserConfigDir.
 func DefaultConfigPath() string {
 	dir, err := os.UserConfigDir()
 	if err != nil {
-		return filepath.Join(os.Getenv("HOME"), ".config", "rook", "config.toml")
+		return filepath.Join(os.Getenv("HOME"), ".config", "tori", "config.toml")
 	}
-	return filepath.Join(dir, "rook", "config.toml")
+	return filepath.Join(dir, "tori", "config.toml")
 }
 
-const defaultConfigContent = `# Rook client configuration.
+const defaultConfigContent = `# Tori client configuration.
 # Add servers below. Each server needs either a socket path (local)
 # or a host (SSH). See README.md for full documentation.
 #
 # Examples:
 #   [servers.local]
-#   socket = "/run/rook/rook.sock"
+#   socket = "/run/tori/tori.sock"
 #
 #   [servers.production]
 #   host = "user@example.com"
 #   # port = 22
-#   # socket = "/run/rook/rook.sock"
+#   # socket = "/run/tori/tori.sock"
 #   # identity_file = "~/.ssh/id_ed25519"
 #   # auto_connect = true
 #
@@ -59,7 +59,7 @@ const defaultConfigContent = `# Rook client configuration.
 # time_format = "15:04:05"     # Go time layout
 
 [servers.local]
-socket = "/run/rook/rook.sock"
+socket = "/run/tori/tori.sock"
 `
 
 // EnsureDefaultConfig creates the default config file if it does not exist.

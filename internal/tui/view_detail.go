@@ -8,7 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/thobiasn/rook/internal/protocol"
+	"github.com/thobiasn/tori-cli/internal/protocol"
 )
 
 // DetailState holds state for the container/group detail view.

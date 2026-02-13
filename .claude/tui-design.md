@@ -1,6 +1,6 @@
 # TUI Design Reference
 
-Rook's TUI should feel like btop for Docker — information-dense, beautiful, and immediately readable. Every character on screen earns its place. Graphs are the primary visual element, not text.
+Tori's TUI should feel like btop for Docker — information-dense, beautiful, and immediately readable. Every character on screen earns its place. Graphs are the primary visual element, not text.
 
 ## Design Principles
 
@@ -64,7 +64,7 @@ Views never call `lipgloss.Color("9")` directly — they use `theme.Critical`. T
 
 ### Custom themes (future — post-M6)
 
-Users will be able to define themes in a TOML file at `~/.config/rook/theme.toml`. The client loads it at startup and passes the Theme struct to all views. Ship a few built-in themes (default, monokai, nord, solarized) as embedded TOML files. **Do not implement until after M6 — but follow the Theme struct pattern from day one so it's a drop-in addition later.**
+Users will be able to define themes in a TOML file at `~/.config/tori/theme.toml`. The client loads it at startup and passes the Theme struct to all views. Ship a few built-in themes (default, monokai, nord, solarized) as embedded TOML files. **Do not implement until after M6 — but follow the Theme struct pattern from day one so it's a drop-in addition later.**
 
 **Usage-based color gradient** for metrics (CPU, memory, disk):
 

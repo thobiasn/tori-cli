@@ -3,7 +3,7 @@ package tui
 import (
 	"context"
 
-	"github.com/thobiasn/rook/internal/protocol"
+	"github.com/thobiasn/tori-cli/internal/protocol"
 )
 
 // ConnState tracks the server connection status.

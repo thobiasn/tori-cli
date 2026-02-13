@@ -1,15 +1,15 @@
 #!/bin/sh
-# Rook install script — downloads a release binary and sets up systemd service.
-# Usage: curl -fsSL https://raw.githubusercontent.com/thobiasn/rook/main/deploy/install.sh | sh
+# Tori install script — downloads a release binary and sets up systemd service.
+# Usage: curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh
 #   or:  sh install.sh --version v1.0.0
 set -eu
 
-REPO="thobiasn/rook"
+REPO="thobiasn/tori-cli"
 INSTALL_DIR="/usr/local/bin"
-CONFIG_DIR="/etc/rook"
-DATA_DIR="/var/lib/rook"
-RUN_DIR="/run/rook"
-SERVICE_FILE="/etc/systemd/system/rook.service"
+CONFIG_DIR="/etc/tori"
+DATA_DIR="/var/lib/tori"
+RUN_DIR="/run/tori"
+SERVICE_FILE="/etc/systemd/system/tori.service"
 
 # --- Helpers ---
 
@@ -80,13 +80,13 @@ case "$VERSION" in
     *) die "invalid version format: $VERSION (expected v<semver>)" ;;
 esac
 
-info "installing rook ${VERSION} (${OS}/${ARCH})"
+info "installing tori ${VERSION} (${OS}/${ARCH})"
 
 # --- Download binary ---
 
 # Strip leading v for filename if present.
 FILE_VERSION="${VERSION#v}"
-DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/rook_${FILE_VERSION}_${OS}_${ARCH}"
+DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/tori_${FILE_VERSION}_${OS}_${ARCH}"
 
 info "downloading ${DOWNLOAD_URL}..."
 TMP=$(mktemp)
@@ -95,50 +95,50 @@ trap 'rm -f "$TMP"' EXIT
 fetch -o "$TMP" "$DOWNLOAD_URL"
 
 chmod +x "$TMP"
-mv "$TMP" "${INSTALL_DIR}/rook"
-chmod 755 "${INSTALL_DIR}/rook"
+mv "$TMP" "${INSTALL_DIR}/tori"
+chmod 755 "${INSTALL_DIR}/tori"
 trap - EXIT
-info "installed binary to ${INSTALL_DIR}/rook"
+info "installed binary to ${INSTALL_DIR}/tori"
 
 # --- Create system user ---
 
-if ! id rook >/dev/null 2>&1; then
-    useradd --system --no-create-home --shell /usr/sbin/nologin rook
-    info "created system user 'rook'"
+if ! id tori >/dev/null 2>&1; then
+    useradd --system --no-create-home --shell /usr/sbin/nologin tori
+    info "created system user 'tori'"
 fi
 
 # Add to docker group for socket access.
 if getent group docker >/dev/null 2>&1; then
-    usermod -aG docker rook
-    info "added rook to docker group"
+    usermod -aG docker tori
+    info "added tori to docker group"
 fi
 
 # --- Create directories ---
 
 mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$RUN_DIR"
-chown rook:rook "$DATA_DIR" "$RUN_DIR"
+chown tori:tori "$DATA_DIR" "$RUN_DIR"
 info "created directories"
 
 # --- Install systemd service ---
 
 cat > "$SERVICE_FILE" << 'UNIT'
 [Unit]
-Description=Rook Server Monitoring Agent
+Description=Tori Server Monitoring Agent
 After=network.target docker.service
 Requires=docker.service
 
 [Service]
 Type=simple
-User=rook
-Group=rook
-ExecStart=/usr/local/bin/rook agent --config /etc/rook/config.toml
+User=tori
+Group=tori
+ExecStart=/usr/local/bin/tori agent --config /etc/tori/config.toml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 
 # Security hardening
 ProtectSystem=strict
-ReadWritePaths=/var/lib/rook /run/rook
+ReadWritePaths=/var/lib/tori /run/tori
 ProtectHome=true
 NoNewPrivileges=true
 PrivateTmp=true
@@ -154,15 +154,15 @@ info "installed systemd service"
 
 if [ ! -f "${CONFIG_DIR}/config.toml" ]; then
     cat > "${CONFIG_DIR}/config.toml" << 'CONFIG'
-# Rook agent configuration
-# See https://github.com/thobiasn/rook for full documentation.
+# Tori agent configuration
+# See https://github.com/thobiasn/tori-cli for full documentation.
 
 [storage]
-# path = "/var/lib/rook/rook.db"
+# path = "/var/lib/tori/tori.db"
 # retention_days = 7
 
 [socket]
-# path = "/run/rook/rook.sock"
+# path = "/run/tori/tori.sock"
 
 [host]
 # proc = "/proc"
@@ -186,14 +186,14 @@ if [ ! -f "${CONFIG_DIR}/config.toml" ]; then
 # enabled = false
 # smtp_host = "smtp.example.com"
 # smtp_port = 587
-# from = "rook@example.com"
+# from = "tori@example.com"
 # to = ["you@example.com"]
 
 # [[notify.webhooks]]
 # enabled = false
 # url = "https://hooks.slack.com/services/..."
 CONFIG
-    chown rook:rook "${CONFIG_DIR}/config.toml"
+    chown tori:tori "${CONFIG_DIR}/config.toml"
     info "generated default config at ${CONFIG_DIR}/config.toml"
 else
     warn "config already exists at ${CONFIG_DIR}/config.toml, not overwriting"
@@ -206,11 +206,11 @@ info "installation complete!"
 echo ""
 echo "  Next steps:"
 echo "    1. Edit ${CONFIG_DIR}/config.toml"
-echo "    2. systemctl enable --now rook"
-echo "    3. rook connect user@this-host"
+echo "    2. systemctl enable --now tori"
+echo "    3. tori connect user@this-host"
 echo ""
 echo "  Useful commands:"
-echo "    systemctl status rook       # check agent status"
-echo "    journalctl -u rook -f       # follow agent logs"
-echo "    systemctl reload rook       # reload config (SIGHUP)"
+echo "    systemctl status tori       # check agent status"
+echo "    journalctl -u tori -f       # follow agent logs"
+echo "    systemctl reload tori       # reload config (SIGHUP)"
 echo ""

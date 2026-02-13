@@ -4,7 +4,7 @@ Design or modify a TUI view in `internal/tui/`.
 
 ## Principles
 
-Rook's TUI is a view into the agent — it displays data, it doesn't own data. All state comes from the agent via protocol messages. The TUI should feel fast, information-dense, and require zero configuration.
+Tori's TUI is a view into the agent — it displays data, it doesn't own data. All state comes from the agent via protocol messages. The TUI should feel fast, information-dense, and require zero configuration.
 
 ## Process
 

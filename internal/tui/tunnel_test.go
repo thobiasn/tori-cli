@@ -11,10 +11,10 @@ import (
 func TestTunnelLocalSocketPath(t *testing.T) {
 	// Test that a tunnel's local socket path is in a temp directory.
 	tun := &Tunnel{
-		localSock: "/tmp/rook-tunnel-test/rook.sock",
+		localSock: "/tmp/tori-tunnel-test/tori.sock",
 		done:      make(chan error, 1),
 	}
-	if tun.LocalSocket() != "/tmp/rook-tunnel-test/rook.sock" {
+	if tun.LocalSocket() != "/tmp/tori-tunnel-test/tori.sock" {
 		t.Errorf("unexpected local socket: %s", tun.LocalSocket())
 	}
 }
@@ -30,16 +30,16 @@ func TestTunnelStartFailsOnBadHost(t *testing.T) {
 		},
 	}
 
-	dir, err := os.MkdirTemp("", "rook-tunnel-test-*")
+	dir, err := os.MkdirTemp("", "tori-tunnel-test-*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	tun.localSock = filepath.Join(dir, "rook.sock")
+	tun.localSock = filepath.Join(dir, "tori.sock")
 
 	// Create a fake cmd that exits immediately.
 	tun.cmd = tun.execFn("false")
-	err = tun.start("badhost", "/run/rook.sock", SSHOptions{})
+	err = tun.start("badhost", "/run/tori.sock", SSHOptions{})
 
 	if err == nil {
 		t.Fatal("expected error for bad host")
@@ -47,14 +47,14 @@ func TestTunnelStartFailsOnBadHost(t *testing.T) {
 }
 
 func TestTunnelRejectsHostStartingWithDash(t *testing.T) {
-	_, err := NewTunnel("-oProxyCommand=evil", "/run/rook.sock")
+	_, err := NewTunnel("-oProxyCommand=evil", "/run/tori.sock")
 	if err == nil {
 		t.Fatal("should reject host starting with -")
 	}
 }
 
 func TestTunnelRejectsIdentityFileStartingWithDash(t *testing.T) {
-	_, err := NewTunnel("user@host", "/run/rook.sock", SSHOptions{
+	_, err := NewTunnel("user@host", "/run/tori.sock", SSHOptions{
 		IdentityFile: "-oProxyCommand=evil",
 	})
 	if err == nil {
@@ -72,7 +72,7 @@ func TestTunnelSSHOptions(t *testing.T) {
 		},
 	}
 	tun.cmd = tun.execFn("false")
-	if err := tun.start("user@host", "/run/rook.sock", SSHOptions{
+	if err := tun.start("user@host", "/run/tori.sock", SSHOptions{
 		Port:         2222,
 		IdentityFile: "/home/user/.ssh/mykey",
 	}); err == nil {
@@ -98,7 +98,7 @@ func TestTunnelSSHOptionsDefaults(t *testing.T) {
 		},
 	}
 	tun.cmd = tun.execFn("false")
-	if err := tun.start("user@host", "/run/rook.sock", SSHOptions{}); err == nil {
+	if err := tun.start("user@host", "/run/tori.sock", SSHOptions{}); err == nil {
 		t.Fatal("expected error from start()")
 	}
 

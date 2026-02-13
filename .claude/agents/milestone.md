@@ -9,7 +9,7 @@ Assess current project state and determine what to build next.
    - `ls -R cmd/ internal/` to see the file structure
    - Check for TODO/FIXME comments: `grep -r "TODO\|FIXME" internal/`
    - Check test coverage: `go test -cover ./...`
-   - Check if it builds: `go build ./cmd/rook`
+   - Check if it builds: `go build ./cmd/tori`
    - Check if tests pass: `go test ./...`
 3. **Map what exists to the milestones:**
 

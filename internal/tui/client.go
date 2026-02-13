@@ -11,7 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/thobiasn/rook/internal/protocol"
+	"github.com/thobiasn/tori-cli/internal/protocol"
 )
 
 // Tea message types dispatched by the reader goroutine.

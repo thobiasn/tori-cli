@@ -8,7 +8,7 @@ import (
 
 	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
-	"github.com/thobiasn/rook/internal/protocol"
+	"github.com/thobiasn/tori-cli/internal/protocol"
 )
 
 // EventWatcher listens for Docker container lifecycle events and publishes

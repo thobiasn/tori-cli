@@ -9,7 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/thobiasn/rook/internal/protocol"
+	"github.com/thobiasn/tori-cli/internal/protocol"
 )
 
 // msgCollector implements tea.Model and collects messages sent via prog.Send.

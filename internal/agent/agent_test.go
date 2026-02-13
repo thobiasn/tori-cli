@@ -9,8 +9,8 @@ import (
 )
 
 func TestAgentLifecycle(t *testing.T) {
-	if os.Getenv("ROOK_TEST_DOCKER") != "1" {
-		t.Skip("set ROOK_TEST_DOCKER=1 to run Docker integration tests")
+	if os.Getenv("TORI_TEST_DOCKER") != "1" {
+		t.Skip("set TORI_TEST_DOCKER=1 to run Docker integration tests")
 	}
 
 	dir := t.TempDir()
@@ -85,8 +85,8 @@ func TestReloadInvalidConfig(t *testing.T) {
 
 func TestReloadNonReloadableWarning(t *testing.T) {
 	old := &Config{
-		Storage: StorageConfig{Path: "/var/lib/rook/rook.db"},
-		Socket:  SocketConfig{Path: "/run/rook/rook.sock"},
+		Storage: StorageConfig{Path: "/var/lib/tori/tori.db"},
+		Socket:  SocketConfig{Path: "/run/tori/tori.sock"},
 		Host:    HostConfig{Proc: "/proc", Sys: "/sys"},
 		Docker:  DockerConfig{Socket: "/var/run/docker.sock"},
 	}

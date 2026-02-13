@@ -1,6 +1,6 @@
 # Review
 
-Review the specified code against Rook's development philosophy and architecture rules.
+Review the specified code against Tori's development philosophy and architecture rules.
 
 ## Checks
 

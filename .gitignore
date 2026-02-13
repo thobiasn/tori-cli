@@ -1,5 +1,5 @@
 # Build output
-/rook
+/tori
 *.exe
 
 # Test artifacts

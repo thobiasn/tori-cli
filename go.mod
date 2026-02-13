@@ -1,4 +1,4 @@
-module github.com/thobiasn/rook
+module github.com/thobiasn/tori-cli
 
 go 1.25.6
 

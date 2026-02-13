@@ -1,7 +1,7 @@
 .PHONY: build test vet clean
 
 build:
-	go build -o rook ./cmd/rook
+	go build -o tori ./cmd/tori
 
 test:
 	go test -race ./...
@@ -10,4 +10,4 @@ vet:
 	go vet ./...
 
 clean:
-	rm -f rook
+	rm -f tori

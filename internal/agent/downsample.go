@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"github.com/thobiasn/rook/internal/protocol"
+	"github.com/thobiasn/tori-cli/internal/protocol"
 )
 
 // downsampleHost reduces a host metric slice to exactly n points using

@@ -1,10 +1,10 @@
-# Rook
+# Tori
 
 A lightweight server monitoring tool for Docker environments. A persistent agent runs on your server collecting metrics, watching containers, tailing logs, and firing alerts 24/7. A TUI client connects to the agent over SSH from your local machine to give you full visibility — no browser, no exposed ports, no extra containers.
 
 ## Why
 
-Existing tools either require a full monitoring stack (Grafana + Prometheus + Loki + Alertmanager) or give you a live-only view with no alerting (lazydocker, ctop). Rook is a single binary that replaces both — always-on monitoring with a terminal-native interface.
+Existing tools either require a full monitoring stack (Grafana + Prometheus + Loki + Alertmanager) or give you a live-only view with no alerting (lazydocker, ctop). Tori is a single binary that replaces both — always-on monitoring with a terminal-native interface.
 
 ## Architecture
 
@@ -12,7 +12,7 @@ Existing tools either require a full monitoring stack (Grafana + Prometheus + Lo
 ┌─────────────────────────────────────────────┐
 │  Your Machine                               │
 │  ┌───────────────────────────────────────┐  │
-│  │  rook connect user@host               │  │
+│  │  tori connect user@host               │  │
 │  │  TUI Client (Bubbletea)               │  │
 │  └──────────────┬────────────────────────┘  │
 └─────────────────┼───────────────────────────┘
@@ -20,8 +20,8 @@ Existing tools either require a full monitoring stack (Grafana + Prometheus + Lo
 ┌─────────────────┼───────────────────────────┐
 │  VPS            │                           │
 │  ┌──────────────▼────────────────────────┐  │
-│  │  rook agent                           │  │
-│  │  Unix socket: /run/rook/rook.sock          │  │
+│  │  tori agent                           │  │
+│  │  Unix socket: /run/tori/tori.sock          │  │
 │  │                                       │  │
 │  │  ├── Collector (host metrics, docker) │  │
 │  │  ├── Log tailer (docker log API)      │  │
@@ -37,7 +37,7 @@ Existing tools either require a full monitoring stack (Grafana + Prometheus + Lo
 
 ## Components
 
-**Agent** (`rook agent`) — daemon that runs on the server:
+**Agent** (`tori agent`) — daemon that runs on the server:
 
 - Collects host metrics from `/proc` and `/sys` (CPU, memory, disk, network)
 - Monitors Docker containers via the Docker socket (status, stats, health, restarts)
@@ -49,7 +49,7 @@ Existing tools either require a full monitoring stack (Grafana + Prometheus + Lo
 - Exposes a Unix socket for client connections
 - Runs as a systemd service or Docker container
 
-**TUI Client** (`rook connect`) — runs on your local machine:
+**TUI Client** (`tori connect`) — runs on your local machine:
 
 - Connects to the agent via SSH-forwarded Unix socket
 - Dashboard view: container status, host metrics, resource usage
@@ -60,9 +60,9 @@ Existing tools either require a full monitoring stack (Grafana + Prometheus + Lo
 ## Project Structure
 
 ```
-rook/
+tori/
 ├── cmd/
-│   └── rook/               # single binary entry point
+│   └── tori/               # single binary entry point
 │       └── main.go
 ├── internal/
 │   ├── agent/              # collector, alerter, storage, socket server
@@ -84,14 +84,14 @@ The `internal/protocol` package is the contract between agent and client — all
 ## Agent Config
 
 ```toml
-# /etc/rook/config.toml
+# /etc/tori/config.toml
 
 [storage]
-path = "/var/lib/rook/rook.db"
+path = "/var/lib/tori/tori.db"
 retention_days = 7
 
 [socket]
-path = "/run/rook/rook.sock"
+path = "/run/tori/tori.sock"
 
 [host]
 proc = "/proc"
@@ -102,7 +102,7 @@ socket = "/var/run/docker.sock"
 # track all containers by default
 # can be toggled per-container or per-group at runtime via the TUI
 # these filters set the initial state:
-# exclude = ["rook-*"]
+# exclude = ["tori-*"]
 
 [collect]
 interval = "10s"
@@ -165,7 +165,7 @@ actions = ["notify"]
 enabled = true
 smtp_host = "smtp.example.com"
 smtp_port = 587
-from = "rook@example.com"
+from = "tori@example.com"
 to = ["you@example.com"]
 
 [notify.webhook]
@@ -196,18 +196,18 @@ Numeric fields support `>`, `<`, `>=`, `<=`, `==`, `!=`. String fields support `
 ## Client Config
 
 ```toml
-# ~/.config/rook/config.toml
+# ~/.config/tori/config.toml
 
 [servers.prod]
 host = "user@prod.example.com"
-socket = "/run/rook/rook.sock"
+socket = "/run/tori/tori.sock"
 # port = 2222                          # custom SSH port (default: 22)
 # identity_file = "~/.ssh/prod_key"    # path to SSH private key
 # auto_connect = true                  # connect on startup (default: false)
 
 [servers.staging]
 host = "user@staging.example.com"
-socket = "/run/rook/rook.sock"
+socket = "/run/tori/tori.sock"
 # port = 22
 # identity_file = "~/.ssh/staging_key"
 # auto_connect = true
@@ -229,10 +229,10 @@ The `[display]` section controls how timestamps appear in logs and alerts. Both 
 
 ```bash
 # Install
-curl -fsSL https://get.rook.dev | sh
+curl -fsSL https://get.tori.dev | sh
 
 # Start the agent
-rook agent --config /etc/rook/config.toml
+tori agent --config /etc/tori/config.toml
 ```
 
 ## Deploy — Docker
@@ -240,39 +240,39 @@ rook agent --config /etc/rook/config.toml
 Build the image:
 
 ```bash
-docker build -f deploy/Dockerfile -t rook .
+docker build -f deploy/Dockerfile -t tori .
 ```
 
 Run with a config file on the host:
 
 ```bash
-docker run -d --name rook \
+docker run -d --name tori \
   --restart unless-stopped \
   --pid host \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   -v /proc:/host/proc:ro \
   -v /sys:/host/sys:ro \
-  -v /run/rook:/run/rook \
-  -v rook-data:/var/lib/rook \
-  -v ./config.toml:/etc/rook/config.toml:ro \
-  rook
+  -v /run/tori:/run/tori \
+  -v tori-data:/var/lib/tori \
+  -v ./config.toml:/etc/tori/config.toml:ro \
+  tori
 ```
 
-Or inject the entire config via the `ROOK_CONFIG` environment variable (useful for PaaS platforms like Dokploy or Coolify where you don't have easy access to the host filesystem):
+Or inject the entire config via the `TORI_CONFIG` environment variable (useful for PaaS platforms like Dokploy or Coolify where you don't have easy access to the host filesystem):
 
 ```bash
-docker run -d --name rook \
+docker run -d --name tori \
   --restart unless-stopped \
   --pid host \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   -v /proc:/host/proc:ro \
   -v /sys:/host/sys:ro \
-  -v /run/rook:/run/rook \
-  -v rook-data:/var/lib/rook \
-  -e ROOK_CONFIG='[storage]
-path = "/var/lib/rook/rook.db"
+  -v /run/tori:/run/tori \
+  -v tori-data:/var/lib/tori \
+  -e TORI_CONFIG='[storage]
+path = "/var/lib/tori/tori.db"
 [socket]
-path = "/run/rook/rook.sock"
+path = "/run/tori/tori.sock"
 [host]
 proc = "/host/proc"
 sys = "/host/sys"
@@ -280,10 +280,10 @@ sys = "/host/sys"
 socket = "/var/run/docker.sock"
 [collect]
 interval = "10s"' \
-  rook
+  tori
 ```
 
-A ready-to-use Docker Compose file is provided at `deploy/docker-compose.yml` with `ROOK_CONFIG` pre-filled with sensible defaults.
+A ready-to-use Docker Compose file is provided at `deploy/docker-compose.yml` with `TORI_CONFIG` pre-filled with sensible defaults.
 
 When running via Docker, set the host paths in your config to the mounted locations:
 
@@ -293,37 +293,37 @@ proc = "/host/proc"
 sys = "/host/sys"
 ```
 
-The socket is mounted to `/run/rook` on the host so `rook connect` can find it over SSH as usual.
+The socket is mounted to `/run/tori` on the host so `tori connect` can find it over SSH as usual.
 
 ## Connect
 
 ```bash
 # Connect to all configured servers
-rook connect
+tori connect
 
 # Connect to a specific configured server
-rook connect prod
+tori connect prod
 
 # Or connect directly via SSH
-rook connect user@myserver.com
+tori connect user@myserver.com
 
 # Direct socket (local development)
-rook connect --socket /run/rook/rook.sock
+tori connect --socket /run/tori/tori.sock
 ```
 
 When connected to multiple servers, press `S` to open the server picker and switch between them. Each server has isolated data — switching is instant since all sessions receive data concurrently.
 
 ## Security
 
-**Docker socket access:** Rook requires read-only access to the Docker socket (`/var/run/docker.sock`) for container monitoring. This is the same trust model as lazydocker, ctop, and other Docker monitoring tools. The socket is always mounted `:ro` — Rook never writes to Docker.
+**Docker socket access:** Tori requires read-only access to the Docker socket (`/var/run/docker.sock`) for container monitoring. This is the same trust model as lazydocker, ctop, and other Docker monitoring tools. The socket is always mounted `:ro` — Tori never writes to Docker.
 
-**Unix socket permissions:** The Rook socket at `/run/rook/rook.sock` is the only way to interact with the agent. The default file mode is `0666` because SSH is the real auth gate — anyone who can reach the socket already has shell access to the server. Rook doesn't expand the attack surface.
+**Unix socket permissions:** The Tori socket at `/run/tori/tori.sock` is the only way to interact with the agent. The default file mode is `0666` because SSH is the real auth gate — anyone who can reach the socket already has shell access to the server. Tori doesn't expand the attack surface.
 
 **Config file:** The agent config contains SMTP credentials and webhook URLs. Permissions should be `0600` owned by the user running the agent.
 
-**No exposed ports:** Rook does not listen on any network port. All client communication goes through SSH to the Unix socket. There is no HTTP server, no API endpoint, nothing to expose or firewall.
+**No exposed ports:** Tori does not listen on any network port. All client communication goes through SSH to the Unix socket. There is no HTTP server, no API endpoint, nothing to expose or firewall.
 
-**Log contents:** Rook stores container logs in SQLite. These may contain sensitive application data (tokens, user info, errors with PII). The database file at `/var/lib/rook/rook.db` should have restrictive permissions and the retention policy should be set appropriately.
+**Log contents:** Tori stores container logs in SQLite. These may contain sensitive application data (tokens, user info, errors with PII). The database file at `/var/lib/tori/tori.db` should have restrictive permissions and the retention policy should be set appropriately.
 
 ## Protocol
 
@@ -367,7 +367,7 @@ Client-side server config, server switcher in TUI, concurrent connections. Per-c
 Webhook/Slack notifications, config reload without restart, install script.
 
 **Future:**
-Custom TUI themes via `~/.config/rook/theme.toml`, built-in theme presets (monokai, nord, solarized).
+Custom TUI themes via `~/.config/tori/theme.toml`, built-in theme presets (monokai, nord, solarized).
 Filter logs by date from/to
 Log based alerts for matching keywords
 Which log message triggered an alert display/log entry highlight

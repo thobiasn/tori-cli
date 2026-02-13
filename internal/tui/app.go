@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/thobiasn/rook/internal/protocol"
+	"github.com/thobiasn/tori-cli/internal/protocol"
 )
 
 type view int
@@ -238,7 +238,7 @@ func connectServerCmd(name string, cfg ServerConfig, appctx *appCtx) tea.Cmd {
 	return func() tea.Msg {
 		remoteSock := cfg.Socket
 		if remoteSock == "" {
-			remoteSock = "/run/rook/rook.sock"
+			remoteSock = "/run/tori/tori.sock"
 		}
 
 		var tunnel *Tunnel

@@ -15,19 +15,19 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/thobiasn/rook/internal/agent"
-	"github.com/thobiasn/rook/internal/tui"
+	"github.com/thobiasn/tori-cli/internal/agent"
+	"github.com/thobiasn/tori-cli/internal/tui"
 )
 
 func main() {
 	// Askpass mode: when invoked as SSH_ASKPASS, relay prompt over IPC.
-	if sock := os.Getenv("ROOK_ASKPASS_SOCK"); sock != "" {
+	if sock := os.Getenv("TORI_ASKPASS_SOCK"); sock != "" {
 		runAskpass(sock)
 		return
 	}
 
 	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "usage: rook <agent|connect> [flags]\n")
+		fmt.Fprintf(os.Stderr, "usage: tori <agent|connect> [flags]\n")
 		os.Exit(1)
 	}
 
@@ -37,12 +37,12 @@ func main() {
 	case "connect":
 		runConnect(os.Args[2:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\nusage: rook <agent|connect> [flags]\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "unknown command: %s\nusage: tori <agent|connect> [flags]\n", os.Args[1])
 		os.Exit(1)
 	}
 }
 
-// runAskpass is the SSH_ASKPASS helper mode. SSH invokes the rook binary with
+// runAskpass is the SSH_ASKPASS helper mode. SSH invokes the tori binary with
 // the prompt as an argument. We connect to the IPC socket, send the prompt,
 // and print the response to stdout.
 func runAskpass(sock string) {
@@ -69,7 +69,7 @@ func runAskpass(sock string) {
 
 func runAgent(args []string) {
 	fs := flag.NewFlagSet("agent", flag.ExitOnError)
-	configPath := fs.String("config", "/etc/rook/config.toml", "path to config file")
+	configPath := fs.String("config", "/etc/tori/config.toml", "path to config file")
 	fs.Parse(args)
 
 	cfg, err := agent.LoadConfig(*configPath)
@@ -118,8 +118,8 @@ func runConnect(args []string) {
 		runSingleSession("local", *socketPath, nil)
 
 	case positional != "" && strings.Contains(positional, "@"):
-		// Ad-hoc SSH: rook connect user@host — uses stdin for prompts (pre-TUI).
-		tunnel, err := tui.NewTunnel(positional, "/run/rook/rook.sock")
+		// Ad-hoc SSH: tori connect user@host — uses stdin for prompts (pre-TUI).
+		tunnel, err := tui.NewTunnel(positional, "/run/tori/tori.sock")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "tunnel: %v\n", err)
 			os.Exit(1)
@@ -162,7 +162,7 @@ func runConnect(args []string) {
 				// Local socket — connect eagerly inline.
 				sockPath := srv.Socket
 				if sockPath == "" {
-					sockPath = "/run/rook/rook.sock"
+					sockPath = "/run/tori/tori.sock"
 				}
 				conn, err := net.Dial("unix", sockPath)
 				if err != nil {

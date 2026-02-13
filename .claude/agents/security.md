@@ -1,17 +1,17 @@
 # Security
 
-Audit code for security concerns specific to Rook's threat model.
+Audit code for security concerns specific to Tori's threat model.
 
 ## Threat Model
 
-Rook runs with elevated access: Docker socket (effectively root), host `/proc` and `/sys`, and stores potentially sensitive log data. The main security guarantee is that Rook exposes zero network ports — all access is gated by SSH. The goal is to not weaken that posture.
+Tori runs with elevated access: Docker socket (effectively root), host `/proc` and `/sys`, and stores potentially sensitive log data. The main security guarantee is that Tori exposes zero network ports — all access is gated by SSH. The goal is to not weaken that posture.
 
 ## Checks
 
 ### Docker Socket
 
 - Is the Docker socket ever exposed beyond the agent process? It should only be used by the collector for read-only monitoring.
-- Is the Docker socket always mounted `:ro`? Rook should never write to Docker.
+- Is the Docker socket always mounted `:ro`? Tori should never write to Docker.
 - Could a crafted TUI request trigger unintended Docker operations? Validate that no protocol action can write to Docker.
 
 ### Unix Socket

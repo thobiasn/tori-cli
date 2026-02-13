@@ -1,20 +1,20 @@
 [Unit]
-Description=Rook Server Monitoring Agent
+Description=Tori Server Monitoring Agent
 After=network.target docker.service
 Requires=docker.service
 
 [Service]
 Type=simple
-User=rook
-Group=rook
-ExecStart=/usr/local/bin/rook agent --config /etc/rook/config.toml
+User=tori
+Group=tori
+ExecStart=/usr/local/bin/tori agent --config /etc/tori/config.toml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 
 # Security hardening
 ProtectSystem=strict
-ReadWritePaths=/var/lib/rook /run/rook
+ReadWritePaths=/var/lib/tori /run/tori
 ProtectHome=true
 NoNewPrivileges=true
 PrivateTmp=true

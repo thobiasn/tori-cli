@@ -1,6 +1,6 @@
 package agent
 
-import "github.com/thobiasn/rook/internal/protocol"
+import "github.com/thobiasn/tori-cli/internal/protocol"
 
 func convertTimedHost(src []TimedHostMetrics) []protocol.TimedHostMetrics {
 	out := make([]protocol.TimedHostMetrics, len(src))

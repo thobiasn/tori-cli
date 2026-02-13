@@ -72,14 +72,14 @@ func TestLoadConfigDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if cfg.Storage.Path != "/var/lib/rook/rook.db" {
-		t.Errorf("default storage path = %q, want /var/lib/rook/rook.db", cfg.Storage.Path)
+	if cfg.Storage.Path != "/var/lib/tori/tori.db" {
+		t.Errorf("default storage path = %q, want /var/lib/tori/tori.db", cfg.Storage.Path)
 	}
 	if cfg.Storage.RetentionDays != 7 {
 		t.Errorf("default retention = %d, want 7", cfg.Storage.RetentionDays)
 	}
-	if cfg.Socket.Path != "/run/rook/rook.sock" {
-		t.Errorf("default socket = %q, want /run/rook/rook.sock", cfg.Socket.Path)
+	if cfg.Socket.Path != "/run/tori/tori.sock" {
+		t.Errorf("default socket = %q, want /run/tori/tori.sock", cfg.Socket.Path)
 	}
 	if cfg.Host.Proc != "/proc" {
 		t.Errorf("default proc = %q, want /proc", cfg.Host.Proc)

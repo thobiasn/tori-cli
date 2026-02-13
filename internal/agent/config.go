@@ -108,13 +108,13 @@ func LoadConfig(path string) (*Config, error) {
 
 func setDefaults(cfg *Config) {
 	if cfg.Storage.Path == "" {
-		cfg.Storage.Path = "/var/lib/rook/rook.db"
+		cfg.Storage.Path = "/var/lib/tori/tori.db"
 	}
 	if cfg.Storage.RetentionDays == 0 {
 		cfg.Storage.RetentionDays = 7
 	}
 	if cfg.Socket.Path == "" {
-		cfg.Socket.Path = "/run/rook/rook.sock"
+		cfg.Socket.Path = "/run/tori/tori.sock"
 	}
 	if cfg.Host.Proc == "" {
 		cfg.Host.Proc = "/proc"

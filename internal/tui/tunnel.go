@@ -26,7 +26,7 @@ type SSHOptions struct {
 // to cancel.
 type AskpassPromptFn func(prompt string) (string, error)
 
-// Tunnel manages an SSH tunnel to a remote rook agent socket.
+// Tunnel manages an SSH tunnel to a remote tori agent socket.
 type Tunnel struct {
 	cmd       *exec.Cmd
 	localSock string
@@ -60,11 +60,11 @@ func NewTunnel(host, remoteSock string, opts ...SSHOptions) (*Tunnel, error) {
 
 func (t *Tunnel) start(host, remoteSock string, opts SSHOptions) error {
 	// Create temp socket path.
-	dir, err := os.MkdirTemp("", "rook-tunnel-*")
+	dir, err := os.MkdirTemp("", "tori-tunnel-*")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
 	}
-	t.localSock = filepath.Join(dir, "rook.sock")
+	t.localSock = filepath.Join(dir, "tori.sock")
 
 	args := []string{"-N", "-o", "ControlPath=none"}
 	if opts.Port > 0 {
@@ -147,11 +147,11 @@ func NewTunnelAskpass(host, remoteSock string, promptFn AskpassPromptFn, opts SS
 	}
 
 	// Create temp dir for both the tunnel socket and the askpass IPC socket.
-	dir, err := os.MkdirTemp("", "rook-tunnel-*")
+	dir, err := os.MkdirTemp("", "tori-tunnel-*")
 	if err != nil {
 		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
-	t.localSock = filepath.Join(dir, "rook.sock")
+	t.localSock = filepath.Join(dir, "tori.sock")
 
 	// Start askpass IPC listener.
 	ipcSock := filepath.Join(dir, "askpass.sock")
@@ -184,7 +184,7 @@ func NewTunnelAskpass(host, remoteSock string, promptFn AskpassPromptFn, opts SS
 	t.cmd.Env = append(os.Environ(),
 		"SSH_ASKPASS="+self,
 		"SSH_ASKPASS_REQUIRE=force",
-		"ROOK_ASKPASS_SOCK="+ipcSock,
+		"TORI_ASKPASS_SOCK="+ipcSock,
 		"DISPLAY=:0",
 	)
 	t.cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

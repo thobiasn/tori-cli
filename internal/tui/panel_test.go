@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thobiasn/rook/internal/protocol"
+	"github.com/thobiasn/tori-cli/internal/protocol"
 )
 
 func TestRenderAlertPanelEmpty(t *testing.T) {

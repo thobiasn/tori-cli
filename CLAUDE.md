@@ -11,14 +11,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Rook is a lightweight server monitoring tool for Docker environments. A persistent agent collects metrics, watches containers, tails logs, and fires alerts. A TUI client connects over SSH to view everything in the terminal.
+Tori is a lightweight server monitoring tool for Docker environments. A persistent agent collects metrics, watches containers, tails logs, and fires alerts. A TUI client connects over SSH to view everything in the terminal.
 
 **Status:** M1–M5 complete. M6 (polish) is next. The README.md contains the full specification.
 
 ## Build & Development Commands
 
 ```bash
-make build                             # build the binary (or: go build -o rook ./cmd/rook)
+make build                             # build the binary (or: go build -o tori ./cmd/tori)
 make test                              # run all tests with -race (or: go test -race ./...)
 make vet                               # static analysis (or: go vet ./...)
 go test ./internal/agent/...           # run tests for a specific package
@@ -27,14 +27,14 @@ go test -run TestFunctionName ./...    # run a single test
 
 ## Architecture
 
-Single Go binary with two modes: `rook agent` (server daemon) and `rook connect` (TUI client).
+Single Go binary with two modes: `tori agent` (server daemon) and `tori connect` (TUI client).
 
 ```
-cmd/rook/main.go          — single entry point, subcommands for agent/connect
+cmd/tori/main.go          — single entry point, subcommands for agent/connect
 internal/agent/            — collector, alerter, storage, socket server (flat package — no sub-packages)
 internal/tui/              — bubbletea views and components
 internal/protocol/         — shared message types, msgpack encoding
-deploy/                    — install.sh, rook.service (systemd), Dockerfile, docker-compose.yml
+deploy/                    — install.sh, tori.service (systemd), Dockerfile, docker-compose.yml
 ```
 
 **Actual file layout (internal/agent/):**
@@ -59,17 +59,17 @@ The agent is the source of truth. It collects, stores, evaluates, and alerts ind
 
 ## Key Design Decisions
 
-- **Transport:** Unix socket (`/run/rook/rook.sock`) + SSH tunnel. No HTTP server, no exposed ports.
+- **Transport:** Unix socket (`/run/tori/tori.sock`) + SSH tunnel. No HTTP server, no exposed ports.
 - **Protocol:** msgpack over Unix socket. Two patterns: streaming subscriptions (agent pushes) and request-response (client asks).
-- **Storage:** SQLite in WAL mode at `/var/lib/rook/rook.db` with configurable retention. One database file. If you're writing JOINs across more than 2 tables, rethink the data model.
-- **Config:** TOML format. Agent config at `/etc/rook/config.toml`, client config at `~/.config/rook/config.toml`. Paths in config are absolute. Defaults are sane for bare metal (`/proc`, `/sys`). Docker deployment overrides them (`/host/proc`, `/host/sys`). No detection logic.
+- **Storage:** SQLite in WAL mode at `/var/lib/tori/tori.db` with configurable retention. One database file. If you're writing JOINs across more than 2 tables, rethink the data model.
+- **Config:** TOML format. Agent config at `/etc/tori/config.toml`, client config at `~/.config/tori/config.toml`. Paths in config are absolute. Defaults are sane for bare metal (`/proc`, `/sys`). Docker deployment overrides them (`/host/proc`, `/host/sys`). No detection logic.
 - **TUI:** Bubbletea + Lipgloss + Bubbles (Charm ecosystem). See `.claude/tui-design.md` for the complete visual design language (layout, colors, graphs, responsive rules). All colors must be defined in a single `Theme` struct in `internal/tui/theme.go` — views reference theme fields, never raw color values.
 - **Host metrics:** Read directly from `/proc` and `/sys` (no cgo, no external deps).
 - **Docker:** Monitor via Docker socket (`/var/run/docker.sock`), read-only. Containers are grouped by compose project via `com.docker.compose.project` label. Tracking (metrics, logs, alerts) can be toggled per-container or per-group at runtime.
 
 ## Development Philosophy
 
-Code is a liability, not an asset. Every line we write is a line we have to maintain, debug, and understand. The goal is always the least code that solves the actual problem. Rook's entire value proposition is simplicity — the code should reflect that.
+Code is a liability, not an asset. Every line we write is a line we have to maintain, debug, and understand. The goal is always the least code that solves the actual problem. Tori's entire value proposition is simplicity — the code should reflect that.
 
 - **If we're writing more than ~400 lines in a single file, step back and rethink the design.** Go is verbose, so the threshold is higher than other languages, but a file that big usually means it's doing too much.
 - **If a feature requires brittle code or lots of edge case handling, the mental model is wrong.** Redesign the approach so edge cases don't exist rather than handling them. The best error handling is making errors impossible by construction.

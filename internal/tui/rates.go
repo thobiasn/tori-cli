@@ -1,6 +1,6 @@
 package tui
 
-import "github.com/thobiasn/rook/internal/protocol"
+import "github.com/thobiasn/tori-cli/internal/protocol"
 
 // RateCalc computes per-second rates from cumulative network and container counters.
 type RateCalc struct {

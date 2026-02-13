@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thobiasn/rook/internal/protocol"
+	"github.com/thobiasn/tori-cli/internal/protocol"
 )
 
 // testSocketServer creates a SocketServer on a temp Unix socket.

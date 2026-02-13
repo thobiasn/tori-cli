@@ -1,5 +1,5 @@
 services:
-  rook:
+  tori:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -9,16 +9,16 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
-      - /run/rook:/run/rook
-      - rook-data:/var/lib/rook
+      - /run/tori:/run/tori
+      - tori-data:/var/lib/tori
     environment:
-      ROOK_CONFIG: |
+      TORI_CONFIG: |
         [storage]
-        path = "/var/lib/rook/rook.db"
+        path = "/var/lib/tori/tori.db"
         retention_days = 7
 
         [socket]
-        path = "/run/rook/rook.sock"
+        path = "/run/tori/tori.sock"
 
         [host]
         proc = "/host/proc"
@@ -54,4 +54,4 @@ services:
         actions = ["notify"]
 
 volumes:
-  rook-data:
+  tori-data:

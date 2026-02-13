@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/thobiasn/rook/internal/protocol"
+	"github.com/thobiasn/tori-cli/internal/protocol"
 )
 
 // Agent orchestrates metric collection, log tailing, and storage.
