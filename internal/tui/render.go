@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/thobiasn/rook/internal/protocol"
 )
 
@@ -17,6 +18,59 @@ type RenderContext struct {
 	Theme       *Theme
 	WindowLabel string
 	WindowSec   int64
+}
+
+// Overlay composites fg centered on top of bg. Both strings are
+// newline-separated terminal renderings. Width and height are the total
+// terminal dimensions. Uses ANSI-aware string operations so styled
+// background content is preserved around the overlay edges.
+func Overlay(bg, fg string, width, height int) string {
+	bgLines := strings.Split(bg, "\n")
+	fgLines := strings.Split(fg, "\n")
+
+	fgH := len(fgLines)
+	fgW := 0
+	for _, l := range fgLines {
+		if w := lipgloss.Width(l); w > fgW {
+			fgW = w
+		}
+	}
+
+	x := (width - fgW) / 2
+	y := (height - fgH) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+
+	// Ensure bg has enough lines.
+	for len(bgLines) < height {
+		bgLines = append(bgLines, "")
+	}
+
+	for i, fgLine := range fgLines {
+		row := y + i
+		if row >= len(bgLines) {
+			break
+		}
+		bgLine := bgLines[row]
+		fgLineW := lipgloss.Width(fgLine)
+
+		left := ansi.Truncate(bgLine, x, "")
+		if leftW := lipgloss.Width(left); leftW < x {
+			left += strings.Repeat(" ", x-leftW)
+		}
+
+		right := ansi.TruncateLeft(bgLine, x+fgLineW, "")
+		bgLines[row] = left + fgLine + right
+	}
+
+	if len(bgLines) > height {
+		bgLines = bgLines[:height]
+	}
+	return strings.Join(bgLines, "\n")
 }
 
 // Box renders a bordered panel with a title using rounded Unicode corners.

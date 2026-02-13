@@ -330,7 +330,7 @@ func TestAlertViewRenderSilencePicker(t *testing.T) {
 	s.Alertv.silenceRule = "test_rule"
 	s.Alertv.alerts = []protocol.AlertMsg{{ID: 1, RuleName: "test_rule"}}
 
-	got := renderAlertView(&a, s, 80, 20)
+	got := renderSilencePicker(&s.Alertv, &a.theme)
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "Silence") {
 		t.Error("should show silence picker")

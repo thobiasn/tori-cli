@@ -341,13 +341,7 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 		logBox = renderDetailLogs(det, containerName, false, width, logH, theme, true, a.tsFormat())
 	}
 
-	result := metricsBox + "\n" + logBox
-	if det.filterModal != nil {
-		result = metricsBox + "\n" + renderFilterModal(det.filterModal, width, logH, theme, a.displayCfg)
-	} else if det.expandModal != nil {
-		result = metricsBox + "\n" + renderExpandModal(det.expandModal, width, logH, theme, a.tsFormat())
-	}
-	return result
+	return metricsBox + "\n" + logBox
 }
 
 func renderDetailGroup(a *App, s *Session, width, height int) string {
@@ -399,13 +393,7 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 		logBox = renderDetailLogs(det, det.project, true, width, logH, theme, true, a.tsFormat())
 	}
 
-	result := metricsBox + "\n" + logBox
-	if det.filterModal != nil {
-		result = metricsBox + "\n" + renderFilterModal(det.filterModal, width, logH, theme, a.displayCfg)
-	} else if det.expandModal != nil {
-		result = metricsBox + "\n" + renderExpandModal(det.expandModal, width, logH, theme, a.tsFormat())
-	}
-	return result
+	return metricsBox + "\n" + logBox
 }
 
 func renderDetailGroupMetrics(s *Session, det *DetailState, rc RenderContext) string {

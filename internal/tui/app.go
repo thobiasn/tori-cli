@@ -658,8 +658,7 @@ func (a *App) renderSSHPromptModal(width, height int) string {
 		modalH = height - 2
 	}
 
-	modal := Box("SSH", content, modalW, modalH, theme)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
+	return Box("SSH", content, modalW, modalH, theme)
 }
 
 func (a *App) handleSessionMetrics(s *Session, m *protocol.MetricsUpdate) tea.Cmd {
@@ -944,15 +943,29 @@ func (a App) View() string {
 		content = renderDetail(&a, s, a.width, contentH)
 	}
 
-	if a.showHelp {
-		content = helpOverlay(a.active, a.width, contentH, &a.theme)
+	fullOutput := content + "\n" + a.renderFooter()
+
+	// Single overlay pass for any active modal.
+	var modal string
+	switch {
+	case a.showHelp:
+		modal = helpOverlay(a.active, a.width, a.height, &a.theme)
+	case a.sshPrompt != nil:
+		modal = a.renderSSHPromptModal(a.width, a.height)
+	case a.active == viewAlerts && s.Alertv.silenceMode:
+		modal = renderSilencePicker(&s.Alertv, &a.theme)
+	case a.active == viewAlerts && s.Alertv.expandModal != nil:
+		modal = renderAlertExpandModal(s.Alertv.expandModal, a.width, a.height, &a.theme, a.tsFormat())
+	case a.active == viewDetail && s.Detail.filterModal != nil:
+		modal = renderFilterModal(s.Detail.filterModal, a.width, a.height, &a.theme, a.displayCfg)
+	case a.active == viewDetail && s.Detail.expandModal != nil:
+		modal = renderExpandModal(s.Detail.expandModal, a.width, a.height, &a.theme, a.tsFormat())
+	}
+	if modal != "" {
+		fullOutput = Overlay(fullOutput, modal, a.width, a.height)
 	}
 
-	if a.sshPrompt != nil {
-		content = a.renderSSHPromptModal(a.width, contentH)
-	}
-
-	return content + "\n" + a.renderFooter()
+	return fullOutput
 }
 
 // renderViewFooter returns the top footer line with view-specific shortcuts.

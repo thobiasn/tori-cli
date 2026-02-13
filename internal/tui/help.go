@@ -2,8 +2,6 @@ package tui
 
 import (
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 var dashboardHelp = `
@@ -64,6 +62,5 @@ func helpOverlay(active view, width, height int, theme *Theme) string {
 	}
 
 	content := strings.Join(lines, "\n")
-	overlay := Box("Help", content, boxW, boxH, theme)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, overlay)
+	return Box("Help", content, boxW, boxH, theme)
 }

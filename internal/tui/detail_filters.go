@@ -435,8 +435,7 @@ func renderFilterModal(m *logFilterModal, width, height int, theme *Theme, cfg D
 
 	content := strings.Join(lines, "\n")
 	modalH := len(lines) + 2
-	modal := Box("Filter", content, modalW, modalH, theme)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
+	return Box("Filter", content, modalW, modalH, theme)
 }
 
 // updateDetail handles keys in the detail view.
@@ -660,7 +659,10 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, tsFor
 	if modalW > width-4 {
 		modalW = width - 4
 	}
-	modalH := height
+	modalH := height - 4
+	if modalH < 10 {
+		modalH = 10
+	}
 	innerW := modalW - 2
 	innerH := modalH - 2
 	if innerH < 1 {
@@ -716,7 +718,6 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, tsFor
 	}
 
 	content := strings.Join(lines, "\n")
-	modal := Box("Log", content, modalW, modalH, theme)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
+	return Box("Log", content, modalW, modalH, theme)
 }
 

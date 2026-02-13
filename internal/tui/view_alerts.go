@@ -166,14 +166,6 @@ func renderAlertView(a *App, s *Session, width, height int) string {
 	boxH := height - 1
 	content := strings.Join(lines, "\n")
 	box := Box(title, content, width, boxH, theme)
-
-	// Modal overlays.
-	if av.silenceMode {
-		box = renderSilencePicker(av, width, boxH, theme)
-	} else if av.expandModal != nil {
-		box = renderAlertExpandModal(av.expandModal, width, boxH, theme, tsFormat)
-	}
-
 	return box + "\n" + renderAlertFooter(av, width, theme)
 }
 
@@ -191,7 +183,7 @@ func alertTitle(av *AlertViewState, filtered []protocol.AlertMsg) string {
 	return title
 }
 
-func renderSilencePicker(s *AlertViewState, width, height int, theme *Theme) string {
+func renderSilencePicker(s *AlertViewState, theme *Theme) string {
 	var lines []string
 	lines = append(lines, fmt.Sprintf(" Silence %s for:", Truncate(s.silenceRule, 20)))
 	for i, d := range silenceDurations {
@@ -204,8 +196,7 @@ func renderSilencePicker(s *AlertViewState, width, height int, theme *Theme) str
 	content := strings.Join(lines, "\n")
 	pickerW := 30
 	pickerH := len(silenceDurations) + 3
-	picker := Box("Silence", content, pickerW, pickerH, theme)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, picker)
+	return Box("Silence", content, pickerW, pickerH, theme)
 }
 
 // updateAlertExpandModal handles keys inside the alert expand modal.
@@ -233,7 +224,10 @@ func renderAlertExpandModal(m *alertExpandModal, width, height int, theme *Theme
 	if modalW > width-4 {
 		modalW = width - 4
 	}
-	modalH := height
+	modalH := height - 4
+	if modalH < 10 {
+		modalH = 10
+	}
 	innerW := modalW - 2
 	innerH := modalH - 2
 	if innerH < 1 {
@@ -271,8 +265,7 @@ func renderAlertExpandModal(m *alertExpandModal, width, height int, theme *Theme
 	// If there's a message, add separator and scrollable content.
 	if m.alert.Message == "" {
 		content := strings.Join(header, "\n")
-		modal := Box("Alert", content, modalW, modalH, theme)
-		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
+		return Box("Alert", content, modalW, modalH, theme)
 	}
 
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
@@ -310,8 +303,7 @@ func renderAlertExpandModal(m *alertExpandModal, width, height int, theme *Theme
 	}
 
 	content := strings.Join(lines, "\n")
-	modal := Box("Alert", content, modalW, modalH, theme)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
+	return Box("Alert", content, modalW, modalH, theme)
 }
 
 func renderAlertFooter(s *AlertViewState, width int, theme *Theme) string {
