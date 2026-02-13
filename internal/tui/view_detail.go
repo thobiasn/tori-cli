@@ -33,12 +33,24 @@ type DetailState struct {
 	filterContainerID string // within-group container filter (c key)
 	filterProject     string // project filter (g key, only meaningful in group mode)
 	filterStream      string // "", "stdout", "stderr"
-	searchText        string
-	searchMode        bool
+	searchText        string // applied text filter
+	filterFrom        int64  // applied from timestamp (0 = no filter)
+	filterTo          int64  // applied to timestamp (0 = no filter)
+	filterModal       *logFilterModal
 
 	backfilled             bool
 	metricsBackfilled      bool
 	metricsBackfillPending bool // true while a detail metrics backfill is in-flight
+}
+
+// logFilterModal holds the transient state of the filter modal while open.
+type logFilterModal struct {
+	focus    int    // 0=text, 1=fromDate, 2=fromTime, 3=toDate, 4=toTime
+	text     string
+	fromDate maskedField
+	fromTime maskedField
+	toDate   maskedField
+	toTime   maskedField
 }
 
 type detailLogQueryMsg struct {
@@ -67,7 +79,9 @@ func (s *DetailState) reset() {
 	s.filterProject = ""
 	s.filterStream = ""
 	s.searchText = ""
-	s.searchMode = false
+	s.filterFrom = 0
+	s.filterTo = 0
+	s.filterModal = nil
 	s.backfilled = false
 	s.metricsBackfilled = false
 	s.metricsBackfillPending = false
@@ -318,7 +332,11 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 		logBox = renderDetailLogs(det, containerName, width, logH, theme, det.logFocused, a.tsFormat())
 	}
 
-	return metricsBox + "\n" + logBox
+	result := metricsBox + "\n" + logBox
+	if det.filterModal != nil {
+		result = metricsBox + "\n" + renderFilterModal(det.filterModal, width, logH, theme, a.displayCfg)
+	}
+	return result
 }
 
 func renderDetailGroup(a *App, s *Session, width, height int) string {
@@ -370,7 +388,11 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 		logBox = renderDetailLogs(det, det.project, width, logH, theme, det.logFocused, a.tsFormat())
 	}
 
-	return metricsBox + "\n" + logBox
+	result := metricsBox + "\n" + logBox
+	if det.filterModal != nil {
+		result = metricsBox + "\n" + renderFilterModal(det.filterModal, width, logH, theme, a.displayCfg)
+	}
+	return result
 }
 
 func renderDetailGroupMetrics(s *Session, det *DetailState, rc RenderContext) string {

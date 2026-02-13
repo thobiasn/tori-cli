@@ -35,7 +35,7 @@ var detailViewHelp = `
    c            Cycle container filter
    g            Cycle project filter
    s            Cycle stream (all/stdout/stderr)
-   /            Text search
+   f            Open filter
    +/-          Zoom time window
    Esc          Clear filters / back
    Tab, 1-2     Switch view

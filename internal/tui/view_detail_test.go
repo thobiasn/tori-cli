@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/thobiasn/rook/internal/protocol"
@@ -101,11 +102,8 @@ func TestDetailTabFocusToggle(t *testing.T) {
 
 	// Navigate cursor, set some state.
 	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
-	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
-	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyEnter})
 
-	// Tab unfocuses: resets cursor, scroll, expanded, and search mode.
+	// Tab unfocuses: resets cursor, scroll, expanded.
 	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyTab})
 	if s.Detail.logFocused {
 		t.Error("second tab should unfocus logs")
@@ -118,9 +116,6 @@ func TestDetailTabFocusToggle(t *testing.T) {
 	}
 	if s.Detail.logScroll != 0 {
 		t.Errorf("unfocused logScroll = %d, want 0", s.Detail.logScroll)
-	}
-	if s.Detail.searchMode {
-		t.Error("unfocused searchMode should be false")
 	}
 
 	// Should not have left the detail view.
@@ -175,8 +170,14 @@ func TestDetailReset(t *testing.T) {
 	if s.searchText != "" {
 		t.Errorf("searchText = %q, want empty", s.searchText)
 	}
-	if s.searchMode {
-		t.Error("searchMode should be false")
+	if s.filterFrom != 0 {
+		t.Errorf("filterFrom = %d, want 0", s.filterFrom)
+	}
+	if s.filterTo != 0 {
+		t.Errorf("filterTo = %d, want 0", s.filterTo)
+	}
+	if s.filterModal != nil {
+		t.Error("filterModal should be nil")
 	}
 }
 
@@ -203,38 +204,104 @@ func TestDetailStreamFilter(t *testing.T) {
 	}
 }
 
-func TestDetailSearchMode(t *testing.T) {
-	a := newTestApp()
+func TestDetailFilterModal(t *testing.T) {
+	a := newTestAppWithDisplay()
 	s := a.session()
 	s.Detail.containerID = "c1"
 	s.Detail.reset()
 
-	// Enter search mode (works regardless of focus).
-	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
-	if !s.Detail.searchMode {
-		t.Fatal("/ should enter search mode")
+	// f key does nothing when logs are not focused.
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	if s.Detail.filterModal != nil {
+		t.Fatal("f should not open filter when logs not focused")
 	}
 
-	// Type characters.
+	// Focus logs, then open filter modal.
+	s.Detail.logFocused = true
+	s.Detail.logCursor = 0
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	if s.Detail.filterModal == nil {
+		t.Fatal("f should open filter modal when logs focused")
+	}
+
+	// Type text in first field (text, focus=0).
 	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
 	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
-	if s.Detail.searchText != "er" {
-		t.Errorf("searchText = %q, want er", s.Detail.searchText)
+	if s.Detail.filterModal.text != "er" {
+		t.Errorf("modal text = %q, want er", s.Detail.filterModal.text)
 	}
 
 	// Backspace.
 	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyBackspace})
-	if s.Detail.searchText != "e" {
-		t.Errorf("searchText after backspace = %q, want e", s.Detail.searchText)
+	if s.Detail.filterModal.text != "e" {
+		t.Errorf("modal text after backspace = %q, want e", s.Detail.filterModal.text)
 	}
 
-	// Enter exits search mode.
+	// Tab to from-date field (focus=1).
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyTab})
+	if s.Detail.filterModal.focus != 1 {
+		t.Errorf("focus after tab = %d, want 1", s.Detail.filterModal.focus)
+	}
+
+	// Type in from-date field — masked input accepts digits.
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	if !s.Detail.filterModal.fromDate.touched {
+		t.Error("fromDate should be touched after typing")
+	}
+
+	// Tab cycles through from-time (2), to-date (3), to-time (4), back to text (0).
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyTab})
+	if s.Detail.filterModal.focus != 2 {
+		t.Errorf("focus = %d, want 2 (from-time)", s.Detail.filterModal.focus)
+	}
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyTab})
+	if s.Detail.filterModal.focus != 3 {
+		t.Errorf("focus = %d, want 3 (to-date)", s.Detail.filterModal.focus)
+	}
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyTab})
+	if s.Detail.filterModal.focus != 4 {
+		t.Errorf("focus = %d, want 4 (to-time)", s.Detail.filterModal.focus)
+	}
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyTab})
+	if s.Detail.filterModal.focus != 0 {
+		t.Errorf("focus after full cycle = %d, want 0 (wrap)", s.Detail.filterModal.focus)
+	}
+
+	// Enter applies filter and closes modal.
 	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyEnter})
-	if s.Detail.searchMode {
-		t.Error("enter should exit search mode")
+	if s.Detail.filterModal != nil {
+		t.Error("enter should close filter modal")
 	}
 	if s.Detail.searchText != "e" {
-		t.Errorf("searchText should persist after enter, got %q", s.Detail.searchText)
+		t.Errorf("searchText should be applied, got %q", s.Detail.searchText)
+	}
+}
+
+func TestDetailFilterModalEscCancels(t *testing.T) {
+	a := newTestAppWithDisplay()
+	s := a.session()
+	s.Detail.containerID = "c1"
+	s.Detail.reset()
+	s.Detail.logFocused = true
+	s.Detail.logCursor = 0
+	s.Detail.searchText = "old"
+
+	// Open filter modal.
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
+	if s.Detail.filterModal == nil {
+		t.Fatal("should open filter modal")
+	}
+
+	// Type something new.
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+
+	// Esc cancels without applying.
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyEscape})
+	if s.Detail.filterModal != nil {
+		t.Error("esc should close filter modal")
+	}
+	if s.Detail.searchText != "old" {
+		t.Errorf("searchText should remain %q, got %q", "old", s.Detail.searchText)
 	}
 }
 
@@ -508,6 +575,137 @@ func TestDetailResetClearsServiceFields(t *testing.T) {
 
 	if det.metricsBackfilled {
 		t.Error("metricsBackfilled should be false after reset")
+	}
+}
+
+func TestMaskedField(t *testing.T) {
+	now := time.Date(2024, 6, 15, 13, 45, 22, 0, time.Local)
+
+	t.Run("initial state", func(t *testing.T) {
+		f := newMaskedField("15:04:05", now)
+		if f.touched {
+			t.Error("should not be touched initially")
+		}
+		if f.resolved() != "" {
+			t.Error("untouched field should resolve to empty")
+		}
+		// Display shows defaults.
+		display := f.render(false, &Theme{})
+		if !strings.Contains(stripANSI(display), "13:45:22") {
+			t.Errorf("display should show defaults, got %q", stripANSI(display))
+		}
+	})
+
+	t.Run("type digits", func(t *testing.T) {
+		f := newMaskedField("15:04:05", now)
+		f.typeRune('0')
+		f.typeRune('8')
+		// Typed "08" for hours, cursor should auto-skip the ':'.
+		if !f.touched {
+			t.Error("should be touched after typing")
+		}
+		resolved := f.resolved()
+		// "08:45:22" — typed hours, defaults for min/sec.
+		if resolved != "08:45:22" {
+			t.Errorf("resolved = %q, want 08:45:22", resolved)
+		}
+	})
+
+	t.Run("type and backspace", func(t *testing.T) {
+		f := newMaskedField("15:04:05", now)
+		f.typeRune('0')
+		f.typeRune('8')
+		f.typeRune('3')
+		f.typeRune('0')
+		// "08:30:22"
+		if f.resolved() != "08:30:22" {
+			t.Errorf("got %q", f.resolved())
+		}
+		// Backspace removes last typed digit (min[1], pos 4).
+		// Default for pos 4 is '5' (from "13:45:22").
+		f.backspace()
+		if f.resolved() != "08:35:22" {
+			t.Errorf("after backspace: %q, want 08:35:22", f.resolved())
+		}
+	})
+
+	t.Run("backspace all restores untouched", func(t *testing.T) {
+		f := newMaskedField("15:04:05", now)
+		f.typeRune('0')
+		f.backspace()
+		if f.touched {
+			t.Error("should be untouched after removing all typed digits")
+		}
+		if f.resolved() != "" {
+			t.Error("should resolve to empty when untouched")
+		}
+	})
+
+	t.Run("non-digit rejected", func(t *testing.T) {
+		f := newMaskedField("15:04:05", now)
+		f.typeRune('a')
+		if f.touched {
+			t.Error("non-digit should not touch the field")
+		}
+	})
+
+	t.Run("fill from existing value", func(t *testing.T) {
+		f := newMaskedField("2006-01-02", now)
+		f.fill("2024-01-15")
+		if !f.touched {
+			t.Error("fill should mark as touched")
+		}
+		if f.resolved() != "2024-01-15" {
+			t.Errorf("resolved = %q", f.resolved())
+		}
+	})
+
+	t.Run("date format", func(t *testing.T) {
+		f := newMaskedField("2006-01-02", now)
+		// Type year "2025".
+		for _, r := range "2025" {
+			f.typeRune(r)
+		}
+		// Should fill month/day from defaults (06/15).
+		if f.resolved() != "2025-06-15" {
+			t.Errorf("resolved = %q, want 2025-06-15", f.resolved())
+		}
+	})
+}
+
+func TestParseFilterBound(t *testing.T) {
+	df := "2006-01-02"
+	tf := "15:04:05"
+
+	// Full date + time.
+	ts := parseFilterBound("2024-01-15", "08:00:00", df, tf, false)
+	if ts == 0 {
+		t.Error("full bound should be non-zero")
+	}
+
+	// Time only → today's date.
+	ts = parseFilterBound("", "13:00:00", df, tf, false)
+	if ts == 0 {
+		t.Error("time-only from bound should be non-zero")
+	}
+
+	// Date only from → start of day.
+	ts = parseFilterBound("2024-01-15", "", df, tf, false)
+	expected := time.Date(2024, 1, 15, 0, 0, 0, 0, time.Local).Unix()
+	if ts != expected {
+		t.Errorf("date-only from = %d, want %d", ts, expected)
+	}
+
+	// Date only to → end of day.
+	ts = parseFilterBound("2024-01-15", "", df, tf, true)
+	expected = time.Date(2024, 1, 15, 23, 59, 59, 0, time.Local).Unix()
+	if ts != expected {
+		t.Errorf("date-only to = %d, want %d", ts, expected)
+	}
+
+	// Both empty → 0.
+	if parseFilterBound("", "", df, tf, false) != 0 {
+		t.Error("empty inputs should return 0")
 	}
 }
 

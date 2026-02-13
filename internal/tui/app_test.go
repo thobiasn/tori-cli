@@ -28,6 +28,13 @@ func newTestApp() App {
 	}
 }
 
+// newTestAppWithDisplay creates a test app with date/time display config.
+func newTestAppWithDisplay() App {
+	a := newTestApp()
+	a.displayCfg = DisplayConfig{DateFormat: "2006-01-02", TimeFormat: "15:04:05"}
+	return a
+}
+
 func TestAppUpdateMetricsAccumulates(t *testing.T) {
 	a := newTestApp()
 	m := &protocol.MetricsUpdate{

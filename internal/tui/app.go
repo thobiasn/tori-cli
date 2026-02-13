@@ -736,11 +736,11 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
-	// When detail search mode is active, only tab and esc are handled globally.
-	detailSearchActive := a.active == viewDetail && a.session() != nil && a.session().Detail.searchMode
+	// When the detail filter modal is active, only tab and esc are handled globally.
+	detailFilterActive := a.active == viewDetail && a.session() != nil && a.session().Detail.filterModal != nil
 
 	// Zoom time window (+/- keys) — only on views with graphs.
-	if !detailSearchActive && (key == "+" || key == "=" || key == "-") {
+	if !detailFilterActive && (key == "+" || key == "=" || key == "-") {
 		if a.active == viewDashboard || a.active == viewDetail {
 			if cmd := a.handleZoom(key); cmd != nil {
 				return a, cmd
@@ -750,7 +750,7 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// View switching.
-	if !detailSearchActive {
+	if !detailFilterActive {
 		if cmd, ok := a.handleViewSwitch(key); ok {
 			return a, cmd
 		}
@@ -958,7 +958,7 @@ func (a *App) viewHints() string {
 	case viewAlerts:
 		return "j/k Move  a Ack  s Silence"
 	case viewDetail:
-		return "j/k Scroll  c Container  g Group  s Stream  / Search"
+		return "j/k Scroll  c Container  g Group  s Stream  f Filter"
 	}
 	return ""
 }

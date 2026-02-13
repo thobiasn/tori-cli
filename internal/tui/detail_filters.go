@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -20,6 +21,12 @@ func (s *DetailState) matchesFilter(entry protocol.LogEntryMsg) bool {
 	if s.searchText != "" && !strings.Contains(strings.ToLower(entry.Message), strings.ToLower(s.searchText)) {
 		return false
 	}
+	if s.filterFrom > 0 && entry.Timestamp < s.filterFrom {
+		return false
+	}
+	if s.filterTo > 0 && entry.Timestamp > s.filterTo {
+		return false
+	}
 	return true
 }
 
@@ -28,7 +35,7 @@ func (s *DetailState) filteredData() []protocol.LogEntryMsg {
 		return nil
 	}
 	all := s.logs.Data()
-	if s.filterContainerID == "" && s.filterStream == "" && s.searchText == "" {
+	if s.filterContainerID == "" && s.filterStream == "" && s.searchText == "" && s.filterFrom == 0 && s.filterTo == 0 {
 		return all
 	}
 	var out []protocol.LogEntryMsg
@@ -204,10 +211,10 @@ func renderDetailLogs(s *DetailState, label string, width, height int, theme *Th
 	}
 
 	box := Box(title, strings.Join(lines, "\n"), width, boxH, theme, focused)
-	return box + "\n" + renderDetailLogFooter(s, innerW, theme)
+	return box + "\n" + renderDetailLogFooter(s, innerW, theme, tsFormat)
 }
 
-func renderDetailLogFooter(s *DetailState, width int, theme *Theme) string {
+func renderDetailLogFooter(s *DetailState, width int, theme *Theme, tsFormat string) string {
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 
 	var parts []string
@@ -226,15 +233,27 @@ func renderDetailLogFooter(s *DetailState, width int, theme *Theme) string {
 	}
 	parts = append(parts, "s: "+muted.Render(streamLabel))
 
-	var searchPart string
-	if s.searchMode {
-		searchPart = fmt.Sprintf("/ search: %s_", s.searchText)
-	} else if s.searchText != "" {
-		searchPart = fmt.Sprintf("/ search: %s", s.searchText)
+	// Filter summary.
+	if s.searchText != "" || s.filterFrom != 0 || s.filterTo != 0 {
+		var filterParts []string
+		if s.searchText != "" {
+			filterParts = append(filterParts, fmt.Sprintf("%q", s.searchText))
+		}
+		if s.filterFrom != 0 || s.filterTo != 0 {
+			from := "…"
+			if s.filterFrom != 0 {
+				from = time.Unix(s.filterFrom, 0).Format(tsFormat)
+			}
+			to := "…"
+			if s.filterTo != 0 {
+				to = time.Unix(s.filterTo, 0).Format(tsFormat)
+			}
+			filterParts = append(filterParts, from+"–"+to)
+		}
+		parts = append(parts, "f: "+strings.Join(filterParts, " "))
 	} else {
-		searchPart = "/ search"
+		parts = append(parts, "f: filter")
 	}
-	parts = append(parts, searchPart)
 
 	parts = append(parts, "Esc clear")
 
@@ -242,13 +261,239 @@ func renderDetailLogFooter(s *DetailState, width int, theme *Theme) string {
 	return Truncate(footer, width)
 }
 
+// maskedField is a fixed-width input derived from a Go time format string.
+// Digit positions in the format are editable; other characters are literal
+// separators. Unfilled positions show defaults (current time) in muted style.
+type maskedField struct {
+	format   string
+	slots    []rune // current display values (typed digits or defaults)
+	defaults []rune // from time.Now().Format(format)
+	editable []bool // true for digit positions
+	typed    []bool // true for positions the user has actually edited
+	cursor   int    // index in slots (always on editable position or past end)
+	touched  bool   // true if any digit was typed
+}
+
+func newMaskedField(format string, now time.Time) maskedField {
+	fmtRunes := []rune(format)
+	defRunes := []rune(now.Format(format))
+	n := len(fmtRunes)
+	if len(defRunes) < n {
+		n = len(defRunes)
+	}
+
+	slots := make([]rune, n)
+	defaults := make([]rune, n)
+	editable := make([]bool, n)
+	typed := make([]bool, n)
+
+	for i := 0; i < n; i++ {
+		defaults[i] = defRunes[i]
+		if fmtRunes[i] >= '0' && fmtRunes[i] <= '9' {
+			editable[i] = true
+			slots[i] = defRunes[i]
+		} else {
+			slots[i] = fmtRunes[i]
+		}
+	}
+
+	cursor := 0
+	for cursor < n && !editable[cursor] {
+		cursor++
+	}
+
+	return maskedField{
+		format:   format,
+		slots:    slots,
+		defaults: defaults,
+		editable: editable,
+		typed:    typed,
+		cursor:   cursor,
+	}
+}
+
+func (f *maskedField) typeRune(r rune) {
+	if r < '0' || r > '9' || f.cursor >= len(f.slots) {
+		return
+	}
+	f.slots[f.cursor] = r
+	f.typed[f.cursor] = true
+	f.touched = true
+	f.cursor++
+	for f.cursor < len(f.slots) && !f.editable[f.cursor] {
+		f.cursor++
+	}
+}
+
+func (f *maskedField) backspace() {
+	pos := f.cursor - 1
+	for pos >= 0 && !f.editable[pos] {
+		pos--
+	}
+	if pos < 0 {
+		return
+	}
+	f.slots[pos] = f.defaults[pos]
+	f.typed[pos] = false
+	f.cursor = pos
+
+	f.touched = false
+	for i := range f.editable {
+		if f.editable[i] && f.typed[i] {
+			f.touched = true
+			break
+		}
+	}
+}
+
+// fill populates the field from a formatted string (for re-opening with existing values).
+func (f *maskedField) fill(value string) {
+	runes := []rune(value)
+	for i := range f.slots {
+		if i < len(runes) && f.editable[i] {
+			f.slots[i] = runes[i]
+			f.typed[i] = true
+		}
+	}
+	f.touched = true
+	f.cursor = len(f.slots)
+}
+
+// resolved returns the complete value if any position was typed, else "".
+// Untyped positions are filled from defaults, so the result always matches the format.
+func (f *maskedField) resolved() string {
+	if !f.touched {
+		return ""
+	}
+	return string(f.slots)
+}
+
+// render returns the display string. Typed positions are normal text,
+// untyped positions are muted (showing defaults). The cursor position
+// is rendered in accent color when focused.
+func (f *maskedField) render(focused bool, theme *Theme) string {
+	accent := lipgloss.NewStyle().Foreground(theme.Accent)
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+
+	var b strings.Builder
+	for i, s := range f.slots {
+		ch := string(s)
+		if focused && i == f.cursor {
+			b.WriteString(accent.Render(ch))
+		} else if f.editable[i] && !f.typed[i] {
+			b.WriteString(muted.Render(ch))
+		} else {
+			b.WriteString(ch)
+		}
+	}
+	return b.String()
+}
+
+// parseFilterBound builds a unix timestamp from separate date and time inputs.
+// Each input is either "" (field untouched) or a complete formatted string.
+// Returns 0 if both are empty.
+func parseFilterBound(dateStr, timeStr, dateFormat, timeFormat string, isTo bool) int64 {
+	if dateStr == "" && timeStr == "" {
+		return 0
+	}
+
+	if dateStr != "" && timeStr != "" {
+		full := dateFormat + " " + timeFormat
+		if t, err := time.ParseInLocation(full, dateStr+" "+timeStr, time.Local); err == nil {
+			return t.Unix()
+		}
+		return 0
+	}
+
+	if dateStr != "" {
+		if t, err := time.ParseInLocation(dateFormat, dateStr, time.Local); err == nil {
+			if isTo {
+				return t.Add(24*time.Hour - time.Second).Unix()
+			}
+			return t.Unix()
+		}
+		return 0
+	}
+
+	// Time only — today's date.
+	if t, err := time.ParseInLocation(timeFormat, timeStr, time.Local); err == nil {
+		now := time.Now()
+		combined := time.Date(now.Year(), now.Month(), now.Day(),
+			t.Hour(), t.Minute(), t.Second(), 0, time.Local)
+		return combined.Unix()
+	}
+	return 0
+}
+
+// renderFilterModal renders a centered filter modal overlay.
+func renderFilterModal(m *logFilterModal, width, height int, theme *Theme, cfg DisplayConfig) string {
+	dateW := len([]rune(cfg.DateFormat))
+	timeW := len([]rune(cfg.TimeFormat))
+
+	// Layout: "  From  [date]   [time]"
+	//          ^^^^^^^^ = 8 char prefix
+	const prefix = 8 // "  From  " or "  To    "
+	lineW := prefix + 1 + dateW + 1 + 3 + 1 + timeW + 1
+	modalW := lineW + 6 // borders + margin
+	if modalW < 45 {
+		modalW = 45
+	}
+	if modalW > width-4 {
+		modalW = width - 4
+	}
+	innerW := modalW - 2
+
+	cursor := lipgloss.NewStyle().Foreground(theme.Accent).Render("_")
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+
+	textField := func(val string, focused bool) string {
+		maxW := innerW - 4
+		display := Truncate(val, maxW-1)
+		if focused {
+			return display + cursor
+		}
+		return display
+	}
+
+	// "date" and "time" headers aligned with the "[" of each field.
+	pad := func(s string, w int) string {
+		if len(s) >= w {
+			return s[:w]
+		}
+		return s + strings.Repeat(" ", w-len(s))
+	}
+	// From "[" to "[": 1 + dateW + 1 + 3 = dateW + 5
+	hdrDate := pad("date", dateW+5)
+
+	var lines []string
+	lines = append(lines, "")
+	lines = append(lines, "  Text")
+	lines = append(lines, "  ["+textField(m.text, m.focus == 0)+"]")
+	lines = append(lines, "")
+	lines = append(lines, strings.Repeat(" ", prefix)+muted.Render(hdrDate+"time"))
+	lines = append(lines, "  From  ["+m.fromDate.render(m.focus == 1, theme)+"]   ["+m.fromTime.render(m.focus == 2, theme)+"]")
+	lines = append(lines, "  To    ["+m.toDate.render(m.focus == 3, theme)+"]   ["+m.toTime.render(m.focus == 4, theme)+"]")
+	lines = append(lines, strings.Repeat(" ", prefix)+muted.Render(pad(cfg.DateFormat, dateW+5)+cfg.TimeFormat))
+	lines = append(lines, "")
+	lines = append(lines, "  "+muted.Render("Tab next · Enter apply · Esc cancel"))
+
+	content := strings.Join(lines, "\n")
+	modalH := len(lines) + 2
+	modal := Box("Filter", content, modalW, modalH, theme)
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
+}
+
 // updateDetail handles keys in the detail view.
 func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	det := &s.Detail
 	key := msg.String()
 
+	// Filter modal captures all keys when open.
+	if det.filterModal != nil {
+		return updateFilterModal(det, key, a.displayCfg)
+	}
+
 	if key == "tab" {
-		det.searchMode = false
 		det.logFocused = !det.logFocused
 		if det.logFocused {
 			det.logCursor = len(det.filteredData()) - 1
@@ -263,26 +508,11 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 
-	// Search mode captures all keys regardless of focus.
-	if det.searchMode {
-		switch key {
-		case "enter", "esc":
-			det.searchMode = false
-		case "backspace":
-			if len(det.searchText) > 0 {
-				det.searchText = det.searchText[:len(det.searchText)-1]
-			}
-		default:
-			if len(key) == 1 && len(det.searchText) < 128 {
-				det.searchText += key
-			}
-		}
-		return nil
-	}
-
 	if key == "esc" {
-		if det.searchText != "" {
+		if det.searchText != "" || det.filterFrom != 0 || det.filterTo != 0 {
 			det.searchText = ""
+			det.filterFrom = 0
+			det.filterTo = 0
 			det.logScroll = 0
 			det.logExpanded = -1
 			if det.logFocused {
@@ -313,11 +543,8 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 
-	// Search and filter keys work regardless of focus.
+	// Quick-toggle filter keys work regardless of focus.
 	switch key {
-	case "/":
-		det.searchMode = true
-		return nil
 	case "s":
 		switch det.filterStream {
 		case "":
@@ -345,8 +572,32 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 
-	// Navigation keys only work when the logs panel is focused.
+	// Keys below only work when the logs panel is focused.
 	if !det.logFocused {
+		return nil
+	}
+
+	// Open filter modal.
+	if key == "f" {
+		now := time.Now()
+		m := &logFilterModal{
+			text:     det.searchText,
+			fromDate: newMaskedField(a.displayCfg.DateFormat, now),
+			fromTime: newMaskedField(a.displayCfg.TimeFormat, now),
+			toDate:   newMaskedField(a.displayCfg.DateFormat, now),
+			toTime:   newMaskedField(a.displayCfg.TimeFormat, now),
+		}
+		if det.filterFrom != 0 {
+			t := time.Unix(det.filterFrom, 0)
+			m.fromDate.fill(t.Format(a.displayCfg.DateFormat))
+			m.fromTime.fill(t.Format(a.displayCfg.TimeFormat))
+		}
+		if det.filterTo != 0 {
+			t := time.Unix(det.filterTo, 0)
+			m.toDate.fill(t.Format(a.displayCfg.DateFormat))
+			m.toTime.fill(t.Format(a.displayCfg.TimeFormat))
+		}
+		det.filterModal = m
 		return nil
 	}
 
@@ -412,3 +663,61 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	}
 	return nil
 }
+
+// updateFilterModal handles keys inside the filter modal.
+func updateFilterModal(det *DetailState, key string, cfg DisplayConfig) tea.Cmd {
+	m := det.filterModal
+	switch key {
+	case "tab":
+		m.focus = (m.focus + 1) % 5
+	case "enter":
+		det.searchText = m.text
+		det.filterFrom = parseFilterBound(m.fromDate.resolved(), m.fromTime.resolved(), cfg.DateFormat, cfg.TimeFormat, false)
+		det.filterTo = parseFilterBound(m.toDate.resolved(), m.toTime.resolved(), cfg.DateFormat, cfg.TimeFormat, true)
+		det.filterModal = nil
+		det.logScroll = 0
+		det.logExpanded = -1
+		if det.logFocused {
+			det.logCursor = len(det.filteredData()) - 1
+			if det.logCursor < 0 {
+				det.logCursor = 0
+			}
+		}
+	case "esc":
+		det.filterModal = nil
+	case "backspace":
+		switch m.focus {
+		case 0:
+			if len(m.text) > 0 {
+				m.text = m.text[:len(m.text)-1]
+			}
+		case 1:
+			m.fromDate.backspace()
+		case 2:
+			m.fromTime.backspace()
+		case 3:
+			m.toDate.backspace()
+		case 4:
+			m.toTime.backspace()
+		}
+	default:
+		if len(key) == 1 {
+			switch m.focus {
+			case 0:
+				if len(m.text) < 128 {
+					m.text += key
+				}
+			case 1:
+				m.fromDate.typeRune(rune(key[0]))
+			case 2:
+				m.fromTime.typeRune(rune(key[0]))
+			case 3:
+				m.toDate.typeRune(rune(key[0]))
+			case 4:
+				m.toTime.typeRune(rune(key[0]))
+			}
+		}
+	}
+	return nil
+}
+
