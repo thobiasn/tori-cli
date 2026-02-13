@@ -430,6 +430,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				e := msg.AlertEvent
 				s.Alerts[msg.ID] = &e
 			}
+			s.Alertv.stale = true
 		}
 		return a, nil
 
