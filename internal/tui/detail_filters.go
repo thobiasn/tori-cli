@@ -163,9 +163,19 @@ func renderDetailLogs(s *DetailState, label string, showNames bool, width, heigh
 		expandIdx -= trim
 	}
 
+	// Compute the max container name width for aligned columns.
+	nameW := 0
+	if showNames {
+		for _, entry := range visible {
+			if n := len([]rune(entry.ContainerName)); n > nameW {
+				nameW = n
+			}
+		}
+	}
+
 	var lines []string
 	for i, entry := range visible {
-		line := formatLogLine(entry, innerW, theme, tsFormat, showNames)
+		line := formatLogLine(entry, innerW, theme, tsFormat, nameW)
 		if i == cursorIdx {
 			line = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(line), innerW))
 		}

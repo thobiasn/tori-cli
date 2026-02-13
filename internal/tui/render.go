@@ -917,31 +917,50 @@ func wrapText(s string, width int) []string {
 }
 
 // formatLogLine renders a single log entry as a styled string.
-// When showName is true (group mode), the container name is included.
-func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsFormat string, showName bool) string {
+// nameW is the fixed column width for the container name (0 = omit name column).
+// Layout: "timestamp name │ message" or "timestamp │ message" when nameW=0.
+func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsFormat string, nameW int) string {
 	tsStr := FormatTimestamp(entry.Timestamp, tsFormat)
 	tsW := lipgloss.Width(tsStr)
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+	divider := muted.Render("│")
 
-	// Synthetic lifecycle events render as a distinct separator line.
+	// Left column width: ts + space + name + space (if nameW>0), or ts + space.
+	leftW := tsW
+	if nameW > 0 {
+		leftW += 1 + nameW // space + name
+	}
+
+	// Synthetic lifecycle events: empty left column, message on the right.
 	if entry.Stream == "event" {
 		style := lipgloss.NewStyle().Foreground(theme.Warning)
-		ts := lipgloss.NewStyle().Foreground(theme.Muted).Render(tsStr)
-		return ts + " " + style.Render(Truncate(entry.Message, width-tsW-1))
+		overhead := leftW + 3
+		msgW := width - overhead
+		if msgW < 10 {
+			msgW = 10
+		}
+		return strings.Repeat(" ", leftW) + " " + divider + " " + style.Render(Truncate(entry.Message, msgW))
 	}
 
-	ts := lipgloss.NewStyle().Foreground(theme.Muted).Render(tsStr)
+	ts := muted.Render(tsStr)
 
-	var prefix string
-	overhead := tsW + 1 // ts + space
-	if showName {
+	var left string
+	if nameW > 0 {
+		nameRunes := []rune(entry.ContainerName)
+		displayed := entry.ContainerName
+		if len(nameRunes) > nameW {
+			displayed = string(nameRunes[:nameW])
+		}
+		pad := nameW - len([]rune(displayed))
 		nameColor := ContainerNameColor(entry.ContainerName, theme)
-		name := lipgloss.NewStyle().Foreground(nameColor).Render(entry.ContainerName)
-		prefix = ts + " " + name + " "
-		overhead += len([]rune(entry.ContainerName)) + 1
+		name := lipgloss.NewStyle().Foreground(nameColor).Render(displayed)
+		left = ts + " " + name + strings.Repeat(" ", pad)
 	} else {
-		prefix = ts + " "
+		left = ts
 	}
 
+	// left + space + │ + space = overhead before message.
+	overhead := leftW + 3
 	msgW := width - overhead
 	if msgW < 10 {
 		msgW = 10
@@ -952,7 +971,7 @@ func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsFormat
 		msg = lipgloss.NewStyle().Foreground(theme.Critical).Render(msg)
 	}
 
-	return prefix + msg
+	return left + " " + divider + " " + msg
 }
 
 // containerNameByID looks up a container name by ID.
