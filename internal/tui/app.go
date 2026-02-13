@@ -988,10 +988,16 @@ func (a *App) renderViewFooter() string {
 		return " " + muted.Render("Tab Focus  j/k Move  Space Fold  Enter Open  t Track")
 	case viewAlerts:
 		s := a.sessions[a.activeSession]
-		if s != nil && s.Alertv.subView == 1 {
-			return " " + muted.Render("Tab Alerts  j/k Move  s Silence")
+		if s != nil && s.Alertv.silenceMode {
+			return " " + muted.Render("j/k Move  Enter Confirm  Esc Cancel")
 		}
-		return " " + muted.Render("Tab Rules  j/k Move  r Resolved  a Ack  s Silence")
+		if s != nil && s.Alertv.expandModal != nil {
+			return " " + muted.Render("j/k Scroll  Esc Close")
+		}
+		if s != nil && s.Alertv.subView == 1 {
+			return " " + muted.Render("Tab Focus  j/k Move  s Silence")
+		}
+		return " " + muted.Render("Tab Focus  j/k Move  r Resolved  a Ack  s Silence  Enter Expand")
 	case viewDetail:
 		return a.renderDetailFooter()
 	}

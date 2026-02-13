@@ -19,11 +19,11 @@ type AlertViewState struct {
 	expandModal *alertExpandModal // nil = closed
 	stale       bool
 
-	// Sub-views: 0 = alerts, 1 = rules.
+	// Focused panel: 0 = alerts, 1 = rules.
 	subView      int
 	showResolved bool
 
-	// Rules sub-view.
+	// Rules panel.
 	rules       []protocol.AlertRuleInfo
 	rulesCursor int
 	rulesStale  bool
@@ -188,20 +188,27 @@ func formatDurationShort(seconds int64) string {
 }
 
 func (s *AlertViewState) onSwitch(c *Client) tea.Cmd {
-	if !s.stale {
+	var cmds []tea.Cmd
+	if s.stale {
+		cmds = append(cmds, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			start := time.Now().Add(-24 * time.Hour).Unix()
+			end := time.Now().Unix()
+			alerts, err := c.QueryAlerts(ctx, start, end)
+			if err != nil {
+				return alertQueryMsg{}
+			}
+			return alertQueryMsg{alerts: alerts}
+		})
+	}
+	if s.rulesStale {
+		cmds = append(cmds, queryAlertRulesCmd(c))
+	}
+	if len(cmds) == 0 {
 		return nil
 	}
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		start := time.Now().Add(-24 * time.Hour).Unix()
-		end := time.Now().Unix()
-		alerts, err := c.QueryAlerts(ctx, start, end)
-		if err != nil {
-			return alertQueryMsg{}
-		}
-		return alertQueryMsg{alerts: alerts}
-	}
+	return tea.Batch(cmds...)
 }
 
 func queryAlertRulesCmd(c *Client) tea.Cmd {
@@ -216,45 +223,61 @@ func queryAlertRulesCmd(c *Client) tea.Cmd {
 	}
 }
 
-// renderAlertView renders the full-screen alert history.
-func renderAlertView(a *App, s *Session, width, height int) string {
-	av := &s.Alertv
-
-	if av.subView == 1 {
-		return renderRulesSubView(a, s, width, height)
+// alertPanelHeights computes the height split between alerts and rules panels.
+func alertPanelHeights(total int) (alertsH, rulesH int) {
+	rulesH = total / 3
+	if rulesH < 5 {
+		rulesH = 5
 	}
-	return renderAlertsSubView(a, s, width, height)
+	if rulesH > total-5 {
+		rulesH = total - 5
+	}
+	alertsH = total - rulesH
+	return
 }
 
-func renderAlertsSubView(a *App, s *Session, width, height int) string {
+// renderAlertView renders the full-screen alert history with alerts on top
+// and rules on the bottom.
+func renderAlertView(a *App, s *Session, width, height int) string {
+	av := &s.Alertv
+	alertsH, rulesH := alertPanelHeights(height)
+	top := renderAlertsPanel(a, s, width, alertsH, av.subView == 0)
+	bottom := renderRulesPanel(a, s, width, rulesH, av.subView == 1)
+	return top + "\n" + bottom
+}
+
+func renderAlertsPanel(a *App, s *Session, width, height int, focused bool) string {
 	theme := &a.theme
 	av := &s.Alertv
-	innerH := height - 3
-	if innerH < 1 {
-		innerH = 1
-	}
 	innerW := width - 2
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 
 	items := buildSectionItems(av.alerts, av.showResolved)
 
 	if len(av.alerts) == 0 {
-		title := alertTabTitle(av)
-		msg := "  No alerts in the last 24 hours"
-		return Box(title, msg, width, height-1, theme) + "\n" + renderAlertFooter(av, width, theme)
+		header := muted.Render(fmt.Sprintf(" %-6s  %-16s  %s", "SEV", "RULE", "MESSAGE"))
+		content := header + "\n" + "  No alerts in the last 24 hours"
+		return Box("Alerts", content, width, height, theme, focused)
 	}
 
 	if len(items) == 0 {
-		title := alertTabTitle(av)
-		return Box(title, "", width, height-1, theme) + "\n" + renderAlertFooter(av, width, theme)
+		header := muted.Render(fmt.Sprintf(" %-6s  %-16s  %s", "SEV", "RULE", "MESSAGE"))
+		return Box("Alerts", header, width, height, theme, focused)
 	}
 
 	clampCursorToItems(av, items)
+
+	// 1 line for column header, rest for data rows.
+	scrollH := height - 3 // -2 border, -1 header
+	if scrollH < 1 {
+		scrollH = 1
+	}
 
 	start := av.scroll
 	if start > len(items) {
 		start = len(items)
 	}
-	end := start + innerH
+	end := start + scrollH
 	if end > len(items) {
 		end = len(items)
 	}
@@ -262,9 +285,20 @@ func renderAlertsSubView(a *App, s *Session, width, height int) string {
 
 	now := time.Now()
 	accent := lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
-	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+
+	// Column header.
+	statusLabel := "STATUS"
+	headerPrefix := fmt.Sprintf(" %-6s  %-16s ", "SEV", "RULE")
+	prefixW := len(headerPrefix) + len(statusLabel) + 2
+	msgColW := innerW - prefixW
+	if msgColW < 0 {
+		msgColW = 0
+	}
+	headerLine := muted.Render(fmt.Sprintf("%s%-*s  %s", headerPrefix, msgColW, "MESSAGE", statusLabel))
 
 	var lines []string
+	lines = append(lines, headerLine)
+
 	for i, item := range visible {
 		globalIdx := start + i
 
@@ -277,7 +311,6 @@ func renderAlertsSubView(a *App, s *Session, width, height int) string {
 		alert := item.alert
 		sev := severityTag(alert.Severity, theme)
 
-		// Build status text.
 		var status string
 		if alert.ResolvedAt > 0 {
 			status = muted.Render(relativeTime(now, alert.ResolvedAt))
@@ -287,9 +320,6 @@ func renderAlertsSubView(a *App, s *Session, width, height int) string {
 			status = lipgloss.NewStyle().Foreground(theme.Critical).Render("ACTIVE")
 		}
 
-		// Calculate available space for the message. This prevents the row
-		// from exceeding innerW, which was causing TruncateStyled to strip
-		// all ANSI (the "color bug" from the plan).
 		rule := Truncate(alert.RuleName, 16)
 		prefix := fmt.Sprintf(" %s  %-16s ", sev, rule)
 		prefixW := lipgloss.Width(prefix) + lipgloss.Width(status) + 2
@@ -298,46 +328,49 @@ func renderAlertsSubView(a *App, s *Session, width, height int) string {
 			msgW = 0
 		}
 		msg := Truncate(alert.Message, msgW)
-		// Pad msg to fill available space so status aligns right.
 		padded := msg + strings.Repeat(" ", max(0, msgW-len(msg)))
 
 		row := prefix + padded + "  " + status
-		if globalIdx == av.cursor {
+		if focused && globalIdx == av.cursor {
 			row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
 		}
 		lines = append(lines, TruncateStyled(row, innerW))
 	}
 
-	title := alertTabTitle(av)
-	boxH := height - 1
 	content := strings.Join(lines, "\n")
-	box := Box(title, content, width, boxH, theme)
-	return box + "\n" + renderAlertFooter(av, width, theme)
+	return Box("Alerts", content, width, height, theme, focused)
 }
 
-func renderRulesSubView(a *App, s *Session, width, height int) string {
+func renderRulesPanel(a *App, s *Session, width, height int, focused bool) string {
 	theme := &a.theme
 	av := &s.Alertv
-	innerH := height - 3
-	if innerH < 1 {
-		innerH = 1
-	}
 	innerW := width - 2
-
-	title := alertTabTitle(av)
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 
 	if len(av.rules) == 0 {
-		msg := "  No alert rules configured"
-		return Box(title, msg, width, height-1, theme) + "\n" + renderAlertFooter(av, width, theme)
+		header := muted.Render(fmt.Sprintf(" %-6s  %-20s  %s", "SEV", "RULE", "CONDITION"))
+		content := header + "\n" + "  No alert rules configured"
+		return Box("Rules", content, width, height, theme, focused)
 	}
 
 	now := time.Now()
 
+	// Column header.
+	statusLabel := "STATUS"
+	headerPrefix := fmt.Sprintf(" %-6s  %-20s ", "SEV", "RULE")
+	prefixW := len(headerPrefix) + len(statusLabel) + 2
+	condColW := innerW - prefixW
+	if condColW < 0 {
+		condColW = 0
+	}
+	headerLine := muted.Render(fmt.Sprintf("%s%-*s  %s", headerPrefix, condColW, "CONDITION", statusLabel))
+
 	var lines []string
+	lines = append(lines, headerLine)
+
 	for i, rule := range av.rules {
 		sev := severityTag(rule.Severity, theme)
 
-		// Status.
 		var status string
 		if rule.SilencedUntil > 0 && time.Unix(rule.SilencedUntil, 0).After(now) {
 			remaining := time.Unix(rule.SilencedUntil, 0).Sub(now).Seconds()
@@ -359,23 +392,14 @@ func renderRulesSubView(a *App, s *Session, width, height int) string {
 		padded := cond + strings.Repeat(" ", max(0, condW-len(cond)))
 
 		row := prefix + padded + "  " + status
-		if i == av.rulesCursor {
+		if focused && i == av.rulesCursor {
 			row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
 		}
 		lines = append(lines, TruncateStyled(row, innerW))
 	}
 
-	boxH := height - 1
 	content := strings.Join(lines, "\n")
-	box := Box(title, content, width, boxH, theme)
-	return box + "\n" + renderAlertFooter(av, width, theme)
-}
-
-func alertTabTitle(av *AlertViewState) string {
-	if av.subView == 0 {
-		return fmt.Sprintf("[Alerts] | Rules")
-	}
-	return fmt.Sprintf("Alerts | [Rules]")
+	return Box("Rules", content, width, height, theme, focused)
 }
 
 func renderSilencePicker(s *AlertViewState, theme *Theme) string {
@@ -501,20 +525,6 @@ func renderAlertExpandModal(m *alertExpandModal, width, height int, theme *Theme
 	return Box("Alert", content, modalW, modalH, theme)
 }
 
-func renderAlertFooter(s *AlertViewState, width int, theme *Theme) string {
-	_ = theme
-	if s.silenceMode {
-		return Truncate(" j/k navigate  Enter confirm  Esc cancel", width)
-	}
-	if s.expandModal != nil {
-		return Truncate(" j/k scroll  Esc/Enter close", width)
-	}
-	if s.subView == 1 {
-		return Truncate(" j/k navigate  s silence  Tab alerts  Esc back  ? Help", width)
-	}
-	return Truncate(" j/k navigate  r resolved  a ack  s silence  Enter expand  Tab rules  Esc back  ? Help", width)
-}
-
 // updateAlertView handles keys in the alert view.
 func updateAlertView(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	av := &s.Alertv
@@ -530,15 +540,8 @@ func updateAlertView(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 
 	switch key {
 	case "tab":
-		// Toggle sub-view.
-		if av.subView == 0 {
-			av.subView = 1
-			if s.Client != nil && av.rulesStale {
-				return queryAlertRulesCmd(s.Client)
-			}
-		} else {
-			av.subView = 0
-		}
+		// Toggle focus between alerts and rules panels.
+		av.subView = 1 - av.subView
 		return nil
 	}
 
@@ -561,13 +564,15 @@ func updateAlertsSubView(a *App, s *Session, key string) tea.Cmd {
 				break
 			}
 		}
-		// Auto-scroll.
-		innerH := a.height - 4
-		if innerH < 1 {
-			innerH = 1
+		// Auto-scroll: account for panel split height.
+		contentH := a.height - 2
+		alertsH, _ := alertPanelHeights(contentH)
+		scrollH := alertsH - 3 // -2 border, -1 column header
+		if scrollH < 1 {
+			scrollH = 1
 		}
-		if av.cursor >= av.scroll+innerH {
-			av.scroll = av.cursor - innerH + 1
+		if av.cursor >= av.scroll+scrollH {
+			av.scroll = av.cursor - scrollH + 1
 		}
 	case "k", "up":
 		// Move to previous non-header item.

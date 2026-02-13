@@ -324,8 +324,11 @@ func TestAlertViewRenderSections(t *testing.T) {
 	if !strings.Contains(plain, "RESOLVED (1)") {
 		t.Error("should show RESOLVED section header")
 	}
-	if !strings.Contains(plain, "[Alerts] | Rules") {
-		t.Error("should show tab title with Alerts selected")
+	if !strings.Contains(plain, "Alerts") {
+		t.Error("should show Alerts panel title")
+	}
+	if !strings.Contains(plain, "Rules") {
+		t.Error("should show Rules panel title")
 	}
 }
 
@@ -371,8 +374,11 @@ func TestAlertViewRulesSubView(t *testing.T) {
 	if !strings.Contains(plain, "ok") {
 		t.Error("should show ok status for exited rule")
 	}
-	if !strings.Contains(plain, "Alerts | [Rules]") {
-		t.Error("should show tab title with Rules selected")
+	if !strings.Contains(plain, "Alerts") {
+		t.Error("should show Alerts panel title")
+	}
+	if !strings.Contains(plain, "Rules") {
+		t.Error("should show Rules panel title")
 	}
 }
 
