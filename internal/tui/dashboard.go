@@ -307,7 +307,7 @@ func renderServerPanel(a *App, height, width int) string {
 		}
 	}
 
-	return Box("Servers", strings.Join(lines, "\n"), width, height, theme)
+	return Box("Servers", strings.Join(lines, "\n"), width, height, theme, a.dashFocus == focusServers)
 }
 
 // updateDashboard handles keys for the dashboard view.
@@ -454,7 +454,7 @@ func updateServerFocus(a *App, key string) tea.Cmd {
 			s.Err = nil
 			return func() tea.Msg { return connectServerMsg{name: s.Name} }
 		case ConnReady:
-			return func() tea.Msg { return disconnectServerMsg{name: s.Name} }
+			a.dashFocus = focusContainers
 		}
 	}
 	return nil

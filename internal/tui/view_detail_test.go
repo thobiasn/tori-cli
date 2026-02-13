@@ -51,6 +51,7 @@ func TestDetailCursorBounded(t *testing.T) {
 	s := a.session()
 	s.Detail.containerID = "c1"
 	s.Detail.reset()
+	s.Detail.logFocused = true
 
 	// Push 3 entries.
 	s.Detail.logs.Push(protocol.LogEntryMsg{ContainerID: "c1", Message: "a"})
@@ -66,6 +67,72 @@ func TestDetailCursorBounded(t *testing.T) {
 	}
 	if s.Detail.logScroll > s.Detail.logs.Len() {
 		t.Errorf("logScroll = %d, exceeds data length %d", s.Detail.logScroll, s.Detail.logs.Len())
+	}
+}
+
+func TestDetailTabFocusToggle(t *testing.T) {
+	a := newTestApp()
+	s := a.session()
+	a.active = viewDetail
+	s.Detail.containerID = "c1"
+	s.Detail.reset()
+
+	// Push some log entries.
+	s.Detail.logs.Push(protocol.LogEntryMsg{ContainerID: "c1", Message: "a"})
+	s.Detail.logs.Push(protocol.LogEntryMsg{ContainerID: "c1", Message: "b"})
+	s.Detail.logs.Push(protocol.LogEntryMsg{ContainerID: "c1", Message: "c"})
+
+	// Initially unfocused.
+	if s.Detail.logFocused {
+		t.Fatal("should start unfocused")
+	}
+	if s.Detail.logCursor != -1 {
+		t.Fatalf("initial logCursor = %d, want -1", s.Detail.logCursor)
+	}
+
+	// Tab focuses logs and selects the latest (last) entry.
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyTab})
+	if !s.Detail.logFocused {
+		t.Error("tab should focus logs")
+	}
+	if s.Detail.logCursor != 2 {
+		t.Errorf("focused logCursor = %d, want 2 (last entry)", s.Detail.logCursor)
+	}
+
+	// Navigate cursor, set some state.
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Tab unfocuses: resets cursor, scroll, expanded, and search mode.
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyTab})
+	if s.Detail.logFocused {
+		t.Error("second tab should unfocus logs")
+	}
+	if s.Detail.logCursor != -1 {
+		t.Errorf("unfocused logCursor = %d, want -1", s.Detail.logCursor)
+	}
+	if s.Detail.logExpanded != -1 {
+		t.Errorf("unfocused logExpanded = %d, want -1", s.Detail.logExpanded)
+	}
+	if s.Detail.logScroll != 0 {
+		t.Errorf("unfocused logScroll = %d, want 0", s.Detail.logScroll)
+	}
+	if s.Detail.searchMode {
+		t.Error("unfocused searchMode should be false")
+	}
+
+	// Should not have left the detail view.
+	if a.active != viewDetail {
+		t.Errorf("tab should not change view, got %d", a.active)
+	}
+
+	// Tab with empty logs focuses with cursor at 0.
+	s.Detail.reset()
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyTab})
+	if s.Detail.logCursor != 0 {
+		t.Errorf("empty logs: focused logCursor = %d, want 0", s.Detail.logCursor)
 	}
 }
 
@@ -119,7 +186,7 @@ func TestDetailStreamFilter(t *testing.T) {
 	s.Detail.containerID = "c1"
 	s.Detail.reset()
 
-	// Cycle: "" → stdout → stderr → ""
+	// Cycle: "" → stdout → stderr → "" (works regardless of focus)
 	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
 	if s.Detail.filterStream != "stdout" {
 		t.Errorf("first cycle = %q, want stdout", s.Detail.filterStream)
@@ -142,7 +209,7 @@ func TestDetailSearchMode(t *testing.T) {
 	s.Detail.containerID = "c1"
 	s.Detail.reset()
 
-	// Enter search mode.
+	// Enter search mode (works regardless of focus).
 	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	if !s.Detail.searchMode {
 		t.Fatal("/ should enter search mode")
@@ -177,12 +244,13 @@ func TestDetailEscPriorityChain(t *testing.T) {
 	a.active = viewDetail
 	s.Detail.containerID = "c1"
 	s.Detail.reset()
+	s.Detail.logFocused = true
 
 	// Set up all filter state.
 	s.Detail.searchText = "hello"
 	s.Detail.filterStream = "stdout"
 
-	// First Esc: clear search text.
+	// First Esc: clear search text, cursor resets to 0 (still focused).
 	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyEscape})
 	if s.Detail.searchText != "" {
 		t.Errorf("first esc should clear searchText, got %q", s.Detail.searchText)
@@ -191,7 +259,7 @@ func TestDetailEscPriorityChain(t *testing.T) {
 		t.Error("should still be on detail view")
 	}
 
-	// Second Esc: clear stream filter.
+	// Second Esc: clear stream filter, cursor resets to 0 (still focused).
 	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyEscape})
 	if s.Detail.filterStream != "" {
 		t.Errorf("second esc should clear filterStream, got %q", s.Detail.filterStream)
@@ -200,10 +268,22 @@ func TestDetailEscPriorityChain(t *testing.T) {
 		t.Error("should still be on detail view")
 	}
 
-	// Third Esc: back to dashboard.
+	// Third Esc: unfocus logs (cursor becomes -1).
+	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyEscape})
+	if s.Detail.logFocused {
+		t.Error("third esc should unfocus logs")
+	}
+	if s.Detail.logCursor != -1 {
+		t.Errorf("unfocused logCursor = %d, want -1", s.Detail.logCursor)
+	}
+	if a.active != viewDetail {
+		t.Error("should still be on detail view")
+	}
+
+	// Fourth Esc: back to dashboard.
 	updateDetail(&a, s, tea.KeyMsg{Type: tea.KeyEscape})
 	if a.active != viewDashboard {
-		t.Errorf("third esc should go to dashboard, got %d", a.active)
+		t.Errorf("fourth esc should go to dashboard, got %d", a.active)
 	}
 }
 

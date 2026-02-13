@@ -142,7 +142,7 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 	}
 	lines = append([]string{headerLine}, lines...)
 
-	return Box("Containers", strings.Join(lines, "\n"), rc.Width, rc.Height, theme)
+	return Box("Containers", strings.Join(lines, "\n"), rc.Width, rc.Height, theme, focused)
 }
 
 // cursorContainerID resolves the current cursor position to a container ID.

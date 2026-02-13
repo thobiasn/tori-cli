@@ -21,7 +21,11 @@ type RenderContext struct {
 
 // Box renders a bordered panel with a title using rounded Unicode corners.
 // Content is padded to fill width×height (including borders).
-func Box(title, content string, width, height int, theme *Theme) string {
+// An optional focused parameter controls focusable panel styling:
+//   - true: border and title in theme.Accent (cyan)
+//   - false: border and title in theme.Muted (gray)
+//   - omitted: default (title accent+bold, borders uncolored)
+func Box(title, content string, width, height int, theme *Theme, focused ...bool) string {
 	if width < 4 {
 		width = 4
 	}
@@ -30,6 +34,21 @@ func Box(title, content string, width, height int, theme *Theme) string {
 	}
 
 	innerW := width - 2 // subtract left+right border chars
+
+	// Determine border/title styling based on focus state.
+	var borderStyle lipgloss.Style
+	var titleStyle lipgloss.Style
+	if len(focused) > 0 {
+		if focused[0] {
+			borderStyle = lipgloss.NewStyle().Foreground(theme.Accent)
+			titleStyle = lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
+		} else {
+			borderStyle = lipgloss.NewStyle().Foreground(theme.Muted)
+			titleStyle = lipgloss.NewStyle().Foreground(theme.Muted)
+		}
+	} else {
+		titleStyle = lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
+	}
 
 	// Top border with embedded title.
 	var top string
@@ -40,16 +59,14 @@ func Box(title, content string, width, height int, theme *Theme) string {
 			titleStr = Truncate(titleStr, innerW-2)
 			titleLen = lipgloss.Width(titleStr)
 		}
-		styled := lipgloss.NewStyle().Foreground(theme.Accent).Bold(true).Render(titleStr)
-		// Budget: "╭" + leading "─" + title + trailing "─"s + "╮"
-		// The leading "─" costs 1 char, so trailing fill = innerW - 1 - titleLen
+		styled := titleStyle.Render(titleStr)
 		trailing := innerW - 1 - titleLen
 		if trailing < 0 {
 			trailing = 0
 		}
-		top = "╭─" + styled + strings.Repeat("─", trailing) + "╮"
+		top = borderStyle.Render("╭─") + styled + borderStyle.Render(strings.Repeat("─", trailing)+"╮")
 	} else {
-		top = "╭" + strings.Repeat("─", innerW) + "╮"
+		top = borderStyle.Render("╭" + strings.Repeat("─", innerW) + "╮")
 	}
 
 	// Content lines.
@@ -73,14 +90,13 @@ func Box(title, content string, width, height int, theme *Theme) string {
 			pad = 0
 			line = Truncate(line, innerW)
 		}
-		b.WriteString("│")
+		b.WriteString(borderStyle.Render("│"))
 		b.WriteString(line)
 		b.WriteString(strings.Repeat(" ", pad))
-		b.WriteString("│\n")
+		b.WriteString(borderStyle.Render("│"))
+		b.WriteByte('\n')
 	}
-	b.WriteString("╰")
-	b.WriteString(strings.Repeat("─", innerW))
-	b.WriteString("╯")
+	b.WriteString(borderStyle.Render("╰" + strings.Repeat("─", innerW) + "╯"))
 
 	return b.String()
 }

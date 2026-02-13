@@ -738,8 +738,11 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
+	// When detail search mode is active, only tab and esc are handled globally.
+	detailSearchActive := a.active == viewDetail && a.session() != nil && a.session().Detail.searchMode
+
 	// Zoom time window (+/- keys) — only on views with graphs.
-	if key == "+" || key == "=" || key == "-" {
+	if !detailSearchActive && (key == "+" || key == "=" || key == "-") {
 		if a.active == viewDashboard || a.active == viewDetail {
 			if cmd := a.handleZoom(key); cmd != nil {
 				return a, cmd
@@ -749,8 +752,10 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// View switching.
-	if cmd, ok := a.handleViewSwitch(key); ok {
-		return a, cmd
+	if !detailSearchActive {
+		if cmd, ok := a.handleViewSwitch(key); ok {
+			return a, cmd
+		}
 	}
 
 	// Delegate to active view.
@@ -867,8 +872,8 @@ func (a *App) handleViewSwitch(key string) (tea.Cmd, bool) {
 	prev := a.active
 	switch key {
 	case "tab":
-		if a.active == viewDashboard {
-			return nil, false // delegate to updateDashboard for focus toggle
+		if a.active == viewDashboard || a.active == viewDetail {
+			return nil, false // delegate to view-specific handler for focus toggle
 		}
 		a.active = viewDashboard
 	case "1":

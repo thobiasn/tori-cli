@@ -126,7 +126,7 @@ func injectDeploySeparators(entries []protocol.LogEntryMsg) []protocol.LogEntryM
 	return out
 }
 
-func renderDetailLogs(s *DetailState, label string, width, height int, theme *Theme) string {
+func renderDetailLogs(s *DetailState, label string, width, height int, theme *Theme, focused bool) string {
 	boxH := height - 1 // leave room for shortcut footer
 	innerH := boxH - 2
 	if innerH < 1 {
@@ -153,8 +153,12 @@ func renderDetailLogs(s *DetailState, label string, width, height int, theme *Th
 		visible = data[start:end]
 	}
 
-	// Calculate expansion lines so we can reduce visible entries if needed.
+	// Clamp cursor to visible range.
 	cursorIdx := s.logCursor
+	if cursorIdx >= len(visible) {
+		cursorIdx = len(visible) - 1
+		s.logCursor = cursorIdx
+	}
 	expandIdx := s.logExpanded
 	var expandLines int
 	if expandIdx >= 0 && expandIdx < len(visible) {
@@ -199,7 +203,7 @@ func renderDetailLogs(s *DetailState, label string, width, height int, theme *Th
 		title += " ── LIVE"
 	}
 
-	box := Box(title, strings.Join(lines, "\n"), width, boxH, theme)
+	box := Box(title, strings.Join(lines, "\n"), width, boxH, theme, focused)
 	return box + "\n" + renderDetailLogFooter(s, innerW, theme)
 }
 
@@ -243,7 +247,23 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	det := &s.Detail
 	key := msg.String()
 
-	// Search mode captures all keys.
+	if key == "tab" {
+		det.searchMode = false
+		det.logFocused = !det.logFocused
+		if det.logFocused {
+			det.logCursor = len(det.filteredData()) - 1
+			if det.logCursor < 0 {
+				det.logCursor = 0
+			}
+		} else {
+			det.logCursor = -1
+			det.logExpanded = -1
+			det.logScroll = 0
+		}
+		return nil
+	}
+
+	// Search mode captures all keys regardless of focus.
 	if det.searchMode {
 		switch key {
 		case "enter", "esc":
@@ -257,6 +277,76 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 				det.searchText += key
 			}
 		}
+		return nil
+	}
+
+	if key == "esc" {
+		if det.searchText != "" {
+			det.searchText = ""
+			det.logScroll = 0
+			det.logExpanded = -1
+			if det.logFocused {
+				det.logCursor = len(det.filteredData()) - 1
+				if det.logCursor < 0 {
+					det.logCursor = 0
+				}
+			}
+		} else if det.filterStream != "" || det.filterContainerID != "" {
+			det.filterStream = ""
+			det.filterContainerID = ""
+			det.logScroll = 0
+			det.logExpanded = -1
+			if det.logFocused {
+				det.logCursor = len(det.filteredData()) - 1
+				if det.logCursor < 0 {
+					det.logCursor = 0
+				}
+			}
+		} else if det.logFocused {
+			det.logFocused = false
+			det.logCursor = -1
+			det.logExpanded = -1
+			det.logScroll = 0
+		} else {
+			a.active = viewDashboard
+		}
+		return nil
+	}
+
+	// Search and filter keys work regardless of focus.
+	switch key {
+	case "/":
+		det.searchMode = true
+		return nil
+	case "s":
+		switch det.filterStream {
+		case "":
+			det.filterStream = "stdout"
+		case "stdout":
+			det.filterStream = "stderr"
+		default:
+			det.filterStream = ""
+		}
+		det.logScroll = 0
+		det.logCursor = -1
+		det.logExpanded = -1
+		return nil
+	case "c":
+		det.cycleContainerFilter(s.ContInfo)
+		det.logScroll = 0
+		det.logCursor = -1
+		det.logExpanded = -1
+		return nil
+	case "g":
+		det.cycleProjectFilter(s.ContInfo)
+		det.logScroll = 0
+		det.logCursor = -1
+		det.logExpanded = -1
+		return nil
+	}
+
+	// Navigation keys only work when the logs panel is focused.
+	if !det.logFocused {
 		return nil
 	}
 
@@ -287,16 +377,6 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	}
 
 	switch key {
-	case "c":
-		det.cycleContainerFilter(s.ContInfo)
-		det.logScroll = 0
-		det.logCursor = -1
-		det.logExpanded = -1
-	case "g":
-		det.cycleProjectFilter(s.ContInfo)
-		det.logScroll = 0
-		det.logCursor = -1
-		det.logExpanded = -1
 	case "j", "down":
 		if det.logCursor == -1 {
 			det.logCursor = visibleCount - 1
@@ -328,39 +408,6 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 			} else {
 				det.logExpanded = det.logCursor
 			}
-		}
-	case "/":
-		det.searchMode = true
-	case "s":
-		switch det.filterStream {
-		case "":
-			det.filterStream = "stdout"
-		case "stdout":
-			det.filterStream = "stderr"
-		default:
-			det.filterStream = ""
-		}
-		det.logScroll = 0
-		det.logCursor = -1
-		det.logExpanded = -1
-	case "esc":
-		if det.searchText != "" {
-			det.searchText = ""
-			det.logScroll = 0
-			det.logCursor = -1
-			det.logExpanded = -1
-		} else if det.filterStream != "" || det.filterContainerID != "" {
-			det.filterStream = ""
-			det.filterContainerID = ""
-			det.logScroll = 0
-			det.logCursor = -1
-			det.logExpanded = -1
-		} else if det.logCursor >= 0 {
-			det.logCursor = -1
-			det.logExpanded = -1
-			det.logScroll = 0
-		} else {
-			a.active = viewDashboard
 		}
 	}
 	return nil

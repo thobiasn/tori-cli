@@ -25,7 +25,8 @@ type DetailState struct {
 	logs      *RingBuffer[protocol.LogEntryMsg]
 	logScroll int
 	logLive   bool
-	logCursor   int // -1 = inactive
+	logFocused bool
+	logCursor  int // -1 = inactive
 	logExpanded int // -1 = none
 
 	// Filters.
@@ -59,6 +60,7 @@ func (s *DetailState) reset() {
 	s.logs = NewRingBuffer[protocol.LogEntryMsg](5000)
 	s.logScroll = 0
 	s.logLive = true
+	s.logFocused = false
 	s.logCursor = -1
 	s.logExpanded = -1
 	s.filterContainerID = ""
@@ -313,7 +315,7 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 	}
 	var logBox string
 	if det.logs != nil && logH > 3 {
-		logBox = renderDetailLogs(det, containerName, width, logH, theme)
+		logBox = renderDetailLogs(det, containerName, width, logH, theme, det.logFocused)
 	}
 
 	return metricsBox + "\n" + logBox
@@ -365,7 +367,7 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 
 	var logBox string
 	if det.logs != nil && logH > 3 {
-		logBox = renderDetailLogs(det, det.project, width, logH, theme)
+		logBox = renderDetailLogs(det, det.project, width, logH, theme, det.logFocused)
 	}
 
 	return metricsBox + "\n" + logBox
