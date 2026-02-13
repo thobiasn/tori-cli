@@ -30,6 +30,17 @@ func (s *DetailState) matchesFilter(entry protocol.LogEntryMsg) bool {
 	return true
 }
 
+// resetLogPosition resets scroll/cursor/expanded after a filter change,
+// placing the cursor on the last (newest) matching entry.
+func (s *DetailState) resetLogPosition() {
+	s.logScroll = 0
+	s.logExpanded = -1
+	s.logCursor = len(s.filteredData()) - 1
+	if s.logCursor < 0 {
+		s.logCursor = 0
+	}
+}
+
 func (s *DetailState) filteredData() []protocol.LogEntryMsg {
 	if s.logs == nil {
 		return nil
@@ -146,8 +157,6 @@ func renderDetailLogs(s *DetailState, label string, width, height int, theme *Th
 	var visible []protocol.LogEntryMsg
 	if len(data) <= innerH {
 		visible = data
-	} else if s.logScroll == 0 && s.logCursor == -1 {
-		visible = data[len(data)-innerH:]
 	} else {
 		end := len(data) - s.logScroll
 		if end < 0 {
@@ -203,7 +212,7 @@ func renderDetailLogs(s *DetailState, label string, width, height int, theme *Th
 		title += " ── " + label
 	}
 	title += " ── " + FormatNumber(len(data)) + " lines"
-	paused := s.logScroll > 0 || s.logCursor >= 0
+	paused := s.logScroll > 0
 	if paused {
 		title += " ── PAUSED"
 	} else {
@@ -493,50 +502,16 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		return updateFilterModal(det, key, a.displayCfg)
 	}
 
-	if key == "tab" {
-		det.logFocused = !det.logFocused
-		if det.logFocused {
-			det.logCursor = len(det.filteredData()) - 1
-			if det.logCursor < 0 {
-				det.logCursor = 0
-			}
-		} else {
-			det.logCursor = -1
-			det.logExpanded = -1
-			det.logScroll = 0
-		}
-		return nil
-	}
-
 	if key == "esc" {
 		if det.searchText != "" || det.filterFrom != 0 || det.filterTo != 0 {
 			det.searchText = ""
 			det.filterFrom = 0
 			det.filterTo = 0
-			det.logScroll = 0
-			det.logExpanded = -1
-			if det.logFocused {
-				det.logCursor = len(det.filteredData()) - 1
-				if det.logCursor < 0 {
-					det.logCursor = 0
-				}
-			}
+			det.resetLogPosition()
 		} else if det.filterStream != "" || det.filterContainerID != "" {
 			det.filterStream = ""
 			det.filterContainerID = ""
-			det.logScroll = 0
-			det.logExpanded = -1
-			if det.logFocused {
-				det.logCursor = len(det.filteredData()) - 1
-				if det.logCursor < 0 {
-					det.logCursor = 0
-				}
-			}
-		} else if det.logFocused {
-			det.logFocused = false
-			det.logCursor = -1
-			det.logExpanded = -1
-			det.logScroll = 0
+			det.resetLogPosition()
 		} else {
 			a.active = viewDashboard
 		}
@@ -554,26 +529,15 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		default:
 			det.filterStream = ""
 		}
-		det.logScroll = 0
-		det.logCursor = -1
-		det.logExpanded = -1
+		det.resetLogPosition()
 		return nil
 	case "c":
 		det.cycleContainerFilter(s.ContInfo)
-		det.logScroll = 0
-		det.logCursor = -1
-		det.logExpanded = -1
+		det.resetLogPosition()
 		return nil
 	case "g":
 		det.cycleProjectFilter(s.ContInfo)
-		det.logScroll = 0
-		det.logCursor = -1
-		det.logExpanded = -1
-		return nil
-	}
-
-	// Keys below only work when the logs panel is focused.
-	if !det.logFocused {
+		det.resetLogPosition()
 		return nil
 	}
 
@@ -629,36 +593,24 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 
 	switch key {
 	case "j", "down":
-		if det.logCursor == -1 {
-			det.logCursor = visibleCount - 1
-			if det.logCursor < 0 {
-				det.logCursor = 0
-			}
-		} else if det.logCursor < visibleCount-1 {
+		if det.logCursor < visibleCount-1 {
 			det.logCursor++
 		} else if det.logScroll > 0 {
 			det.logScroll--
 		}
 		det.logExpanded = -1
 	case "k", "up":
-		if det.logCursor == -1 {
-			det.logCursor = visibleCount - 1
-			if det.logCursor < 0 {
-				det.logCursor = 0
-			}
-		} else if det.logCursor > 0 {
+		if det.logCursor > 0 {
 			det.logCursor--
 		} else if det.logScroll < maxScroll {
 			det.logScroll++
 		}
 		det.logExpanded = -1
 	case "enter":
-		if det.logCursor >= 0 {
-			if det.logExpanded == det.logCursor {
-				det.logExpanded = -1
-			} else {
-				det.logExpanded = det.logCursor
-			}
+		if det.logExpanded == det.logCursor {
+			det.logExpanded = -1
+		} else {
+			det.logExpanded = det.logCursor
 		}
 	}
 	return nil
@@ -675,14 +627,7 @@ func updateFilterModal(det *DetailState, key string, cfg DisplayConfig) tea.Cmd 
 		det.filterFrom = parseFilterBound(m.fromDate.resolved(), m.fromTime.resolved(), cfg.DateFormat, cfg.TimeFormat, false)
 		det.filterTo = parseFilterBound(m.toDate.resolved(), m.toTime.resolved(), cfg.DateFormat, cfg.TimeFormat, true)
 		det.filterModal = nil
-		det.logScroll = 0
-		det.logExpanded = -1
-		if det.logFocused {
-			det.logCursor = len(det.filteredData()) - 1
-			if det.logCursor < 0 {
-				det.logCursor = 0
-			}
-		}
+		det.resetLogPosition()
 	case "esc":
 		det.filterModal = nil
 	case "backspace":

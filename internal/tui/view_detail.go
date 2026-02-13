@@ -22,11 +22,9 @@ type DetailState struct {
 	svcProject string // compose project (or "" for non-compose)
 	svcService string // compose service label (or container name for non-compose)
 
-	logs      *RingBuffer[protocol.LogEntryMsg]
-	logScroll int
-	logLive   bool
-	logFocused bool
-	logCursor  int // -1 = inactive
+	logs        *RingBuffer[protocol.LogEntryMsg]
+	logScroll   int
+	logCursor   int // index in visible entries (always ≥ 0)
 	logExpanded int // -1 = none
 
 	// Filters.
@@ -71,9 +69,7 @@ type detailMetricsQueryMsg struct {
 func (s *DetailState) reset() {
 	s.logs = NewRingBuffer[protocol.LogEntryMsg](5000)
 	s.logScroll = 0
-	s.logLive = true
-	s.logFocused = false
-	s.logCursor = -1
+	s.logCursor = 0
 	s.logExpanded = -1
 	s.filterContainerID = ""
 	s.filterProject = ""
@@ -245,6 +241,12 @@ func (s *DetailState) handleBackfill(msg detailLogQueryMsg) {
 	}
 	s.logs = newBuf
 	s.backfilled = true
+
+	// Pin cursor to the latest entry.
+	n := newBuf.Len()
+	if n > 0 {
+		s.logCursor = n - 1
+	}
 }
 
 // renderDetail renders the container/group detail full-screen view.
@@ -329,7 +331,7 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 	}
 	var logBox string
 	if det.logs != nil && logH > 3 {
-		logBox = renderDetailLogs(det, containerName, width, logH, theme, det.logFocused, a.tsFormat())
+		logBox = renderDetailLogs(det, containerName, width, logH, theme, true, a.tsFormat())
 	}
 
 	result := metricsBox + "\n" + logBox
@@ -385,7 +387,7 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 
 	var logBox string
 	if det.logs != nil && logH > 3 {
-		logBox = renderDetailLogs(det, det.project, width, logH, theme, det.logFocused, a.tsFormat())
+		logBox = renderDetailLogs(det, det.project, width, logH, theme, true, a.tsFormat())
 	}
 
 	result := metricsBox + "\n" + logBox

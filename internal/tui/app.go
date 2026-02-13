@@ -852,8 +852,8 @@ func (a *App) handleViewSwitch(key string) (tea.Cmd, bool) {
 	prev := a.active
 	switch key {
 	case "tab":
-		if a.active == viewDashboard || a.active == viewDetail {
-			return nil, false // delegate to view-specific handler for focus toggle
+		if a.active == viewDashboard {
+			return nil, false // delegate to dashboard for panel focus toggle
 		}
 		a.active = viewDashboard
 	case "1":

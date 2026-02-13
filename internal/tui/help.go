@@ -38,7 +38,7 @@ var detailViewHelp = `
    f            Open filter
    +/-          Zoom time window
    Esc          Clear filters / back
-   Tab, 1-2     Switch view
+   Tab, 1-2     Back to dashboard
    ?            Toggle help
    q            Quit`
 
