@@ -431,6 +431,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				s.Alerts[msg.ID] = &e
 			}
 			s.Alertv.stale = true
+			s.Alertv.rulesStale = true
+			// If viewing alerts for this session, re-query immediately.
+			if a.active == viewAlerts && s == a.sessions[a.activeSession] && s.Client != nil {
+				return a, s.Alertv.onSwitch(s.Client)
+			}
 		}
 		return a, nil
 
