@@ -203,12 +203,14 @@ host = "user@prod.example.com"
 socket = "/run/rook/rook.sock"
 # port = 2222                          # custom SSH port (default: 22)
 # identity_file = "~/.ssh/prod_key"    # path to SSH private key
+# auto_connect = true                  # connect on startup (default: false)
 
 [servers.staging]
 host = "user@staging.example.com"
 socket = "/run/rook/rook.sock"
 # port = 22
 # identity_file = "~/.ssh/staging_key"
+# auto_connect = true
 ```
 
 ## Deploy — Binary
