@@ -15,6 +15,7 @@ type ServerConfig struct {
 	Socket       string `toml:"socket"`        // /run/rook/rook.sock
 	Port         int    `toml:"port"`          // SSH port (default: 22)
 	IdentityFile string `toml:"identity_file"` // path to SSH private key
+	AutoConnect  bool   `toml:"auto_connect"`  // connect on startup (default: false)
 }
 
 // Config is the client-side configuration.
@@ -44,6 +45,7 @@ const defaultConfigContent = `# Rook client configuration.
 #   # port = 22
 #   # socket = "/run/rook/rook.sock"
 #   # identity_file = "~/.ssh/id_ed25519"
+#   # auto_connect = true
 
 [servers.local]
 socket = "/run/rook/rook.sock"

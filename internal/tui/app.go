@@ -2,8 +2,11 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"sort"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -39,6 +42,37 @@ var timeWindows = []timeWindow{
 	{"7d", 7 * 86400},
 }
 
+// appCtx is shared mutable state between the bubbletea copy of App and
+// the connect goroutines. Since App is a value type, we use a pointer
+// to a struct that both copies reference.
+type appCtx struct {
+	prog *tea.Program
+}
+
+// sshPromptState holds the state of an active SSH prompt modal.
+type sshPromptState struct {
+	server  string
+	prompt  string
+	input   []rune
+	masked  bool        // passphrase/password → mask input
+	hostKey bool        // host key verification → y/n only
+	respond chan string // send response (close to cancel)
+}
+
+// Message types for lazy connections.
+type connectServerMsg struct{ name string }
+type sshPromptMsg struct {
+	server  string
+	prompt  string
+	respond chan string
+}
+type connectDoneMsg struct {
+	server string
+	client *Client
+	tunnel *Tunnel
+	err    error
+}
+
 // App is the root Bubbletea model.
 type App struct {
 	sessions         map[string]*Session
@@ -52,6 +86,14 @@ type App struct {
 	err              error
 	showHelp         bool
 	showServerPicker bool
+	dashFocus        dashFocus // focusContainers (default) or focusServers
+	serverCursor     int       // index into sessionOrder
+
+	// Lazy connection state.
+	ctx              *appCtx          // shared program reference
+	sshPrompt        *sshPromptState  // active SSH prompt modal (nil = none)
+	autoConnectQueue []string         // servers to auto-connect sequentially
+	connecting       string           // server currently connecting ("" = idle)
 }
 
 // session returns the currently active session, or nil.
@@ -77,7 +119,14 @@ func NewApp(sessions map[string]*Session) App {
 		sessionOrder:  order,
 		activeSession: active,
 		theme:         DefaultTheme(),
+		ctx:           &appCtx{},
 	}
+}
+
+// SetProgram stores the tea.Program reference in the shared appCtx.
+// Must be called after tea.NewProgram and before p.Run().
+func (a *App) SetProgram(p *tea.Program) {
+	a.ctx.prog = p
 }
 
 // subscribeAll subscribes to all streaming topics, queries containers, and
@@ -135,10 +184,110 @@ func queryContainersCmd(c *Client) tea.Cmd {
 
 func (a App) Init() tea.Cmd {
 	var cmds []tea.Cmd
+
+	// Subscribe already-connected sessions.
 	for _, s := range a.sessions {
-		cmds = append(cmds, subscribeAll(s.Client))
+		if s.Client != nil && s.ConnState == ConnReady {
+			cmds = append(cmds, subscribeAll(s.Client))
+		}
 	}
+
+	// Build auto-connect queue from sessions with AutoConnect && ConnNone.
+	for _, name := range a.sessionOrder {
+		s := a.sessions[name]
+		if s.Config.AutoConnect && s.ConnState == ConnNone {
+			a.autoConnectQueue = append(a.autoConnectQueue, name)
+		}
+	}
+
+	// Start processing the queue.
+	if cmd := a.processAutoConnectQueue(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+
 	return tea.Batch(cmds...)
+}
+
+// processAutoConnectQueue pops the next ConnNone server from the queue and
+// starts connecting. Returns nil if nothing to do or already connecting.
+func (a *App) processAutoConnectQueue() tea.Cmd {
+	if a.connecting != "" {
+		return nil
+	}
+	for len(a.autoConnectQueue) > 0 {
+		name := a.autoConnectQueue[0]
+		a.autoConnectQueue = a.autoConnectQueue[1:]
+		s := a.sessions[name]
+		if s != nil && s.ConnState == ConnNone {
+			return func() tea.Msg { return connectServerMsg{name: name} }
+		}
+	}
+	return nil
+}
+
+// connectServerCmd returns a tea.Cmd that connects to a server in a goroutine.
+func connectServerCmd(name string, cfg ServerConfig, appctx *appCtx) tea.Cmd {
+	return func() tea.Msg {
+		remoteSock := cfg.Socket
+		if remoteSock == "" {
+			remoteSock = "/run/rook/rook.sock"
+		}
+
+		var tunnel *Tunnel
+		var sockPath string
+
+		if cfg.Host != "" {
+			// SSH server — use askpass tunnel.
+			promptFn := func(prompt string) (string, error) {
+				ch := make(chan string, 1)
+				if appctx.prog == nil {
+					return "", errors.New("no program")
+				}
+				appctx.prog.Send(sshPromptMsg{
+					server:  name,
+					prompt:  prompt,
+					respond: ch,
+				})
+				resp, ok := <-ch
+				if !ok {
+					return "", errors.New("cancelled")
+				}
+				return resp, nil
+			}
+
+			var err error
+			tunnel, err = NewTunnelAskpass(cfg.Host, remoteSock, promptFn, SSHOptions{
+				Port:         cfg.Port,
+				IdentityFile: cfg.IdentityFile,
+			})
+			if err != nil {
+				return connectDoneMsg{server: name, err: fmt.Errorf("tunnel: %w", err)}
+			}
+
+			// Wait for tunnel with generous timeout.
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			if err := tunnel.WaitReady(ctx); err != nil {
+				tunnel.Close()
+				return connectDoneMsg{server: name, err: fmt.Errorf("tunnel: %w", err)}
+			}
+			sockPath = tunnel.LocalSocket()
+		} else {
+			// Local socket — connect directly.
+			sockPath = remoteSock
+		}
+
+		conn, err := net.Dial("unix", sockPath)
+		if err != nil {
+			if tunnel != nil {
+				tunnel.Close()
+			}
+			return connectDoneMsg{server: name, err: fmt.Errorf("dial: %w", err)}
+		}
+
+		client := NewClient(conn, name)
+		return connectDoneMsg{server: name, client: client, tunnel: tunnel}
+	}
 }
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -148,6 +297,32 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.height = msg.Height
 		return a, nil
 
+	case connectServerMsg:
+		s := a.sessions[msg.name]
+		if s == nil || s.ConnState != ConnNone {
+			return a, a.processAutoConnectQueue()
+		}
+		s.ConnState = ConnConnecting
+		s.ConnMsg = "connecting..."
+		a.connecting = msg.name
+		return a, connectServerCmd(msg.name, s.Config, a.ctx)
+
+	case sshPromptMsg:
+		prompt := msg.prompt
+		masked := isPasswordPrompt(prompt)
+		hostKey := isHostKeyPrompt(prompt)
+		a.sshPrompt = &sshPromptState{
+			server:  msg.server,
+			prompt:  prompt,
+			masked:  masked,
+			hostKey: hostKey,
+			respond: msg.respond,
+		}
+		return a, nil
+
+	case connectDoneMsg:
+		return a.handleConnectDone(msg)
+
 	case ConnErrMsg:
 		// Only quit on error for single-server mode.
 		if len(a.sessions) == 1 {
@@ -156,6 +331,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if s := a.sessions[msg.Server]; s != nil {
 			s.Err = msg.Err
+			s.ConnState = ConnError
+			s.ConnMsg = msg.Err.Error()
 		}
 		return a, nil
 
@@ -284,9 +461,173 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case tea.KeyMsg:
+		// SSH prompt modal intercepts all keys.
+		if a.sshPrompt != nil {
+			return a.handleSSHPromptInput(msg)
+		}
 		return a.handleKey(msg)
 	}
 	return a, nil
+}
+
+func (a *App) handleConnectDone(msg connectDoneMsg) (App, tea.Cmd) {
+	s := a.sessions[msg.server]
+	if s == nil {
+		return *a, nil
+	}
+
+	if a.connecting == msg.server {
+		a.connecting = ""
+	}
+
+	if msg.err != nil {
+		s.Err = msg.err
+		s.ConnState = ConnError
+		s.ConnMsg = msg.err.Error()
+		return *a, a.processAutoConnectQueue()
+	}
+
+	s.Client = msg.client
+	s.Tunnel = msg.tunnel
+	s.ConnState = ConnReady
+	s.ConnMsg = "connected"
+	s.Err = nil
+
+	// Start reading and subscribe.
+	if a.ctx.prog != nil {
+		s.Client.SetProgram(a.ctx.prog)
+	}
+
+	var cmds []tea.Cmd
+	cmds = append(cmds, subscribeAll(s.Client))
+
+	// Process next auto-connect item.
+	if cmd := a.processAutoConnectQueue(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
+
+	return *a, tea.Batch(cmds...)
+}
+
+func (a App) handleSSHPromptInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	p := a.sshPrompt
+
+	switch {
+	case key == "enter":
+		if p.hostKey {
+			// Host key prompt: Enter sends "yes".
+			select {
+			case p.respond <- "yes":
+			default:
+			}
+		} else {
+			select {
+			case p.respond <- string(p.input):
+			default:
+			}
+		}
+		a.sshPrompt = nil
+		return a, nil
+
+	case key == "esc", key == "ctrl+c":
+		close(p.respond)
+		a.sshPrompt = nil
+		return a, nil
+
+	case key == "backspace":
+		if len(p.input) > 0 && !p.hostKey {
+			p.input = p.input[:len(p.input)-1]
+		}
+		return a, nil
+
+	default:
+		if p.hostKey {
+			// Host key prompt: y sends "yes", n cancels.
+			if key == "y" || key == "Y" {
+				select {
+				case p.respond <- "yes":
+				default:
+				}
+				a.sshPrompt = nil
+				return a, nil
+			}
+			if key == "n" || key == "N" {
+				close(p.respond)
+				a.sshPrompt = nil
+				return a, nil
+			}
+			return a, nil
+		}
+
+		// Accumulate characters (max 256).
+		if len(key) == 1 && len(p.input) < 256 {
+			p.input = append(p.input, rune(key[0]))
+		}
+		return a, nil
+	}
+}
+
+// isPasswordPrompt returns true if the prompt looks like a password/passphrase request.
+func isPasswordPrompt(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	return strings.Contains(lower, "passphrase") ||
+		strings.Contains(lower, "password")
+}
+
+// isHostKeyPrompt returns true if the prompt looks like a host key verification.
+func isHostKeyPrompt(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	return strings.Contains(lower, "authenticity") ||
+		strings.Contains(lower, "fingerprint") ||
+		strings.Contains(lower, "yes/no")
+}
+
+func (a *App) renderSSHPromptModal(width, height int) string {
+	p := a.sshPrompt
+	theme := &a.theme
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+
+	modalW := 60
+	if modalW > width-4 {
+		modalW = width - 4
+	}
+	innerW := modalW - 2
+
+	var lines []string
+	lines = append(lines, muted.Render(" "+Truncate(p.server, innerW-1)))
+	lines = append(lines, "")
+
+	// Wrap prompt text.
+	for _, chunk := range wrapText(p.prompt, innerW-2) {
+		lines = append(lines, " "+chunk)
+	}
+	lines = append(lines, "")
+
+	if p.hostKey {
+		lines = append(lines, " "+lipgloss.NewStyle().Foreground(theme.Warning).Render("y")+" Accept   "+lipgloss.NewStyle().Foreground(theme.Critical).Render("n")+" Reject")
+	} else {
+		// Input field.
+		display := string(p.input)
+		if p.masked {
+			display = strings.Repeat("*", len(p.input))
+		}
+		cursor := lipgloss.NewStyle().Foreground(theme.Accent).Render("█")
+		fieldW := innerW - 4
+		if len(display) > fieldW {
+			display = display[len(display)-fieldW:]
+		}
+		lines = append(lines, "  "+display+cursor)
+	}
+
+	content := strings.Join(lines, "\n")
+	modalH := len(lines) + 2
+	if modalH > height-2 {
+		modalH = height - 2
+	}
+
+	modal := Box("SSH", content, modalW, modalH, theme)
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
 }
 
 func (a *App) handleSessionMetrics(s *Session, m *protocol.MetricsUpdate) tea.Cmd {
@@ -343,8 +684,13 @@ func (a *App) handleSessionMetrics(s *Session, m *protocol.MetricsUpdate) tea.Cm
 func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
-	// Global quit.
+	// Global quit — cancel any in-flight connections.
 	if key == "q" || key == "ctrl+c" {
+		for _, s := range a.sessions {
+			if s.connectCancel != nil {
+				s.connectCancel()
+			}
+		}
 		return a, tea.Quit
 	}
 
@@ -362,7 +708,7 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if a.showServerPicker {
 		return a.handleServerPicker(key)
 	}
-	if key == "S" && len(a.sessions) > 1 {
+	if key == "S" && len(a.sessions) > 1 && a.active != viewDashboard {
 		a.showServerPicker = true
 		return a, nil
 	}
@@ -431,7 +777,7 @@ func (a *App) handleDetailAutoSwitch(s *Session, evt protocol.ContainerEvent) te
 // handleZoom adjusts the time window and triggers a backfill.
 func (a *App) handleZoom(key string) tea.Cmd {
 	s := a.session()
-	if s == nil {
+	if s == nil || s.Client == nil {
 		return nil
 	}
 	prev := a.windowIdx
@@ -481,6 +827,7 @@ func (a *App) handleServerPicker(key string) (App, tea.Cmd) {
 		if idx < len(a.sessionOrder) {
 			prev := a.activeSession
 			a.activeSession = a.sessionOrder[idx]
+			a.serverCursor = idx
 			if a.activeSession != prev {
 				a.showServerPicker = false
 				return *a, a.onViewSwitch()
@@ -495,12 +842,10 @@ func (a *App) handleViewSwitch(key string) (tea.Cmd, bool) {
 	prev := a.active
 	switch key {
 	case "tab":
-		// Cycle between dashboard and alerts (skip detail — it's entered via Enter).
 		if a.active == viewDashboard {
-			a.active = viewAlerts
-		} else {
-			a.active = viewDashboard
+			return nil, false // delegate to updateDashboard for focus toggle
 		}
+		a.active = viewDashboard
 	case "1":
 		a.active = viewDashboard
 	case "2":
@@ -516,7 +861,7 @@ func (a *App) handleViewSwitch(key string) (tea.Cmd, bool) {
 
 func (a *App) onViewSwitch() tea.Cmd {
 	s := a.session()
-	if s == nil {
+	if s == nil || s.Client == nil {
 		return nil
 	}
 	switch a.active {
@@ -565,7 +910,7 @@ func (a App) View() string {
 	if s == nil {
 		return "No sessions available"
 	}
-	if s.Err != nil {
+	if s.Err != nil && len(a.sessions) == 1 {
 		return fmt.Sprintf("Error [%s]: %v\n", s.Name, s.Err)
 	}
 
@@ -591,6 +936,10 @@ func (a App) View() string {
 
 	if a.showServerPicker {
 		content = a.renderServerPicker(a.width, contentH)
+	}
+
+	if a.sshPrompt != nil {
+		content = a.renderSSHPromptModal(a.width, contentH)
 	}
 
 	return content + "\n" + a.renderFooter()
@@ -627,7 +976,7 @@ func (a *App) renderServerPicker(width, height int) string {
 func (a *App) viewHints() string {
 	switch a.active {
 	case viewDashboard:
-		return "j/k Move  Space Fold  Enter Open  t Track"
+		return "Tab Focus  j/k Move  Space Fold  Enter Open  t Track"
 	case viewAlerts:
 		return "j/k Move  a Ack  s Silence"
 	case viewDetail:
@@ -662,7 +1011,11 @@ func (a *App) renderFooter() string {
 
 	// Show server name when multi-server.
 	if len(a.sessions) > 1 {
-		footer += fmt.Sprintf("  [%s]  S Switch", a.activeSession)
+		if a.active == viewDashboard {
+			footer += fmt.Sprintf("  [%s]", a.activeSession)
+		} else {
+			footer += fmt.Sprintf("  [%s]  S Switch", a.activeSession)
+		}
 	}
 
 	if hints := a.viewHints(); hints != "" {

@@ -1,12 +1,31 @@
 package tui
 
-import "github.com/thobiasn/rook/internal/protocol"
+import (
+	"context"
+
+	"github.com/thobiasn/rook/internal/protocol"
+)
+
+// ConnState tracks the server connection status.
+type ConnState int
+
+const (
+	ConnNone       ConnState = iota // not connected yet
+	ConnConnecting                  // connection in progress
+	ConnSSH                         // SSH tunnel up, agent unreachable
+	ConnReady                       // fully connected
+	ConnError                       // connection failure
+)
 
 // Session holds all per-server state: connection, accumulated data, and view state.
 type Session struct {
-	Name   string
-	Client *Client
-	Tunnel *Tunnel // nil for local connections
+	Name      string
+	Client    *Client
+	Tunnel    *Tunnel // nil for local connections
+	ConnState ConnState
+	ConnMsg   string
+	Config    ServerConfig           // server config for lazy connection
+	connectCancel context.CancelFunc // cancels in-flight connection
 
 	// Accumulated live data.
 	Host       *protocol.HostMetrics
