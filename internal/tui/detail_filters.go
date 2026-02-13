@@ -661,7 +661,7 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, tsFor
 	if modalW > width-4 {
 		modalW = width - 4
 	}
-	modalH := height - 4
+	modalH := height * 2 / 3
 	if modalH < 10 {
 		modalH = 10
 	}
