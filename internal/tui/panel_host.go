@@ -273,7 +273,7 @@ func renderMemPanel(host *protocol.HostMetrics, usedHistory []float64, rc Render
 // and swap usage if present.
 func renderDiskPanel(disks []protocol.DiskMetrics, swapTotal, swapUsed uint64, width, height int, theme *Theme) string {
 	if len(disks) == 0 && swapTotal == 0 {
-		return Box("Disks", "  no disks", width, height, theme)
+		return Box("Host Disks", "  no disks", width, height, theme)
 	}
 
 	innerW := width - 2
@@ -305,7 +305,7 @@ func renderDiskPanel(disks []protocol.DiskMetrics, swapTotal, swapUsed uint64, w
 		lines = addMetric(lines, "Free", freePct, FormatBytes(swapTotal-swapUsed), theme.MemFree)
 	}
 
-	return Box("Disks", strings.Join(lines, "\n"), width, height, theme)
+	return Box("Host Disks", strings.Join(lines, "\n"), width, height, theme)
 }
 
 func highestUsageDisk(disks []protocol.DiskMetrics) protocol.DiskMetrics {

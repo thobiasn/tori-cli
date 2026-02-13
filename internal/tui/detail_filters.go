@@ -352,16 +352,16 @@ func (f *maskedField) resolved() string {
 
 // render returns the display string. Typed positions are normal text,
 // untyped positions are muted (showing defaults). The cursor position
-// is rendered in accent color when focused.
+// uses reverse video when focused.
 func (f *maskedField) render(focused bool, theme *Theme) string {
-	accent := lipgloss.NewStyle().Foreground(theme.Accent)
+	cursorStyle := lipgloss.NewStyle().Reverse(true)
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 
 	var b strings.Builder
 	for i, s := range f.slots {
 		ch := string(s)
 		if focused && i == f.cursor {
-			b.WriteString(accent.Render(ch))
+			b.WriteString(cursorStyle.Render(ch))
 		} else if f.editable[i] && !f.typed[i] {
 			b.WriteString(muted.Render(ch))
 		} else {
@@ -425,14 +425,23 @@ func renderFilterModal(m *logFilterModal, width, height int, theme *Theme, cfg D
 	}
 	innerW := modalW - 2
 
-	cursor := lipgloss.NewStyle().Foreground(theme.Accent).Render("_")
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+	accent := lipgloss.NewStyle().Foreground(theme.Accent)
+	cursorStyle := lipgloss.NewStyle().Reverse(true)
+
+	// bracket renders [ and ] in accent when focused, muted otherwise.
+	bracket := func(ch string, focused bool) string {
+		if focused {
+			return accent.Render(ch)
+		}
+		return muted.Render(ch)
+	}
 
 	textField := func(val string, focused bool) string {
 		maxW := innerW - 4
 		display := Truncate(val, maxW-1)
 		if focused {
-			return display + cursor
+			return display + cursorStyle.Render(" ")
 		}
 		return display
 	}
@@ -450,11 +459,11 @@ func renderFilterModal(m *logFilterModal, width, height int, theme *Theme, cfg D
 	var lines []string
 	lines = append(lines, "")
 	lines = append(lines, "  Text")
-	lines = append(lines, "  ["+textField(m.text, m.focus == 0)+"]")
+	lines = append(lines, "  "+bracket("[", m.focus == 0)+textField(m.text, m.focus == 0)+bracket("]", m.focus == 0))
 	lines = append(lines, "")
 	lines = append(lines, strings.Repeat(" ", prefix)+muted.Render(hdrDate+"time"))
-	lines = append(lines, "  From  ["+m.fromDate.render(m.focus == 1, theme)+"]   ["+m.fromTime.render(m.focus == 2, theme)+"]")
-	lines = append(lines, "  To    ["+m.toDate.render(m.focus == 3, theme)+"]   ["+m.toTime.render(m.focus == 4, theme)+"]")
+	lines = append(lines, "  From  "+bracket("[", m.focus == 1)+m.fromDate.render(m.focus == 1, theme)+bracket("]", m.focus == 1)+"   "+bracket("[", m.focus == 2)+m.fromTime.render(m.focus == 2, theme)+bracket("]", m.focus == 2))
+	lines = append(lines, "  To    "+bracket("[", m.focus == 3)+m.toDate.render(m.focus == 3, theme)+bracket("]", m.focus == 3)+"   "+bracket("[", m.focus == 4)+m.toTime.render(m.focus == 4, theme)+bracket("]", m.focus == 4))
 	lines = append(lines, strings.Repeat(" ", prefix)+muted.Render(pad(cfg.DateFormat, dateW+5)+cfg.TimeFormat))
 	lines = append(lines, "")
 	lines = append(lines, "  "+muted.Render("Tab next · Enter apply · Esc cancel"))
