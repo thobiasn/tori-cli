@@ -268,18 +268,24 @@ func TestAlertViewFilterResetsCursor(t *testing.T) {
 	}
 	s.Alertv.cursor = 1
 	s.Alertv.scroll = 1
-	s.Alertv.expanded = 1
+	s.Alertv.expandModal = &alertExpandModal{alert: s.Alertv.alerts[1]}
 
-	// Pressing f should reset cursor/scroll/expanded.
+	// Pressing f should not reach the filter because the modal captures keys.
+	// Close modal first, then press f.
+	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyEscape})
+	if s.Alertv.expandModal != nil {
+		t.Error("esc should close expand modal")
+	}
+
+	// Re-set cursor state and press f.
+	s.Alertv.cursor = 1
+	s.Alertv.scroll = 1
 	updateAlertView(&a, s, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("f")})
 	if s.Alertv.cursor != 0 {
 		t.Errorf("cursor = %d, want 0", s.Alertv.cursor)
 	}
 	if s.Alertv.scroll != 0 {
 		t.Errorf("scroll = %d, want 0", s.Alertv.scroll)
-	}
-	if s.Alertv.expanded != -1 {
-		t.Errorf("expanded = %d, want -1", s.Alertv.expanded)
 	}
 }
 

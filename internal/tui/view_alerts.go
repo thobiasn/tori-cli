@@ -13,11 +13,11 @@ import (
 
 // AlertViewState holds state for the full-screen alert history view.
 type AlertViewState struct {
-	alerts   []protocol.AlertMsg
-	cursor   int
-	scroll   int
-	expanded int // -1 = none
-	stale    bool
+	alerts      []protocol.AlertMsg
+	cursor      int
+	scroll      int
+	expandModal *alertExpandModal // nil = closed
+	stale       bool
 
 	// Filters (empty string = show all).
 	filterSeverity string // "", "warning", "critical"
@@ -28,6 +28,13 @@ type AlertViewState struct {
 	silenceCursor  int
 	silenceAlertID int64
 	silenceRule    string
+}
+
+// alertExpandModal holds state for the alert detail overlay.
+type alertExpandModal struct {
+	alert  protocol.AlertMsg
+	server string
+	scroll int
 }
 
 type alertQueryMsg struct {
@@ -48,7 +55,7 @@ var silenceDurations = []struct {
 }
 
 func newAlertViewState() AlertViewState {
-	return AlertViewState{stale: true, expanded: -1}
+	return AlertViewState{stale: true}
 }
 
 // filteredAlerts returns alerts matching the current severity and state filters.
@@ -131,35 +138,6 @@ func renderAlertView(a *App, s *Session, width, height int) string {
 	}
 	visible := alerts[start:end]
 
-	// Count expansion lines for the expanded alert.
-	expandIdx := av.expanded - start // relative index within visible
-	var expandLines int
-	if av.expanded >= start && expandIdx < len(visible) {
-		al := visible[expandIdx]
-		expandLines = 1 // condition
-		if al.InstanceKey != "" {
-			expandLines++
-		}
-		expandLines++ // fired
-		if al.ResolvedAt > 0 {
-			expandLines++
-		}
-		if al.Message != "" {
-			expandLines += len(wrapText(al.Message, innerW-4))
-		}
-	}
-
-	// If expansion would overflow, trim entries from the top.
-	if expandLines > 0 && len(visible)+expandLines > innerH {
-		trim := len(visible) + expandLines - innerH
-		if trim > len(visible) {
-			trim = len(visible)
-		}
-		visible = visible[trim:]
-		start += trim
-	}
-
-	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 	var lines []string
 	for i, alert := range visible {
 		globalIdx := start + i
@@ -182,24 +160,6 @@ func renderAlertView(a *App, s *Session, width, height int) string {
 			row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
 		}
 		lines = append(lines, TruncateStyled(row, innerW))
-
-		if globalIdx == av.expanded {
-			firedStr := FormatTimestamp(alert.FiredAt, tsFormat)
-			lines = append(lines, muted.Render("   Condition: ")+alert.Condition)
-			if alert.InstanceKey != "" {
-				lines = append(lines, muted.Render("   Instance:  ")+alert.InstanceKey)
-			}
-			lines = append(lines, muted.Render("   Fired:     ")+firedStr)
-			if alert.ResolvedAt > 0 {
-				resolvedStr := FormatTimestamp(alert.ResolvedAt, tsFormat)
-				lines = append(lines, muted.Render("   Resolved:  ")+resolvedStr)
-			}
-			if alert.Message != "" {
-				for _, wl := range wrapText(alert.Message, innerW-4) {
-					lines = append(lines, "   "+wl)
-				}
-			}
-		}
 	}
 
 	title := alertTitle(av, alerts)
@@ -207,9 +167,11 @@ func renderAlertView(a *App, s *Session, width, height int) string {
 	content := strings.Join(lines, "\n")
 	box := Box(title, content, width, boxH, theme)
 
-	// Silence picker overlay.
+	// Modal overlays.
 	if av.silenceMode {
 		box = renderSilencePicker(av, width, boxH, theme)
+	} else if av.expandModal != nil {
+		box = renderAlertExpandModal(av.expandModal, width, boxH, theme, tsFormat)
 	}
 
 	return box + "\n" + renderAlertFooter(av, width, theme)
@@ -246,10 +208,119 @@ func renderSilencePicker(s *AlertViewState, width, height int, theme *Theme) str
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, picker)
 }
 
+// updateAlertExpandModal handles keys inside the alert expand modal.
+func updateAlertExpandModal(av *AlertViewState, key string) tea.Cmd {
+	m := av.expandModal
+	switch key {
+	case "esc", "enter":
+		av.expandModal = nil
+	case "j", "down":
+		m.scroll++
+	case "k", "up":
+		if m.scroll > 0 {
+			m.scroll--
+		}
+	}
+	return nil
+}
+
+// renderAlertExpandModal renders a centered modal overlay showing alert details.
+func renderAlertExpandModal(m *alertExpandModal, width, height int, theme *Theme, tsFormat string) string {
+	modalW := width * 3 / 4
+	if modalW < 40 {
+		modalW = 40
+	}
+	if modalW > width-4 {
+		modalW = width - 4
+	}
+	modalH := height
+	innerW := modalW - 2
+	innerH := modalH - 2
+	if innerH < 1 {
+		innerH = 1
+	}
+
+	label := lipgloss.NewStyle().Foreground(theme.Muted)
+
+	// Status text.
+	var status string
+	if m.alert.ResolvedAt > 0 {
+		status = lipgloss.NewStyle().Foreground(theme.Healthy).Render("RESOLVED")
+	} else if m.alert.Acknowledged {
+		status = lipgloss.NewStyle().Foreground(theme.Muted).Render("ACK")
+	} else {
+		status = lipgloss.NewStyle().Foreground(theme.Critical).Render("ACTIVE")
+	}
+
+	// Metadata header.
+	var header []string
+	header = append(header, label.Render(" server:    ")+m.server)
+	header = append(header, label.Render(" rule:      ")+m.alert.RuleName)
+	header = append(header, label.Render(" severity:  ")+m.alert.Severity)
+	header = append(header, label.Render(" status:    ")+status)
+	header = append(header, "")
+	header = append(header, label.Render(" condition: ")+m.alert.Condition)
+	if m.alert.InstanceKey != "" {
+		header = append(header, label.Render(" instance:  ")+m.alert.InstanceKey)
+	}
+	header = append(header, label.Render(" fired:     ")+FormatTimestamp(m.alert.FiredAt, tsFormat))
+	if m.alert.ResolvedAt > 0 {
+		header = append(header, label.Render(" resolved:  ")+FormatTimestamp(m.alert.ResolvedAt, tsFormat))
+	}
+
+	// If there's a message, add separator and scrollable content.
+	if m.alert.Message == "" {
+		content := strings.Join(header, "\n")
+		modal := Box("Alert", content, modalW, modalH, theme)
+		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
+	}
+
+	muted := lipgloss.NewStyle().Foreground(theme.Muted)
+	header = append(header, " "+muted.Render(strings.Repeat("─", innerW-2)))
+
+	contentH := innerH - len(header)
+	if contentH < 1 {
+		contentH = 1
+	}
+
+	wrapped := wrapText(m.alert.Message, innerW-2)
+	if len(wrapped) == 0 {
+		wrapped = []string{""}
+	}
+
+	// Clamp scroll.
+	maxScroll := len(wrapped) - contentH
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.scroll > maxScroll {
+		m.scroll = maxScroll
+	}
+
+	start := m.scroll
+	end := start + contentH
+	if end > len(wrapped) {
+		end = len(wrapped)
+	}
+
+	var lines []string
+	lines = append(lines, header...)
+	for _, l := range wrapped[start:end] {
+		lines = append(lines, " "+l)
+	}
+
+	content := strings.Join(lines, "\n")
+	modal := Box("Alert", content, modalW, modalH, theme)
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal)
+}
+
 func renderAlertFooter(s *AlertViewState, width int, theme *Theme) string {
 	_ = theme
 	if s.silenceMode {
 		return Truncate(" j/k navigate  Enter confirm  Esc cancel", width)
+	}
+	if s.expandModal != nil {
+		return Truncate(" j/k scroll  Esc/Enter close", width)
 	}
 	return Truncate(" j/k navigate  f filter  a ack  s silence  Enter expand  Esc back  ? Help", width)
 }
@@ -259,6 +330,10 @@ func updateAlertView(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	av := &s.Alertv
 	key := msg.String()
 
+	// Modal captures all keys when open.
+	if av.expandModal != nil {
+		return updateAlertExpandModal(av, key)
+	}
 	if av.silenceMode {
 		return updateSilencePicker(s, av, key)
 	}
@@ -269,7 +344,6 @@ func updateAlertView(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	case "j", "down":
 		if av.cursor < len(filtered)-1 {
 			av.cursor++
-			av.expanded = -1
 		}
 		// Auto-scroll.
 		innerH := a.height - 4
@@ -282,7 +356,6 @@ func updateAlertView(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	case "k", "up":
 		if av.cursor > 0 {
 			av.cursor--
-			av.expanded = -1
 		}
 		if av.cursor < av.scroll {
 			av.scroll = av.cursor
@@ -299,7 +372,6 @@ func updateAlertView(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		}
 		av.cursor = 0
 		av.scroll = 0
-		av.expanded = -1
 	case "F":
 		// Cycle state filter: all → active → acknowledged → resolved → all.
 		switch av.filterState {
@@ -314,7 +386,6 @@ func updateAlertView(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		}
 		av.cursor = 0
 		av.scroll = 0
-		av.expanded = -1
 	case "a":
 		// Acknowledge selected alert.
 		if s.Client != nil && av.cursor < len(filtered) {
@@ -334,19 +405,14 @@ func updateAlertView(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		}
 	case "enter":
 		if av.cursor < len(filtered) {
-			if av.expanded == av.cursor {
-				av.expanded = -1
-			} else {
-				av.expanded = av.cursor
+			av.expandModal = &alertExpandModal{
+				alert:  filtered[av.cursor],
+				server: s.Name,
 			}
 		}
 	case "esc":
-		if av.expanded >= 0 {
-			av.expanded = -1
-		} else {
-			av.cursor = 0
-			av.scroll = 0
-		}
+		av.cursor = 0
+		av.scroll = 0
 	}
 	return nil
 }

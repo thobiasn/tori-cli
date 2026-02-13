@@ -736,11 +736,15 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
-	// When the detail filter modal is active, only tab and esc are handled globally.
-	detailFilterActive := a.active == viewDetail && a.session() != nil && a.session().Detail.filterModal != nil
+	// When a modal is active, block global hotkeys so keys stay captured.
+	detailModalActive := a.active == viewDetail && a.session() != nil &&
+		(a.session().Detail.filterModal != nil || a.session().Detail.expandModal != nil)
+	alertModalActive := a.active == viewAlerts && a.session() != nil &&
+		a.session().Alertv.expandModal != nil
+	detailModalActive = detailModalActive || alertModalActive
 
 	// Zoom time window (+/- keys) — only on views with graphs.
-	if !detailFilterActive && (key == "+" || key == "=" || key == "-") {
+	if !detailModalActive && (key == "+" || key == "=" || key == "-") {
 		if a.active == viewDashboard || a.active == viewDetail {
 			if cmd := a.handleZoom(key); cmd != nil {
 				return a, cmd
@@ -750,7 +754,7 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// View switching.
-	if !detailFilterActive {
+	if !detailModalActive {
 		if cmd, ok := a.handleViewSwitch(key); ok {
 			return a, cmd
 		}
@@ -924,8 +928,8 @@ func (a App) View() string {
 		return fmt.Sprintf("Error [%s]: %v\n", s.Name, s.Err)
 	}
 
-	// Reserve 1 line for footer.
-	contentH := a.height - 1
+	// Reserve 2 lines for footer (view-specific + global).
+	contentH := a.height - 2
 	if contentH < 1 {
 		contentH = 1
 	}
@@ -951,24 +955,67 @@ func (a App) View() string {
 	return content + "\n" + a.renderFooter()
 }
 
-func (a *App) viewHints() string {
+// renderViewFooter returns the top footer line with view-specific shortcuts.
+func (a *App) renderViewFooter() string {
+	muted := lipgloss.NewStyle().Foreground(a.theme.Muted)
 	switch a.active {
 	case viewDashboard:
-		return "Tab Focus  j/k Move  Space Fold  Enter Open  t Track"
+		return " " + muted.Render("Tab Focus  j/k Move  Space Fold  Enter Open  t Track")
 	case viewAlerts:
-		return "j/k Move  a Ack  s Silence"
+		return " " + muted.Render("j/k Move  a Ack  s Silence")
 	case viewDetail:
-		return "j/k Scroll  g Group  s Stream  f Filter"
+		return a.renderDetailFooter()
 	}
 	return ""
 }
 
-func (a *App) renderFooter() string {
-	var footer string
+// renderDetailFooter returns the detail view's top footer line,
+// combining navigation shortcuts with filter status.
+func (a *App) renderDetailFooter() string {
+	muted := lipgloss.NewStyle().Foreground(a.theme.Muted)
+	s := a.sessions[a.activeSession]
+	det := &s.Detail
 
-	if a.active == viewDetail {
-		footer += "  Esc Back"
+	var parts []string
+	parts = append(parts, "Esc Back")
+	parts = append(parts, "j/k Scroll")
+	parts = append(parts, "Enter Expand")
+
+	streamLabel := "all"
+	if det.filterStream != "" {
+		streamLabel = det.filterStream
 	}
+	parts = append(parts, "s: "+streamLabel)
+	parts = append(parts, "f: filter")
+
+	if det.searchText != "" || det.filterFrom != 0 || det.filterTo != 0 {
+		var filterParts []string
+		if det.searchText != "" {
+			filterParts = append(filterParts, fmt.Sprintf("%q", det.searchText))
+		}
+		if det.filterFrom != 0 || det.filterTo != 0 {
+			tsFormat := a.tsFormat()
+			from := "…"
+			if det.filterFrom != 0 {
+				from = time.Unix(det.filterFrom, 0).Format(tsFormat)
+			}
+			to := "…"
+			if det.filterTo != 0 {
+				to = time.Unix(det.filterTo, 0).Format(tsFormat)
+			}
+			filterParts = append(filterParts, from+"–"+to)
+		}
+		// Replace "f: filter" with active filter summary.
+		parts[len(parts)-1] = "f: " + strings.Join(filterParts, " ")
+		parts = append(parts, "Esc clear")
+	}
+
+	return Truncate(" "+muted.Render(strings.Join(parts, "  ")), a.width)
+}
+
+// renderGlobalFooter returns the bottom footer line with global shortcuts.
+func (a *App) renderGlobalFooter() string {
+	footer := " "
 
 	type tab struct {
 		num    string
@@ -979,32 +1026,27 @@ func (a *App) renderFooter() string {
 		{"1", "Dashboard", viewDashboard},
 		{"2", "Alerts", viewAlerts},
 	}
-	for _, t := range tabs {
+	for i, t := range tabs {
+		if i > 0 {
+			footer += "  "
+		}
 		if t.target == a.active {
-			footer += fmt.Sprintf(" [%s %s]", t.num, t.name)
+			footer += fmt.Sprintf("[%s %s]", t.num, t.name)
 		} else {
-			footer += fmt.Sprintf("  %s %s ", t.num, t.name)
+			footer += fmt.Sprintf("%s %s", t.num, t.name)
 		}
 	}
 
-	// Show server name when multi-server.
-	if len(a.sessions) > 1 {
-		footer += fmt.Sprintf("  [%s]", a.activeSession)
-	}
-
-	if hints := a.viewHints(); hints != "" {
-		muted := lipgloss.NewStyle().Foreground(a.theme.Muted)
-		footer += "  " + muted.Render(hints)
-	}
-
 	// Zoom indicator.
-	{
-		muted := lipgloss.NewStyle().Foreground(a.theme.Muted)
-		footer += "  " + muted.Render("+/- Zoom: "+timeWindows[a.windowIdx].label)
-	}
+	muted := lipgloss.NewStyle().Foreground(a.theme.Muted)
+	footer += "  " + muted.Render("+/- Zoom: "+timeWindows[a.windowIdx].label)
 
 	footer += "  ? Help  q Quit"
 	return Truncate(footer, a.width)
+}
+
+func (a *App) renderFooter() string {
+	return a.renderViewFooter() + "\n" + a.renderGlobalFooter()
 }
 
 // containerEventToLog converts a container lifecycle event into a synthetic
