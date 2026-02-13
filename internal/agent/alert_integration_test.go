@@ -320,10 +320,11 @@ func TestPipelineNumericAlertSurvivesEvent(t *testing.T) {
 
 // --- 2. Agent startup with dirty DB state ---
 
-// TestStartupResolvesOrphanedAlerts simulates an agent restart where the
-// previous process left unresolved alerts in the DB.
-func TestStartupResolvesOrphanedAlerts(t *testing.T) {
-	// Use a persistent path so we can close and reopen the store.
+// TestStartupAdoptsFiringAlerts simulates an agent restart where the previous
+// process left unresolved alerts. Alerts matching current rules are adopted
+// into the alerter (stay firing, same DB ID). Alerts with no matching rule
+// are resolved.
+func TestStartupAdoptsFiringAlerts(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 
@@ -334,73 +335,22 @@ func TestStartupResolvesOrphanedAlerts(t *testing.T) {
 	}
 	ctx := context.Background()
 	ts := time.Now().Add(-time.Hour)
-	s1.InsertAlert(ctx, &Alert{
+	id1, _ := s1.InsertAlert(ctx, &Alert{
 		RuleName: "exited", Severity: "critical", Condition: "container.state == 'exited'",
 		InstanceKey: "exited:aaa", FiredAt: ts, Message: "orphan 1",
 	})
 	s1.InsertAlert(ctx, &Alert{
-		RuleName: "unhealthy", Severity: "critical", Condition: "container.health == 'unhealthy'",
-		InstanceKey: "unhealthy:bbb", FiredAt: ts, Message: "orphan 2",
+		RuleName: "removed_rule", Severity: "critical", Condition: "container.health == 'unhealthy'",
+		InstanceKey: "removed_rule:bbb", FiredAt: ts, Message: "orphan 2",
 	})
 	s1.Close()
 
-	// Phase 2: new agent opens the same DB.
+	// Phase 2: new agent opens the same DB with only the "exited" rule.
 	s2, err := OpenStore(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s2.Close()
-
-	// This is what agent.New() does:
-	if err := s2.ResolveOrphanedAlerts(ctx, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-
-	// Verify all orphans resolved.
-	firing, err := s2.QueryFiringAlerts(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(firing) != 0 {
-		t.Errorf("firing alerts after startup = %d, want 0", len(firing))
-	}
-
-	// Verify they have resolved_at set, not deleted.
-	var total int
-	if err := s2.db.QueryRow("SELECT COUNT(*) FROM alerts").Scan(&total); err != nil {
-		t.Fatal(err)
-	}
-	if total != 2 {
-		t.Errorf("total alerts = %d, want 2 (should be resolved, not deleted)", total)
-	}
-}
-
-// TestStartupThenNewAlertNoDuplicates verifies that after resolving orphans,
-// a new alert for the same condition creates exactly one new firing row.
-func TestStartupThenNewAlertNoDuplicates(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "test.db")
-
-	// Phase 1: old agent left an unresolved "exited" alert.
-	s1, err := OpenStore(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	s1.InsertAlert(ctx, &Alert{
-		RuleName: "exited", Severity: "critical", Condition: "container.state == 'exited'",
-		InstanceKey: "exited:aaa", FiredAt: time.Now().Add(-time.Hour), Message: "old",
-	})
-	s1.Close()
-
-	// Phase 2: new agent resolves orphans, then fires the same rule.
-	s2, err := OpenStore(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s2.Close()
-
-	s2.ResolveOrphanedAlerts(ctx, time.Now())
 
 	n := NewNotifier(&NotifyConfig{})
 	alerter, err := NewAlerter(map[string]AlertConfig{
@@ -414,25 +364,110 @@ func TestStartupThenNewAlertNoDuplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	alerter.Evaluate(ctx, &MetricSnapshot{
-		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
-	})
+	if err := alerter.AdoptFiring(ctx); err != nil {
+		t.Fatal(err)
+	}
 
-	// Should have exactly 1 firing alert (the new one), 1 resolved (the orphan).
+	// "exited:aaa" should be adopted (still firing, same DB ID).
+	inst := alerter.instances["exited:aaa"]
+	if inst == nil {
+		t.Fatal("exited:aaa not adopted into instances map")
+	}
+	if inst.state != stateFiring {
+		t.Errorf("exited:aaa state = %d, want stateFiring", inst.state)
+	}
+	if inst.dbID != id1 {
+		t.Errorf("exited:aaa dbID = %d, want %d (same row)", inst.dbID, id1)
+	}
+
+	// "removed_rule:bbb" should be resolved (no matching rule).
 	firing, err := s2.QueryFiringAlerts(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(firing) != 1 {
-		t.Errorf("firing alerts = %d, want 1", len(firing))
+		t.Errorf("firing alerts = %d, want 1 (only adopted)", len(firing))
+	}
+	if len(firing) == 1 && firing[0].InstanceKey != "exited:aaa" {
+		t.Errorf("firing alert key = %q, want exited:aaa", firing[0].InstanceKey)
 	}
 
+	// Both rows still exist (resolved, not deleted).
 	var total int
 	if err := s2.db.QueryRow("SELECT COUNT(*) FROM alerts").Scan(&total); err != nil {
 		t.Fatal(err)
 	}
 	if total != 2 {
-		t.Errorf("total alerts = %d, want 2 (1 resolved orphan + 1 new firing)", total)
+		t.Errorf("total alerts = %d, want 2", total)
+	}
+}
+
+// TestStartupAdoptThenEvaluateNoDuplicate verifies that after adopting a firing
+// alert, subsequent Evaluate cycles do NOT create a new row — the adopted
+// instance stays firing with the same DB ID.
+func TestStartupAdoptThenEvaluateNoDuplicate(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	// Phase 1: old agent left an unresolved "exited" alert.
+	s1, err := OpenStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	origID, _ := s1.InsertAlert(ctx, &Alert{
+		RuleName: "exited", Severity: "critical", Condition: "container.state == 'exited'",
+		InstanceKey: "exited:aaa", FiredAt: time.Now().Add(-time.Hour), Message: "old",
+	})
+	s1.Close()
+
+	// Phase 2: new agent adopts, then evaluates the same condition.
+	s2, err := OpenStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+
+	n := NewNotifier(&NotifyConfig{})
+	alerter, err := NewAlerter(map[string]AlertConfig{
+		"exited": {
+			Condition: "container.state == 'exited'",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	}, s2, n)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := alerter.AdoptFiring(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Evaluate with the same condition still true — should NOT re-fire.
+	alerter.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
+	})
+
+	// Still exactly 1 firing alert, same DB row.
+	firing, err := s2.QueryFiringAlerts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firing) != 1 {
+		t.Fatalf("firing alerts = %d, want 1", len(firing))
+	}
+	if firing[0].ID != origID {
+		t.Errorf("firing alert ID = %d, want %d (same row, not re-fired)", firing[0].ID, origID)
+	}
+
+	// Total rows should be 1 (no duplicate).
+	var total int
+	if err := s2.db.QueryRow("SELECT COUNT(*) FROM alerts").Scan(&total); err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 {
+		t.Errorf("total alerts = %d, want 1 (adopted, no duplicate)", total)
 	}
 }
 

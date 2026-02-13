@@ -39,11 +39,6 @@ func New(cfg *Config, cfgPath string) (*Agent, error) {
 		return nil, fmt.Errorf("docker collector: %w", err)
 	}
 
-	// Resolve alerts left unresolved by a previous crash/kill.
-	if err := store.ResolveOrphanedAlerts(context.Background(), time.Now()); err != nil {
-		slog.Warn("failed to resolve orphaned alerts", "error", err)
-	}
-
 	// Load persisted tracking state. Non-fatal if it fails.
 	containers, projects, err := store.LoadTracking(context.Background())
 	if err != nil {
@@ -86,6 +81,16 @@ func New(cfg *Config, cfgPath string) (*Agent, error) {
 		}
 		alerter.onStateChange = a.makeOnStateChange()
 		a.alerter = alerter
+
+		// Adopt firing alerts from a previous run into the alerter's state.
+		if err := alerter.AdoptFiring(context.Background()); err != nil {
+			slog.Warn("failed to adopt firing alerts", "error", err)
+		}
+	} else {
+		// No alerter — bulk-resolve any leftover unresolved alerts.
+		if err := store.ResolveOrphanedAlerts(context.Background(), time.Now()); err != nil {
+			slog.Warn("failed to resolve orphaned alerts", "error", err)
+		}
 	}
 
 	a.events = NewEventWatcher(docker, hub)

@@ -359,6 +359,39 @@ func (a *Alerter) ruleForKey(key string) *alertRule {
 	return nil
 }
 
+// AdoptFiring loads unresolved alerts from the store and adopts those whose
+// instance_key matches a current rule into the instances map. Alerts that no
+// longer match any rule are resolved. This lets alerts survive agent restarts
+// without the resolve/re-fire noise.
+func (a *Alerter) AdoptFiring(ctx context.Context) error {
+	firing, err := a.store.QueryFiringAlerts(ctx)
+	if err != nil {
+		return fmt.Errorf("query firing alerts: %w", err)
+	}
+
+	now := a.now()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	for _, alert := range firing {
+		r := a.ruleForKey(alert.InstanceKey)
+		if r == nil {
+			// Rule was removed — resolve the orphan.
+			if err := a.store.ResolveAlert(ctx, alert.ID, now); err != nil {
+				slog.Error("resolve orphaned alert", "id", alert.ID, "error", err)
+			}
+			continue
+		}
+		a.instances[alert.InstanceKey] = &alertInstance{
+			state:   stateFiring,
+			firedAt: alert.FiredAt,
+			dbID:    alert.ID,
+		}
+		slog.Info("adopted firing alert", "rule", r.name, "key", alert.InstanceKey, "id", alert.ID)
+	}
+	return nil
+}
+
 // ResolveAll resolves all firing alerts. Called before replacing the alerter on config reload.
 func (a *Alerter) ResolveAll() {
 	a.mu.Lock()
