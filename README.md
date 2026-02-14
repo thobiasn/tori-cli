@@ -48,20 +48,27 @@ The agent runs on your server collecting metrics and evaluating alerts 24/7. The
 
 ## Quick Start
 
-**Binary install (Linux):**
+**1. Install the agent on your server:**
 
 ```bash
+# Binary install
 curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sudo sh
 # edit /etc/tori/config.toml
 sudo systemctl enable --now tori
-tori user@your-server
+
+# Or with Docker Compose — copy deploy/docker-compose.yml then:
+docker compose up -d
 ```
 
-**Docker Compose:**
+**2. Install the client on your machine:**
 
 ```bash
-# clone or copy deploy/docker-compose.yml
-docker compose up -d
+curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client
+```
+
+**3. Connect:**
+
+```bash
 tori user@your-server
 ```
 
@@ -219,7 +226,7 @@ The `[display]` section controls how timestamps appear in logs and alerts. Both 
 
 ## Installation
 
-### Binary
+### Agent (server)
 
 The install script downloads the latest release, creates a `tori` system user, sets up directories, and installs a systemd service:
 
@@ -242,6 +249,16 @@ systemctl status tori                  # check it's running
 journalctl -u tori -f                  # follow agent logs
 sudo systemctl reload tori             # reload config without restart (SIGHUP)
 ```
+
+### Client (your machine)
+
+Install just the client binary — no root required, works on Linux and macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client
+```
+
+Installs to `~/.local/bin/tori` (or `/usr/local/bin/tori` if run as root).
 
 ### Docker
 

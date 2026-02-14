@@ -1,15 +1,15 @@
 #!/bin/sh
-# Tori install script — downloads a release binary and sets up systemd service.
-# Usage: curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh
-#   or:  sh install.sh --version v1.0.0
+# Tori install script.
+#
+# Agent (server):  curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sudo sh
+# Client (local):  curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client
+#
+# Options:
+#   --client           Install client binary only (no systemd, no root required)
+#   --version v1.0.0   Install a specific version
 set -eu
 
 REPO="thobiasn/tori-cli"
-INSTALL_DIR="/usr/local/bin"
-CONFIG_DIR="/etc/tori"
-DATA_DIR="/var/lib/tori"
-RUN_DIR="/run/tori"
-SERVICE_FILE="/etc/systemd/system/tori.service"
 
 # --- Helpers ---
 
@@ -31,17 +31,37 @@ fetch() {
     fi
 }
 
-# --- Pre-flight ---
+# --- Parse flags ---
 
-if [ "$(id -u)" -ne 0 ]; then
-    die "this script must be run as root"
-fi
+VERSION=""
+CLIENT_ONLY=false
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --client) CLIENT_ONLY=true; shift ;;
+        --version)
+            [ $# -ge 2 ] || die "--version requires an argument"
+            VERSION="$2"; shift 2 ;;
+        --version=*) VERSION="${1#*=}"; shift ;;
+        *) die "unknown flag: $1" ;;
+    esac
+done
+
+# --- Pre-flight ---
 
 OS="$(uname -s)"
 case "$OS" in
-    Linux) OS="linux" ;;
-    *)     die "unsupported OS: $OS (only Linux is supported)" ;;
+    Linux)  OS="linux" ;;
+    Darwin) OS="darwin" ;;
+    *)      die "unsupported OS: $OS" ;;
 esac
+
+if [ "$CLIENT_ONLY" = false ] && [ "$OS" != "linux" ]; then
+    die "agent install requires Linux (use --client for client-only install)"
+fi
+
+if [ "$CLIENT_ONLY" = false ] && [ "$(id -u)" -ne 0 ]; then
+    die "agent install must be run as root (use --client for client-only install)"
+fi
 
 ARCH="$(uname -m)"
 case "$ARCH" in
@@ -50,19 +70,6 @@ case "$ARCH" in
     arm64)   ARCH="arm64" ;;
     *)       die "unsupported architecture: $ARCH" ;;
 esac
-
-# --- Parse flags ---
-
-VERSION=""
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --version)
-            [ $# -ge 2 ] || die "--version requires an argument"
-            VERSION="$2"; shift 2 ;;
-        --version=*) VERSION="${1#*=}"; shift ;;
-        *) die "unknown flag: $1" ;;
-    esac
-done
 
 # --- Detect latest version ---
 
@@ -93,8 +100,51 @@ TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
 
 fetch -o "$TMP" "$DOWNLOAD_URL"
-
 chmod +x "$TMP"
+
+# --- Client-only install ---
+
+if [ "$CLIENT_ONLY" = true ]; then
+    # Install to ~/.local/bin (no root needed) or /usr/local/bin (with root).
+    if [ "$(id -u)" -eq 0 ]; then
+        INSTALL_DIR="/usr/local/bin"
+    else
+        INSTALL_DIR="${HOME}/.local/bin"
+        mkdir -p "$INSTALL_DIR"
+    fi
+
+    mv "$TMP" "${INSTALL_DIR}/tori"
+    chmod 755 "${INSTALL_DIR}/tori"
+    trap - EXIT
+    info "installed client to ${INSTALL_DIR}/tori"
+
+    # Check if install dir is in PATH.
+    case ":${PATH}:" in
+        *":${INSTALL_DIR}:"*) ;;
+        *) warn "${INSTALL_DIR} is not in your PATH — add it to your shell profile" ;;
+    esac
+
+    echo ""
+    info "client installation complete!"
+    echo ""
+    echo "  Connect to a server:"
+    echo "    tori user@your-server"
+    echo ""
+    echo "  Or add servers to ~/.config/tori/config.toml:"
+    echo "    [servers.prod]"
+    echo "    host = \"user@prod.example.com\""
+    echo ""
+    exit 0
+fi
+
+# --- Agent install (Linux, root) ---
+
+INSTALL_DIR="/usr/local/bin"
+CONFIG_DIR="/etc/tori"
+DATA_DIR="/var/lib/tori"
+RUN_DIR="/run/tori"
+SERVICE_FILE="/etc/systemd/system/tori.service"
+
 mv "$TMP" "${INSTALL_DIR}/tori"
 chmod 755 "${INSTALL_DIR}/tori"
 trap - EXIT
