@@ -9,7 +9,6 @@ import (
 	"net"
 	"os"
 	"os/signal"
-	"sort"
 	"strings"
 	"syscall"
 
@@ -252,26 +251,7 @@ func runSingleSession(name, sockPath string, tunnel *tui.Tunnel) {
 }
 
 func runSessions(sessions map[string]*tui.Session, display tui.DisplayConfig) {
-	// Determine session order for active session selection.
-	names := make([]string, 0, len(sessions))
-	for name := range sessions {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	// Pick the first ready session as active, falling back to first in order.
-	active := ""
-	for _, name := range names {
-		if sessions[name].ConnState == tui.ConnReady {
-			active = name
-			break
-		}
-	}
-
 	app := tui.NewApp(sessions, display)
-
-	// Override active session if we found a ready one that isn't the default.
-	_ = active
 
 	p := tea.NewProgram(app, tea.WithAltScreen())
 

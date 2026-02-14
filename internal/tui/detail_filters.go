@@ -116,13 +116,21 @@ func injectDeploySeparators(entries []protocol.LogEntryMsg) []protocol.LogEntryM
 	return out
 }
 
-func renderDetailLogs(s *DetailState, label string, showNames bool, width, height int, theme *Theme, focused bool, tsFormat string) string {
-	boxH := height
+// detailLogsOpts groups the parameters for renderDetailLogs.
+type detailLogsOpts struct {
+	label     string
+	showNames bool
+	focused   bool
+	tsFormat  string
+}
+
+func renderDetailLogs(s *DetailState, rc RenderContext, opts detailLogsOpts) string {
+	boxH := rc.Height
 	innerH := boxH - 2
 	if innerH < 1 {
 		innerH = 1
 	}
-	innerW := width - 2
+	innerW := rc.Width - 2
 
 	data := s.filteredData()
 	// Apply scroll.
@@ -150,7 +158,7 @@ func renderDetailLogs(s *DetailState, label string, showNames bool, width, heigh
 
 	// Compute the max container name width for aligned columns.
 	nameW := 0
-	if showNames {
+	if opts.showNames {
 		for _, entry := range visible {
 			if n := len([]rune(entry.ContainerName)); n > nameW {
 				nameW = n
@@ -158,9 +166,10 @@ func renderDetailLogs(s *DetailState, label string, showNames bool, width, heigh
 		}
 	}
 
+	theme := rc.Theme
 	var lines []string
 	for i, entry := range visible {
-		line := formatLogLine(entry, innerW, theme, tsFormat, nameW)
+		line := formatLogLine(entry, innerW, theme, opts.tsFormat, nameW)
 		if i == cursorIdx {
 			line = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(line), innerW))
 		}
@@ -168,8 +177,8 @@ func renderDetailLogs(s *DetailState, label string, showNames bool, width, heigh
 	}
 
 	title := "Logs"
-	if label != "" {
-		title += " ── " + label
+	if opts.label != "" {
+		title += " ── " + opts.label
 	}
 	title += " ── " + FormatNumber(len(data)) + " lines"
 	paused := s.logScroll > 0
@@ -179,7 +188,7 @@ func renderDetailLogs(s *DetailState, label string, showNames bool, width, heigh
 		title += " ── LIVE"
 	}
 
-	return Box(title, strings.Join(lines, "\n"), width, boxH, theme, focused)
+	return Box(title, strings.Join(lines, "\n"), rc.Width, boxH, theme, opts.focused)
 }
 
 // maskedField is a fixed-width input derived from a Go time format string.

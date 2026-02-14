@@ -9,7 +9,7 @@ import (
 
 func TestRenderAlertPanelEmpty(t *testing.T) {
 	theme := DefaultTheme()
-	got := renderAlertPanel(nil, 60, 0, &theme, "2006-01-02 15:04:05", 0, false)
+	got := renderAlertPanel(alertPanelOpts{width: 60, theme: &theme, tsFormat: "2006-01-02 15:04:05"})
 	if !strings.Contains(got, "all clear") {
 		t.Errorf("empty alerts should show 'all clear', got:\n%s", got)
 	}
@@ -21,7 +21,7 @@ func TestRenderAlertPanelWithAlerts(t *testing.T) {
 		1: {ID: 1, RuleName: "high_cpu", Severity: "critical", FiredAt: 1700000000, Message: "CPU at 95%"},
 		2: {ID: 2, RuleName: "disk_full", Severity: "warning", FiredAt: 1700000060, Message: "Disk 90%"},
 	}
-	got := renderAlertPanel(alerts, 80, 0, &theme, "2006-01-02 15:04:05", 0, false)
+	got := renderAlertPanel(alertPanelOpts{alerts: alerts, width: 80, theme: &theme, tsFormat: "2006-01-02 15:04:05"})
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "Alerts (2)") {
 		t.Errorf("should show count, got:\n%s", plain)
@@ -142,7 +142,10 @@ func TestRenderContainerPanel(t *testing.T) {
 			{ID: "c2", Name: "db", State: "running", CPUPercent: 0.8, MemUsage: 256 * 1024 * 1024},
 		}, running: 2},
 	}
-	got := renderContainerPanel(groups, map[string]bool{}, 0, nil, nil, RenderContext{Width: 50, Height: 10, Theme: &theme}, true)
+	got := renderContainerPanel(containerPanelOpts{
+		groups: groups, collapsed: map[string]bool{}, cursor: 0,
+		rc: RenderContext{Width: 50, Height: 10, Theme: &theme}, focused: true,
+	})
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "myapp") {
 		t.Error("should contain group name")
@@ -163,7 +166,10 @@ func TestRenderContainerPanelCollapsed(t *testing.T) {
 			{ID: "c1", Name: "web", State: "running"},
 		}, running: 1},
 	}
-	got := renderContainerPanel(groups, map[string]bool{"myapp": true}, 0, nil, nil, RenderContext{Width: 50, Height: 10, Theme: &theme}, true)
+	got := renderContainerPanel(containerPanelOpts{
+		groups: groups, collapsed: map[string]bool{"myapp": true}, cursor: 0,
+		rc: RenderContext{Width: 50, Height: 10, Theme: &theme}, focused: true,
+	})
 	plain := stripANSI(got)
 	if !strings.Contains(plain, "myapp") {
 		t.Error("collapsed should still show group header")

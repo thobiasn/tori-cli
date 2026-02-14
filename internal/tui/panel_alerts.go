@@ -30,20 +30,31 @@ func alertEventToMsg(e *protocol.AlertEvent) protocol.AlertMsg {
 	}
 }
 
+// alertPanelOpts groups the parameters for renderAlertPanel.
+type alertPanelOpts struct {
+	alerts   map[int64]*protocol.AlertEvent
+	width    int
+	height   int // if > 0, constrain to this height; otherwise self-size
+	theme    *Theme
+	tsFormat string
+	cursor   int
+	focused  bool
+}
+
 // renderAlertPanel renders the dashboard alert bar.
-// If height > 0, the panel is constrained to that height; otherwise it self-sizes.
-func renderAlertPanel(alerts map[int64]*protocol.AlertEvent, width, height int, theme *Theme, tsFormat string, cursor int, focused bool) string {
-	if len(alerts) == 0 {
+func renderAlertPanel(opts alertPanelOpts) string {
+	if len(opts.alerts) == 0 {
 		h := 3
-		if height > 0 {
-			h = height
+		if opts.height > 0 {
+			h = opts.height
 		}
-		return Box("Alerts -- all clear", "", width, h, theme)
+		return Box("Alerts -- all clear", "", opts.width, h, opts.theme)
 	}
 
-	sorted := sortedAlerts(alerts)
+	sorted := sortedAlerts(opts.alerts)
 
 	// Clamp cursor.
+	cursor := opts.cursor
 	if cursor >= len(sorted) {
 		cursor = len(sorted) - 1
 	}
@@ -51,27 +62,27 @@ func renderAlertPanel(alerts map[int64]*protocol.AlertEvent, width, height int, 
 		cursor = 0
 	}
 
-	innerW := width - 2
+	innerW := opts.width - 2
 	var lines []string
 	for i, a := range sorted {
-		ts := FormatTimestamp(a.FiredAt, tsFormat)
-		sev := severityTag(a.Severity, theme)
+		ts := FormatTimestamp(a.FiredAt, opts.tsFormat)
+		sev := severityTag(a.Severity, opts.theme)
 		msg := Truncate(a.Message, innerW-25)
 		line := fmt.Sprintf(" %s  %s  %-16s %s", sev, ts, Truncate(a.RuleName, 16), msg)
 		line = Truncate(line, innerW)
-		if focused && i == cursor {
+		if opts.focused && i == cursor {
 			line = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(line), innerW))
 		}
 		lines = append(lines, line)
 	}
 
-	title := fmt.Sprintf("Alerts (%d)", len(alerts))
+	title := fmt.Sprintf("Alerts (%d)", len(opts.alerts))
 	h := len(lines) + 2 // borders
 	if h < 3 {
 		h = 3
 	}
-	if height > 0 && h > height {
-		h = height
+	if opts.height > 0 && h > opts.height {
+		h = opts.height
 		// Truncate visible lines to fit.
 		maxLines := h - 2
 		if maxLines < 0 {
@@ -81,7 +92,7 @@ func renderAlertPanel(alerts map[int64]*protocol.AlertEvent, width, height int, 
 			lines = lines[:maxLines]
 		}
 	}
-	return Box(title, strings.Join(lines, "\n"), width, h, theme, focused)
+	return Box(title, strings.Join(lines, "\n"), opts.width, h, opts.theme, opts.focused)
 }
 
 func severityTag(sev string, theme *Theme) string {

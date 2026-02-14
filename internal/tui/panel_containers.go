@@ -8,9 +8,21 @@ import (
 	"github.com/thobiasn/tori-cli/internal/protocol"
 )
 
+// containerPanelOpts groups the parameters for renderContainerPanel.
+type containerPanelOpts struct {
+	groups    []containerGroup
+	collapsed map[string]bool
+	cursor    int
+	alerts    map[int64]*protocol.AlertEvent
+	contInfo  []protocol.ContainerInfo
+	rc        RenderContext
+	focused   bool
+}
+
 // renderContainerPanel renders the container list with grouping and cursor.
 // When focused is true, the cursor row uses Reverse; when false, accent foreground.
-func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cursor int, alerts map[int64]*protocol.AlertEvent, contInfo []protocol.ContainerInfo, rc RenderContext, focused bool) string {
+func renderContainerPanel(opts containerPanelOpts) string {
+	rc := opts.rc
 	innerH := rc.Height - 2
 	if innerH < 1 {
 		innerH = 1
@@ -19,15 +31,15 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 
 	// Build set of container IDs with active alerts.
 	alertIDs := make(map[string]bool)
-	for _, a := range alerts {
+	for _, a := range opts.alerts {
 		if idx := strings.LastIndex(a.InstanceKey, ":"); idx >= 0 {
 			alertIDs[a.InstanceKey[idx+1:]] = true
 		}
 	}
 
 	// Build tracked state lookup from contInfo.
-	trackedState := make(map[string]bool, len(contInfo))
-	for _, ci := range contInfo {
+	trackedState := make(map[string]bool, len(opts.contInfo))
+	for _, ci := range opts.contInfo {
 		trackedState[ci.ID] = ci.Tracked
 	}
 
@@ -47,7 +59,7 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 
 	var lines []string
 	pos := 0
-	for _, g := range groups {
+	for _, g := range opts.groups {
 		// Check if all containers in group are untracked.
 		allUntracked := len(g.containers) > 0
 		for _, c := range g.containers {
@@ -72,8 +84,8 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 			muted.Render(fill),
 			muted.Render(runLabel))
 
-		if pos == cursor {
-			if focused {
+		if pos == opts.cursor {
+			if opts.focused {
 				headerLine = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(headerLine), innerW))
 			} else {
 				headerLine = lipgloss.NewStyle().Foreground(theme.Accent).Render(Truncate(stripANSI(headerLine), innerW))
@@ -82,7 +94,7 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 		lines = append(lines, TruncateStyled(headerLine, innerW))
 		pos++
 
-		if collapsed[g.name] {
+		if opts.collapsed[g.name] {
 			continue
 		}
 
@@ -111,8 +123,8 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 				stats = fmt.Sprintf("%6s   %6s   %-7s", "—", "—", Truncate(uptime, 7))
 			}
 			row := fmt.Sprintf(" %s %s%-*s   %s   %s %s", indicator, alertInd, nameW, name, health, stats, restarts)
-			if pos == cursor {
-				if focused {
+			if pos == opts.cursor {
+				if opts.focused {
 					row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
 				} else {
 					row = lipgloss.NewStyle().Foreground(theme.Accent).Render(Truncate(stripANSI(row), innerW))
@@ -131,7 +143,7 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 		scrollH = 1
 	}
 	if len(lines) > scrollH {
-		start := cursor - scrollH/2
+		start := opts.cursor - scrollH/2
 		if start < 0 {
 			start = 0
 		}
@@ -142,7 +154,7 @@ func renderContainerPanel(groups []containerGroup, collapsed map[string]bool, cu
 	}
 	lines = append([]string{headerLine}, lines...)
 
-	return Box("Containers", strings.Join(lines, "\n"), rc.Width, rc.Height, theme, focused)
+	return Box("Containers", strings.Join(lines, "\n"), rc.Width, rc.Height, theme, opts.focused)
 }
 
 // cursorContainerID resolves the current cursor position to a container ID.

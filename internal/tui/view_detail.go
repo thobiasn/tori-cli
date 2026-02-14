@@ -275,7 +275,7 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 	theme := &a.theme
 	det := &s.Detail
 
-	// Find current container metrics.
+	// Find current container metrics (needed for graphs and title).
 	var cm *protocol.ContainerMetrics
 	for i := range s.Containers {
 		if s.Containers[i].ID == det.containerID {
@@ -284,20 +284,15 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 		}
 	}
 
-	// Find container info.
-	var ci *protocol.ContainerInfo
+	// Title for the info box (name + alert count, no state).
+	title := "Info"
 	for i := range s.ContInfo {
 		if s.ContInfo[i].ID == det.containerID {
-			ci = &s.ContInfo[i]
+			title = stripANSI(s.ContInfo[i].Name)
 			break
 		}
 	}
-
-	// Title for the info box (name + alert count, no state).
-	title := "Info"
-	if ci != nil {
-		title = stripANSI(ci.Name)
-	} else if cm != nil {
+	if title == "Info" && cm != nil {
 		title = stripANSI(cm.Name)
 	}
 	alertCount := len(containerAlerts(s.Alerts, det.containerID))
@@ -326,7 +321,7 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 	}
 	graphW := width - infoW
 
-	infoBox := renderDetailInfoBox(s, det, cm, ci, title, infoW, metricsH, theme)
+	infoBox := renderDetailInfoBox(s, det, title, RenderContext{Width: infoW, Height: metricsH, Theme: theme})
 
 	rc := RenderContext{Width: graphW, Height: metricsH, Theme: theme, WindowLabel: a.windowLabel(), WindowSec: a.windowSeconds()}
 	graphs := renderDetailMetrics(s, det, cm, rc)
@@ -344,15 +339,15 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 	}
 
 	// Bottom section: logs.
-	containerName := ""
-	if ci != nil {
-		containerName = stripANSI(ci.Name)
-	} else if cm != nil {
+	containerName := containerNameByID(det.containerID, s.ContInfo)
+	if containerName == "" && cm != nil {
 		containerName = stripANSI(cm.Name)
 	}
 	var logBox string
 	if det.logs != nil && logH > 3 {
-		logBox = renderDetailLogs(det, containerName, false, width, logH, theme, true, a.tsFormat())
+		logBox = renderDetailLogs(det, RenderContext{Width: width, Height: logH, Theme: theme}, detailLogsOpts{
+			label: containerName, focused: true, tsFormat: a.tsFormat(),
+		})
 	}
 
 	result := topRow
@@ -431,7 +426,9 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 
 	var logBox string
 	if det.logs != nil && logH > 3 {
-		logBox = renderDetailLogs(det, det.project, true, width, logH, theme, true, a.tsFormat())
+		logBox = renderDetailLogs(det, RenderContext{Width: width, Height: logH, Theme: theme}, detailLogsOpts{
+			label: det.project, showNames: true, focused: true, tsFormat: a.tsFormat(),
+		})
 	}
 
 	result := topRow
@@ -544,11 +541,29 @@ func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMet
 }
 
 // renderDetailInfoBox renders the container info panel for single-container detail.
-func renderDetailInfoBox(s *Session, det *DetailState, cm *protocol.ContainerMetrics, ci *protocol.ContainerInfo, title string, width, height int, theme *Theme) string {
-	if cm == nil {
-		return Box(title, "  Waiting...", width, height, theme)
+func renderDetailInfoBox(s *Session, det *DetailState, title string, rc RenderContext) string {
+	theme := rc.Theme
+
+	// Look up container metrics and info.
+	var cm *protocol.ContainerMetrics
+	for i := range s.Containers {
+		if s.Containers[i].ID == det.containerID {
+			cm = &s.Containers[i]
+			break
+		}
 	}
-	innerW := width - 2
+	var ci *protocol.ContainerInfo
+	for i := range s.ContInfo {
+		if s.ContInfo[i].ID == det.containerID {
+			ci = &s.ContInfo[i]
+			break
+		}
+	}
+
+	if cm == nil {
+		return Box(title, "  Waiting...", rc.Width, rc.Height, theme)
+	}
+	innerW := rc.Width - 2
 
 	var image string
 	if ci != nil {
@@ -587,7 +602,7 @@ func renderDetailInfoBox(s *Session, det *DetailState, cm *protocol.ContainerMet
 		rxStyle.Render("R"), FormatBytesRate(rates.BlockReadRate),
 		txStyle.Render("W"), FormatBytesRate(rates.BlockWriteRate)))
 
-	return Box(title, strings.Join(lines, "\n"), width, height, theme)
+	return Box(title, strings.Join(lines, "\n"), rc.Width, rc.Height, theme)
 }
 
 // renderDetailContainersBox renders the per-container table for group detail.

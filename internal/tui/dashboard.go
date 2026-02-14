@@ -190,10 +190,17 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		serverPanel := renderServerPanel(a, cpuH, srvW)
 		topRow := lipgloss.JoinHorizontal(lipgloss.Top, serverPanel, hostRow)
 
-		alertPanel := renderAlertPanel(s.Alerts, width, alertH, theme, a.tsFormat(), s.Dash.alertCursor, a.dashFocus == focusAlerts)
+		alertPanel := renderAlertPanel(alertPanelOpts{
+			alerts: s.Alerts, width: width, height: alertH, theme: theme,
+			tsFormat: a.tsFormat(), cursor: s.Dash.alertCursor, focused: a.dashFocus == focusAlerts,
+		})
 
 		contH := middleH
-		contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, RenderContext{Width: width, Height: contH, Theme: theme}, a.dashFocus == focusContainers)
+		contPanel := renderContainerPanel(containerPanelOpts{
+			groups: s.Dash.groups, collapsed: s.Dash.collapsed, cursor: s.Dash.cursor,
+			alerts: s.Alerts, contInfo: s.ContInfo,
+			rc: RenderContext{Width: width, Height: contH, Theme: theme}, focused: a.dashFocus == focusContainers,
+		})
 
 		return strings.Join([]string{topRow, alertPanel, contPanel}, "\n")
 	}
@@ -238,8 +245,15 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 	cpuPanel := renderCPUPanel(cpuHistory, s.Host, RenderContext{Width: width, Height: cpuPanelH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
 	memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), RenderContext{Width: width, Height: narrowMemH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
 	diskPanel := renderDiskPanel(s.Disks, swapTotal2, swapUsed2, width, diskH, theme)
-	alertPanel := renderAlertPanel(s.Alerts, width, alertH, theme, a.tsFormat(), s.Dash.alertCursor, a.dashFocus == focusAlerts)
-	contPanel := renderContainerPanel(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor, s.Alerts, s.ContInfo, RenderContext{Width: width, Height: contH, Theme: theme}, a.dashFocus == focusContainers)
+	alertPanel := renderAlertPanel(alertPanelOpts{
+		alerts: s.Alerts, width: width, height: alertH, theme: theme,
+		tsFormat: a.tsFormat(), cursor: s.Dash.alertCursor, focused: a.dashFocus == focusAlerts,
+	})
+	contPanel := renderContainerPanel(containerPanelOpts{
+		groups: s.Dash.groups, collapsed: s.Dash.collapsed, cursor: s.Dash.cursor,
+		alerts: s.Alerts, contInfo: s.ContInfo,
+		rc: RenderContext{Width: width, Height: contH, Theme: theme}, focused: a.dashFocus == focusContainers,
+	})
 
 	return strings.Join([]string{serverPanel, cpuPanel, memPanel, diskPanel, alertPanel, contPanel}, "\n")
 }
