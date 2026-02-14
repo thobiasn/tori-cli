@@ -412,7 +412,7 @@ func (s *Store) AckAlert(ctx context.Context, id int64) error {
 }
 
 // SaveTracking persists the current tracking state (full snapshot).
-func (s *Store) SaveTracking(ctx context.Context, containers, projects []string) error {
+func (s *Store) SaveTracking(ctx context.Context, containers []string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -434,35 +434,26 @@ func (s *Store) SaveTracking(ctx context.Context, containers, projects []string)
 			return err
 		}
 	}
-	for _, name := range projects {
-		if _, err := stmt.ExecContext(ctx, "project", name); err != nil {
-			return err
-		}
-	}
 	return tx.Commit()
 }
 
-// LoadTracking loads the persisted tracking state, split by kind.
-func (s *Store) LoadTracking(ctx context.Context) (containers, projects []string, err error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT kind, name FROM tracking_state")
+// LoadTracking loads the persisted tracking state.
+func (s *Store) LoadTracking(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT name FROM tracking_state WHERE kind = 'container'")
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	defer rows.Close()
 
+	var containers []string
 	for rows.Next() {
-		var kind, name string
-		if err := rows.Scan(&kind, &name); err != nil {
-			return nil, nil, err
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
 		}
-		switch kind {
-		case "container":
-			containers = append(containers, name)
-		case "project":
-			projects = append(projects, name)
-		}
+		containers = append(containers, name)
 	}
-	return containers, projects, rows.Err()
+	return containers, rows.Err()
 }
 
 // Prune deletes data older than the retention period.

@@ -45,9 +45,8 @@ func testEventWatcher(t *testing.T, include, exclude []string) (*EventWatcher, *
 	dc := &DockerCollector{
 		include:         include,
 		exclude:         exclude,
-		prevCPU:         make(map[string]cpuPrev),
-		tracked:         map[string]bool{"web": true},
-		trackedProjects: make(map[string]bool),
+		prevCPU: make(map[string]cpuPrev),
+		tracked: map[string]bool{"web": true},
 	}
 	hub := NewHub()
 

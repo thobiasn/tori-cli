@@ -64,102 +64,129 @@ func TestInspectCacheStaleEviction(t *testing.T) {
 
 func TestSetTrackingContainer(t *testing.T) {
 	d := &DockerCollector{
-		prevCPU:         make(map[string]cpuPrev),
-		tracked:         make(map[string]bool),
-		trackedProjects: make(map[string]bool),
+		prevCPU: make(map[string]cpuPrev),
+		tracked: make(map[string]bool),
 	}
 
 	// Initially untracked (nothing in tracked set).
-	if d.IsTracked("web", "myapp") {
+	if d.IsTracked("web") {
 		t.Error("should be untracked by default")
 	}
 
 	// Track by name.
 	d.SetTracking("web", "", true)
-	if !d.IsTracked("web", "myapp") {
+	if !d.IsTracked("web") {
 		t.Error("web should be tracked after SetTracking(true)")
 	}
 
 	// Other containers still untracked.
-	if d.IsTracked("api", "myapp") {
+	if d.IsTracked("api") {
 		t.Error("api should still be untracked")
 	}
 
 	// Untrack.
 	d.SetTracking("web", "", false)
-	if d.IsTracked("web", "myapp") {
+	if d.IsTracked("web") {
 		t.Error("web should be untracked again")
 	}
 }
 
 func TestSetTrackingProject(t *testing.T) {
 	d := &DockerCollector{
-		prevCPU:         make(map[string]cpuPrev),
-		tracked:         make(map[string]bool),
-		trackedProjects: make(map[string]bool),
+		prevCPU: make(map[string]cpuPrev),
+		tracked: make(map[string]bool),
+		// Simulate known containers in the project.
+		lastContainers: []Container{
+			{Name: "web", Project: "myapp"},
+			{Name: "api", Project: "myapp"},
+			{Name: "cache", Project: "other"},
+		},
 	}
 
 	// Initially untracked.
-	if d.IsTracked("web", "myapp") {
-		t.Error("web in myapp should be untracked by default")
+	if d.IsTracked("web") {
+		t.Error("web should be untracked by default")
 	}
 
-	// Track project.
+	// Track project — should track all containers in "myapp".
 	d.SetTracking("", "myapp", true)
-	if !d.IsTracked("web", "myapp") {
-		t.Error("web in myapp should be tracked")
+	if !d.IsTracked("web") {
+		t.Error("web should be tracked")
 	}
-	if d.IsTracked("cache", "other") {
+	if !d.IsTracked("api") {
+		t.Error("api should be tracked")
+	}
+	if d.IsTracked("cache") {
 		t.Error("cache in other project should still be untracked")
 	}
 
 	// Untrack project.
 	d.SetTracking("", "myapp", false)
-	if d.IsTracked("web", "myapp") {
-		t.Error("web in myapp should be untracked again")
+	if d.IsTracked("web") {
+		t.Error("web should be untracked again")
+	}
+	if d.IsTracked("api") {
+		t.Error("api should be untracked again")
+	}
+}
+
+func TestSetTrackingProjectThenUntrackContainer(t *testing.T) {
+	d := &DockerCollector{
+		prevCPU: make(map[string]cpuPrev),
+		tracked: make(map[string]bool),
+		lastContainers: []Container{
+			{Name: "web", Project: "myapp"},
+			{Name: "api", Project: "myapp"},
+		},
+	}
+
+	// Track project.
+	d.SetTracking("", "myapp", true)
+	if !d.IsTracked("web") || !d.IsTracked("api") {
+		t.Fatal("both should be tracked after project toggle")
+	}
+
+	// Untrack individual container within the project.
+	d.SetTracking("web", "", false)
+	if d.IsTracked("web") {
+		t.Error("web should be untracked after individual toggle")
+	}
+	if !d.IsTracked("api") {
+		t.Error("api should still be tracked")
 	}
 }
 
 func TestGetTrackingState(t *testing.T) {
 	d := &DockerCollector{
-		prevCPU:         make(map[string]cpuPrev),
-		tracked:         make(map[string]bool),
-		trackedProjects: make(map[string]bool),
+		prevCPU: make(map[string]cpuPrev),
+		tracked: make(map[string]bool),
 	}
 
 	d.SetTracking("web", "", true)
 	d.SetTracking("api", "", true)
-	d.SetTracking("", "myapp", true)
 
-	containers, projects := d.GetTrackingState()
+	containers := d.GetTrackingState()
 	if len(containers) != 2 {
 		t.Errorf("tracked containers = %d, want 2", len(containers))
-	}
-	if len(projects) != 1 {
-		t.Errorf("tracked projects = %d, want 1", len(projects))
 	}
 }
 
 func TestLoadTrackingState(t *testing.T) {
 	d := &DockerCollector{
-		prevCPU:         make(map[string]cpuPrev),
-		tracked:         make(map[string]bool),
-		trackedProjects: make(map[string]bool),
+		prevCPU: make(map[string]cpuPrev),
+		tracked: make(map[string]bool),
 	}
 
-	d.LoadTrackingState([]string{"web", "api"}, []string{"myapp"})
+	d.LoadTrackingState([]string{"web", "api"})
 
-	if !d.IsTracked("web", "") {
+	if !d.IsTracked("web") {
 		t.Error("web should be tracked after load")
 	}
-	if !d.IsTracked("api", "") {
+	if !d.IsTracked("api") {
 		t.Error("api should be tracked after load")
 	}
-	if !d.IsTracked("anything", "myapp") {
-		t.Error("anything in myapp should be tracked after load")
-	}
-	if d.IsTracked("db", "other") {
-		t.Error("db in other should still be untracked")
+	if d.IsTracked("db") {
+		t.Error("db should still be untracked")
 	}
 }
 

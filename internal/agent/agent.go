@@ -40,12 +40,12 @@ func New(cfg *Config, cfgPath string) (*Agent, error) {
 	}
 
 	// Load persisted tracking state. Non-fatal if it fails.
-	containers, projects, err := store.LoadTracking(context.Background())
+	tracked, err := store.LoadTracking(context.Background())
 	if err != nil {
 		slog.Warn("failed to load tracking state", "error", err)
-	} else if len(containers) > 0 || len(projects) > 0 {
-		docker.LoadTrackingState(containers, projects)
-		slog.Info("loaded tracking state", "containers", len(containers), "projects", len(projects))
+	} else if len(tracked) > 0 {
+		docker.LoadTrackingState(tracked)
+		slog.Info("loaded tracking state", "containers", len(tracked))
 	}
 
 	hub := NewHub()
