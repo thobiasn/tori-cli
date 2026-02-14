@@ -1,4 +1,4 @@
-# Tori
+# Tori ─(•)>
 
 Lightweight server monitoring for Docker environments. A single binary that replaces the Grafana+Prometheus+Loki stack when all you need is a terminal.
 
