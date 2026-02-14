@@ -16,6 +16,9 @@ cover.html
 # Config (may contain credentials)
 config.toml
 
+# Claude Code
+.claude/
+
 # Editor/IDE
 .vscode/
 .idea/
