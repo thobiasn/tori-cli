@@ -1056,10 +1056,6 @@ func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsFormat
 	}
 	msg := Truncate(sanitizeLogMsg(entry.Message), msgW)
 
-	if entry.Stream == "stderr" {
-		msg = lipgloss.NewStyle().Foreground(theme.Critical).Render(msg)
-	}
-
 	return left + " " + divider + " " + msg
 }
 
