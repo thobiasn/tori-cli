@@ -338,7 +338,7 @@ func renderAlertsPanel(a *App, s *Session, width, height int, focused bool) stri
 		if focused && globalIdx == av.cursor {
 			row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
 		} else if alert.ResolvedAt > 0 {
-			row = lipgloss.NewStyle().Strikethrough(true).Render(stripANSI(row))
+			row = lipgloss.NewStyle().Strikethrough(true).Foreground(lipgloss.Color("245")).Render(stripANSI(row))
 		}
 		lines = append(lines, TruncateStyled(row, innerW))
 	}

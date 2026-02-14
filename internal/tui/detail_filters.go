@@ -514,17 +514,37 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	}
 
 	data := det.filteredData()
-	// Compute innerH for cursor bounds (same formula as renderDetail).
+	// Compute innerH for cursor bounds (must match renderDetailSingle/Group).
 	contentH := a.height - 2
-	metricsH := contentH / 3
+	metricsH := contentH / 4
 	if metricsH < 11 {
 		metricsH = 11
 	}
-	logH := contentH - metricsH - 1
+	logH := contentH - metricsH
 	if logH < 5 {
 		logH = 5
 	}
-	innerH := logH - 2 // box borders (2)
+	// Account for alert box height (same as renderDetail).
+	var alertCount int
+	if det.isGroupMode() {
+		for _, id := range det.projectIDs {
+			alertCount += len(containerAlerts(s.Alerts, id))
+		}
+	} else {
+		alertCount = len(containerAlerts(s.Alerts, det.containerID))
+	}
+	if alertCount > 0 {
+		alertH := alertCount + 2
+		maxAlertH := contentH / 6
+		if maxAlertH > 2 && alertH > maxAlertH {
+			alertH = maxAlertH
+		}
+		logH -= alertH
+		if logH < 3 {
+			logH = 3
+		}
+	}
+	innerH := logH - 2 // box borders
 	if innerH < 1 {
 		innerH = 1
 	}
