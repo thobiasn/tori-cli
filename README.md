@@ -1,12 +1,23 @@
 # Tori
 
-A lightweight server monitoring tool for Docker environments. A persistent agent runs on your server collecting metrics, watching containers, tailing logs, and firing alerts 24/7. A TUI client connects to the agent over SSH from your local machine to give you full visibility — no browser, no exposed ports, no extra containers.
+Lightweight server monitoring for Docker environments. A single binary that replaces the Grafana+Prometheus+Loki stack when all you need is a terminal.
 
-## Why
+*Screenshot coming soon*
 
-Existing tools either require a full monitoring stack (Grafana + Prometheus + Loki + Alertmanager) or give you a live-only view with no alerting (lazydocker, ctop). Tori is a single binary that replaces both — always-on monitoring with a terminal-native interface.
+## Features
 
-## Architecture
+- Host metrics — CPU, memory, disk, network, swap, load averages
+- Docker container monitoring — status, stats, health checks, restart tracking
+- Container log tailing with filtering by container, compose group, stream, and text search
+- Alerting with configurable rules, email (SMTP), and webhook notifications
+- SQLite storage with configurable retention
+- Multi-server support — monitor multiple hosts from one terminal
+- Single binary, zero runtime dependencies
+- No exposed ports — all communication over SSH
+
+## How It Works
+
+The agent runs on your server collecting metrics and evaluating alerts 24/7. The TUI client connects from your local machine through an SSH tunnel to a Unix socket — no HTTP server, no open ports.
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -18,15 +29,15 @@ Existing tools either require a full monitoring stack (Grafana + Prometheus + Lo
 └─────────────────┼───────────────────────────┘
                   │ SSH tunnel
 ┌─────────────────┼───────────────────────────┐
-│  VPS            │                           │
+│  Server         │                           │
 │  ┌──────────────▼────────────────────────┐  │
 │  │  tori agent                           │  │
-│  │  Unix socket: /run/tori/tori.sock          │  │
+│  │  Unix socket: /run/tori/tori.sock     │  │
 │  │                                       │  │
 │  │  ├── Collector (host metrics, docker) │  │
 │  │  ├── Log tailer (docker log API)      │  │
 │  │  ├── Alert evaluator                  │  │
-│  │  ├── Notifier (email/webhook/slack)   │  │
+│  │  ├── Notifier (email/webhook)         │  │
 │  │  └── Storage (SQLite)                 │  │
 │  └───────────────────────────────────────┘  │
 │       │                │                    │
@@ -35,53 +46,28 @@ Existing tools either require a full monitoring stack (Grafana + Prometheus + Lo
 └─────────────────────────────────────────────┘
 ```
 
-## Components
+## Quick Start
 
-**Agent** (`tori agent`) — daemon that runs on the server:
+**Binary install (Linux):**
 
-- Collects host metrics from `/proc` and `/sys` (CPU, memory, disk, network)
-- Monitors Docker containers via the Docker socket (status, stats, health, restarts)
-- Groups containers by Docker Compose project (`com.docker.compose.project` label)
-- Per-container and per-group tracking toggle — untracked containers are visible but dimmed (no metrics, logs, or alerts)
-- Tails container logs via the Docker log API
-- Evaluates alert rules defined in config and sends notifications (email/SMTP, webhook, Slack)
-- Stores metrics and logs in SQLite with configurable retention
-- Exposes a Unix socket for client connections
-- Runs as a systemd service or Docker container
-
-**TUI Client** (`tori`) — runs on your local machine:
-
-- Connects to the agent via SSH-forwarded Unix socket
-- Dashboard view: container status, host metrics, resource usage
-- Log viewer: tail and filter logs by container, compose group, stream (stdout/stderr), text search, and time range
-- Alert history: view past alerts, acknowledge, silence, filter by severity and state
-- Multi-server: switch between multiple configured servers
-
-## Project Structure
-
-```
-tori/
-├── cmd/
-│   └── tori/               # single binary entry point
-│       └── main.go
-├── internal/
-│   ├── agent/              # collector, alerter, storage, socket server
-│   ├── tui/                # bubbletea views and components
-│   └── protocol/           # shared message types, msgpack encoding
+```bash
+curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sudo sh
+# edit /etc/tori/config.toml
+sudo systemctl enable --now tori
+tori user@your-server
 ```
 
-The `internal/protocol` package is the contract between agent and client — all message types, encoding, and socket communication live here. Both `agent` and `tui` import `protocol` but never import each other. This means the binary can be split into separate builds later without any code changes — just add a second entry point under `cmd/`.
+**Docker Compose:**
 
-## Tech
+```bash
+# clone or copy deploy/docker-compose.yml
+docker compose up -d
+tori user@your-server
+```
 
-- **Language:** Go — single static binary, no runtime dependencies
-- **TUI:** Bubbletea + Lipgloss + Bubbles (Charm ecosystem)
-- **Storage:** SQLite (WAL mode) with configurable retention policies
-- **Transport:** SSH tunnel to Unix socket, no extra ports exposed
-- **Config:** TOML files
-- **Protocol:** msgpack over Unix socket — streaming for live metrics/logs, request-response for historical queries
+## Agent Configuration
 
-## Agent Config
+The agent config lives at `/etc/tori/config.toml`. All fields have sensible defaults — an empty config file works out of the box.
 
 ```toml
 # /etc/tori/config.toml
@@ -102,6 +88,7 @@ socket = "/var/run/docker.sock"
 # track all containers by default
 # can be toggled per-container or per-group at runtime via the TUI
 # these filters set the initial state:
+# include = ["myapp-*"]
 # exclude = ["tori-*"]
 
 [collect]
@@ -174,32 +161,34 @@ smtp_port = 587
 from = "tori@example.com"
 to = ["you@example.com"]
 
-[notify.webhook]
-enabled = false
+[[notify.webhooks]]
+enabled = true
 url = "https://hooks.slack.com/services/..."
+# headers = { Authorization = "Bearer token" }
+# template = '{"text": "{{.Subject}}\n{{.Body}}"}'
 ```
 
 Alert conditions use the format `scope.field op value`. Available fields:
 
-| Field | Scope | Type | Description |
-|---|---|---|---|
-| `host.cpu_percent` | host | numeric | CPU usage percentage |
-| `host.memory_percent` | host | numeric | Memory usage percentage |
-| `host.disk_percent` | host | numeric | Disk usage percentage (per-mountpoint) |
-| `host.load1` | host | numeric | 1-minute load average |
-| `host.load5` | host | numeric | 5-minute load average |
-| `host.load15` | host | numeric | 15-minute load average |
-| `host.swap_percent` | host | numeric | Swap usage percentage |
-| `container.cpu_percent` | container | numeric | Container CPU usage |
-| `container.memory_percent` | container | numeric | Container memory usage |
-| `container.state` | container | string | Container state (e.g. `'running'`, `'exited'`) |
-| `container.health` | container | string | Container health (e.g. `'healthy'`, `'unhealthy'`) |
-| `container.restart_count` | container | numeric | Container restart count |
-| `container.exit_code` | container | numeric | Container exit code |
+| Field | Type | Description |
+|---|---|---|
+| `host.cpu_percent` | numeric | CPU usage percentage |
+| `host.memory_percent` | numeric | Memory usage percentage |
+| `host.disk_percent` | numeric | Disk usage percentage (per-mountpoint) |
+| `host.load1` | numeric | 1-minute load average |
+| `host.load5` | numeric | 5-minute load average |
+| `host.load15` | numeric | 15-minute load average |
+| `host.swap_percent` | numeric | Swap usage percentage |
+| `container.cpu_percent` | numeric | Container CPU usage |
+| `container.memory_percent` | numeric | Container memory usage |
+| `container.state` | string | Container state (e.g. `'running'`, `'exited'`) |
+| `container.health` | string | Container health (e.g. `'healthy'`, `'unhealthy'`) |
+| `container.restart_count` | numeric | Container restart count |
+| `container.exit_code` | numeric | Container exit code |
 
 Numeric fields support `>`, `<`, `>=`, `<=`, `==`, `!=`. String fields support `==` and `!=` only, with values in single quotes.
 
-## Client Config
+## Client Configuration
 
 ```toml
 # ~/.config/tori/config.toml
@@ -214,16 +203,13 @@ socket = "/run/tori/tori.sock"
 [servers.staging]
 host = "user@staging.example.com"
 socket = "/run/tori/tori.sock"
-# port = 22
-# identity_file = "~/.ssh/staging_key"
-# auto_connect = true
 
 [display]
 # date_format = "2006-01-02"           # Go time layout (default: ISO date)
 # time_format = "15:04:05"             # Go time layout (default: 24h clock)
 ```
 
-The `[display]` section controls how timestamps appear in logs and alerts. Both fields use [Go time layout](https://pkg.go.dev/time#pkg-constants) strings. Examples:
+The `[display]` section controls how timestamps appear in logs and alerts. Both fields use [Go time layout](https://pkg.go.dev/time#pkg-constants) strings:
 
 | Style | `date_format` | `time_format` |
 |---|---|---|
@@ -231,17 +217,33 @@ The `[display]` section controls how timestamps appear in logs and alerts. Both 
 | US 12h | `01/02` | `3:04PM` |
 | European short | `02 Jan` | `15:04` |
 
-## Deploy — Binary
+## Installation
+
+### Binary
+
+The install script downloads the latest release, creates a `tori` system user, sets up directories, and installs a systemd service:
 
 ```bash
-# Install
-curl -fsSL https://get.toricli.sh | sh
-
-# Start the agent
-tori agent --config /etc/tori/config.toml
+curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sudo sh
 ```
 
-## Deploy — Docker
+To install a specific version:
+
+```bash
+sudo sh install.sh --version v1.0.0
+```
+
+After installation:
+
+```bash
+sudo vim /etc/tori/config.toml        # configure alerts, notifications
+sudo systemctl enable --now tori       # start the agent
+systemctl status tori                  # check it's running
+journalctl -u tori -f                  # follow agent logs
+sudo systemctl reload tori             # reload config without restart (SIGHUP)
+```
+
+### Docker
 
 Build the image:
 
@@ -262,6 +264,14 @@ docker run -d --name tori \
   -v tori-data:/var/lib/tori \
   -v ./config.toml:/etc/tori/config.toml:ro \
   tori
+```
+
+When running via Docker, set the host paths in your config to the mounted locations:
+
+```toml
+[host]
+proc = "/host/proc"
+sys = "/host/sys"
 ```
 
 Or inject the entire config via the `TORI_CONFIG` environment variable (useful for PaaS platforms like Dokploy or Coolify where you don't have easy access to the host filesystem):
@@ -289,19 +299,15 @@ interval = "10s"' \
   tori
 ```
 
-A ready-to-use Docker Compose file is provided at `deploy/docker-compose.yml` with `TORI_CONFIG` pre-filled with sensible defaults.
+A ready-to-use Docker Compose file is provided at `deploy/docker-compose.yml` with `TORI_CONFIG` pre-filled with sensible defaults including alert rules.
 
-When running via Docker, set the host paths in your config to the mounted locations:
+### From Source
 
-```toml
-[host]
-proc = "/host/proc"
-sys = "/host/sys"
+```bash
+go build -o tori ./cmd/tori
 ```
 
-The socket is mounted to `/run/tori` on the host so `tori` can find it over SSH as usual.
-
-## Connect
+## Connecting
 
 ```bash
 # Connect to all configured servers
@@ -316,14 +322,59 @@ tori user@host --port 2222
 # With specific key
 tori user@host --identity ~/.ssh/id_ed25519
 
-# Custom remote socket
+# Custom remote socket path
 tori user@host --remote-socket /custom/tori.sock
 
-# Direct local socket
+# Direct local socket (no SSH)
 tori --socket /run/tori/tori.sock
 ```
 
-When connected to multiple servers, press `S` to open the server picker and switch between them. Each server has isolated data — switching is instant since all sessions receive data concurrently.
+When connected to multiple servers, use `Tab` to focus the servers panel, then `j`/`k` and `Enter` to switch. Each server has isolated data — switching is instant since all sessions receive data concurrently.
+
+## Keybindings
+
+### Global
+
+| Key | Action |
+|-----|--------|
+| `1` | Dashboard view |
+| `2` | Alerts view |
+| `+`/`-` | Zoom time window |
+| `?` | Help |
+| `q` | Quit |
+
+### Dashboard
+
+| Key | Action |
+|-----|--------|
+| `Tab` | Cycle focus between panels |
+| `j`/`k` | Navigate up/down |
+| `Enter` | Select / expand |
+| `Space` | Collapse/expand compose group |
+| `t` | Toggle tracking for container/group |
+
+### Alerts
+
+| Key | Action |
+|-----|--------|
+| `Tab` | Toggle focus between alerts and rules |
+| `j`/`k` | Navigate up/down |
+| `Enter` | Expand alert details |
+| `a` | Acknowledge alert |
+| `s` | Silence alert/rule |
+| `r` | Show/hide resolved alerts |
+| `g` | Go to container |
+
+### Detail View (Logs + Metrics)
+
+| Key | Action |
+|-----|--------|
+| `j`/`k` | Scroll logs |
+| `Enter` | Expand log entry |
+| `s` | Cycle stream filter (all/stdout/stderr) |
+| `f` | Open log filter |
+| `g` | Cycle project filter |
+| `Esc` | Back to dashboard |
 
 ## Security
 
@@ -337,49 +388,9 @@ When connected to multiple servers, press `S` to open the server picker and swit
 
 **Log contents:** Tori stores container logs in SQLite. These may contain sensitive application data (tokens, user info, errors with PII). The database file at `/var/lib/tori/tori.db` should have restrictive permissions and the retention policy should be set appropriately.
 
-## Protocol
+## Requirements
 
-The TUI client communicates with the agent over a Unix socket using msgpack-encoded messages.
-
-**Streaming subscriptions** (agent pushes to client):
-
-- `subscribe:metrics` — live host + container metrics
-- `subscribe:logs` — live log stream, supports filters (container, compose group, stream, text search)
-- `subscribe:alerts` — live alert events
-- `subscribe:containers` — real-time container lifecycle events (start, die, destroy, etc.)
-
-**Request-response** (client asks, agent replies):
-
-- `query:metrics` — historical metrics for a time range
-- `query:logs` — historical logs with filters (container, compose group, stream, text search, time range)
-- `query:alerts` — alert history
-- `query:containers` — current container list and status, grouped by compose project
-- `action:ack_alert` — acknowledge an alert
-- `action:silence_alert` — silence an alert rule for a duration
-- `action:set_tracking` — enable/disable metric collection, log tailing, and alerting for a container or compose group
-
-## Milestone Plan
-
-**M1 — Agent foundation** (done):
-Host metric collection, Docker container discovery and stats, SQLite storage, config loading.
-
-**M2 — Alerting** (done):
-Alert rule evaluation, email/SMTP notifications, alert persistence.
-
-**M3 — Protocol + socket** (done):
-Unix socket server, msgpack protocol, streaming and request-response handlers.
-
-**M4 — TUI client** (done):
-SSH tunnel management, dashboard view (containers + host metrics), log viewer with filtering, alert history view, Docker events watcher for real-time container state.
-
-**M5 — Multi-server + tracking toggle** (done):
-Client-side server config, server switcher in TUI, concurrent connections. Per-container and per-group runtime tracking toggle via `t` key.
-
-**M6 — Polish:**
-Webhook/Slack notifications, config reload without restart, install script.
-
-**Future:**
-Custom TUI themes via `~/.config/tori/theme.toml`, built-in theme presets (monokai, nord, solarized).
-Filter logs by date from/to
-Log based alerts for matching keywords
-Which log message triggered an alert display/log entry highlight
+- Linux (the agent reads from `/proc` and `/sys`)
+- Docker (for container monitoring)
+- SSH access to the server (for remote connections)
+- Go 1.25+ (build from source only)
