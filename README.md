@@ -252,7 +252,7 @@ sudo systemctl reload tori             # reload config without restart (SIGHUP)
 
 ### Client (your machine)
 
-Install just the client binary — no root required, works on Linux and macOS:
+Install just the client binary — no root required, works on Linux and macOS (Windows via WSL):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client
