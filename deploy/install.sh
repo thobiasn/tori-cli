@@ -95,11 +95,39 @@ info "installing tori ${VERSION} (${OS}/${ARCH})"
 FILE_VERSION="${VERSION#v}"
 DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/tori_${FILE_VERSION}_${OS}_${ARCH}"
 
+BINARY_NAME="tori_${FILE_VERSION}_${OS}_${ARCH}"
+CHECKSUMS_URL="https://github.com/${REPO}/releases/download/${VERSION}/checksums.txt"
+
 info "downloading ${DOWNLOAD_URL}..."
 TMP=$(mktemp)
-trap 'rm -f "$TMP"' EXIT
+TMP_CHECKSUMS=$(mktemp)
+trap 'rm -f "$TMP" "$TMP_CHECKSUMS"' EXIT
 
 fetch -o "$TMP" "$DOWNLOAD_URL"
+
+# --- Verify checksum ---
+
+info "verifying checksum..."
+fetch -o "$TMP_CHECKSUMS" "$CHECKSUMS_URL"
+
+EXPECTED=$(grep "  ${BINARY_NAME}\$" "$TMP_CHECKSUMS" | cut -d' ' -f1)
+if [ -z "$EXPECTED" ]; then
+    die "binary ${BINARY_NAME} not found in checksums.txt"
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL=$(sha256sum "$TMP" | cut -d' ' -f1)
+elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL=$(shasum -a 256 "$TMP" | cut -d' ' -f1)
+else
+    die "sha256sum or shasum required for checksum verification"
+fi
+
+if [ "$ACTUAL" != "$EXPECTED" ]; then
+    die "checksum mismatch (expected ${EXPECTED}, got ${ACTUAL})"
+fi
+info "checksum verified"
+
 chmod +x "$TMP"
 
 # --- Client-only install ---
@@ -115,6 +143,7 @@ if [ "$CLIENT_ONLY" = true ]; then
 
     mv "$TMP" "${INSTALL_DIR}/tori"
     chmod 755 "${INSTALL_DIR}/tori"
+    rm -f "$TMP_CHECKSUMS"
     trap - EXIT
     info "installed client to ${INSTALL_DIR}/tori"
 
@@ -147,6 +176,7 @@ SERVICE_FILE="/etc/systemd/system/tori.service"
 
 mv "$TMP" "${INSTALL_DIR}/tori"
 chmod 755 "${INSTALL_DIR}/tori"
+rm -f "$TMP_CHECKSUMS"
 trap - EXIT
 info "installed binary to ${INSTALL_DIR}/tori"
 
