@@ -174,15 +174,27 @@ func runClient(args []string) {
 
 	switch act.mode {
 	case "socket":
-		runSingleSession("local", act.socketPath, nil)
-
-	case "ssh":
-		tunnel, err := tui.NewTunnel(act.host, act.remoteSock, act.sshOpts)
+		conn, err := net.Dial("unix", act.socketPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "tunnel: %v\n", err)
+			fmt.Fprintf(os.Stderr, "connect: %v\n", err)
 			os.Exit(1)
 		}
-		runSingleSession(act.host, tunnel.LocalSocket(), tunnel)
+		client := tui.NewClient(conn, "local")
+		sess := tui.NewSession("local", client, nil)
+		sess.ConnState = tui.ConnReady
+		sess.ConnMsg = "connected"
+		runSessions(map[string]*tui.Session{"local": sess}, defaultDisplayConfig())
+
+	case "ssh":
+		sess := tui.NewSession(act.host, nil, nil)
+		sess.Config = tui.ServerConfig{
+			Host:         act.host,
+			Socket:       act.remoteSock,
+			Port:         act.sshOpts.Port,
+			IdentityFile: act.sshOpts.IdentityFile,
+			AutoConnect:  true,
+		}
+		runSessions(map[string]*tui.Session{act.host: sess}, defaultDisplayConfig())
 
 	case "config":
 		cfgPath, err := tui.EnsureDefaultConfig(act.configPath)
@@ -239,23 +251,6 @@ func runClient(args []string) {
 // that bypass the config file.
 func defaultDisplayConfig() tui.DisplayConfig {
 	return tui.DisplayConfig{DateFormat: "2006-01-02", TimeFormat: "15:04:05"}
-}
-
-func runSingleSession(name, sockPath string, tunnel *tui.Tunnel) {
-	conn, err := net.Dial("unix", sockPath)
-	if err != nil {
-		if tunnel != nil {
-			tunnel.Close()
-		}
-		fmt.Fprintf(os.Stderr, "connect: %v\n", err)
-		os.Exit(1)
-	}
-
-	client := tui.NewClient(conn, name)
-	sess := tui.NewSession(name, client, tunnel)
-	sess.ConnState = tui.ConnReady
-	sess.ConnMsg = "connected"
-	runSessions(map[string]*tui.Session{name: sess}, defaultDisplayConfig())
 }
 
 func runSessions(sessions map[string]*tui.Session, display tui.DisplayConfig) {

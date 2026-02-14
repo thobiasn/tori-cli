@@ -663,7 +663,7 @@ func (a *App) renderSSHPromptModal(width, height int) string {
 	theme := &a.theme
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 
-	modalW := 60
+	modalW := 72
 	if modalW > width-4 {
 		modalW = width - 4
 	}
@@ -682,17 +682,19 @@ func (a *App) renderSSHPromptModal(width, height int) string {
 	if p.hostKey {
 		lines = append(lines, " "+lipgloss.NewStyle().Foreground(theme.Warning).Render("y")+" Accept   "+lipgloss.NewStyle().Foreground(theme.Critical).Render("n")+" Reject")
 	} else {
-		// Input field.
+		// Input field with prompt.
 		display := string(p.input)
 		if p.masked {
 			display = strings.Repeat("*", len(p.input))
 		}
 		cursor := lipgloss.NewStyle().Foreground(theme.Accent).Render("█")
-		fieldW := innerW - 4
+		prompt := muted.Render(" > ")
+		promptW := lipgloss.Width(prompt)
+		fieldW := innerW - promptW - 2
 		if len(display) > fieldW {
 			display = display[len(display)-fieldW:]
 		}
-		lines = append(lines, "  "+display+cursor)
+		lines = append(lines, prompt+display+cursor)
 	}
 
 	content := strings.Join(lines, "\n")
