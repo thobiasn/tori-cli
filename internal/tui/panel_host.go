@@ -190,7 +190,7 @@ func formatAutoLabel(v float64) string {
 func renderCPUPanel(cpuHistory []float64, host *protocol.HostMetrics, rc RenderContext) string {
 	title := "Host CPU · " + rc.WindowLabel
 	if host == nil {
-		return Box(title, "  waiting for data...", rc.Width, rc.Height, rc.Theme)
+		return Box(title, SpinnerViewCentered(rc.SpinnerFrame, "waiting for data...", rc.Theme, rc.Width-2, rc.Height-2), rc.Width, rc.Height, rc.Theme)
 	}
 
 	innerW := rc.Width - 2
@@ -241,7 +241,7 @@ func memDivider(label, value string, width int, labelColor lipgloss.Color, theme
 func renderMemPanel(host *protocol.HostMetrics, usedHistory []float64, rc RenderContext) string {
 	title := "Host Memory · " + rc.WindowLabel
 	if host == nil {
-		return Box(title, "  waiting for data...", rc.Width, rc.Height, rc.Theme)
+		return Box(title, SpinnerViewCentered(rc.SpinnerFrame, "waiting for data...", rc.Theme, rc.Width-2, rc.Height-2), rc.Width, rc.Height, rc.Theme)
 	}
 
 	innerW := rc.Width - 2

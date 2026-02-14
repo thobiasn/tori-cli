@@ -160,7 +160,7 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		leftW := hostW * 65 / 100
 		rightW := hostW - leftW
 
-		cpuPanel := renderCPUPanel(cpuHistory, s.Host, RenderContext{Width: leftW, Height: cpuH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
+		cpuPanel := renderCPUPanel(cpuHistory, s.Host, RenderContext{Width: leftW, Height: cpuH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds(), SpinnerFrame: a.spinnerFrame})
 		// Split right column: memory on top, disks on bottom.
 		diskH := len(s.Disks)*3 + 2 // 3 lines per disk (divider + used + free) + borders
 		if s.Host != nil && s.Host.SwapTotal > 0 {
@@ -178,7 +178,7 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 			diskH = cpuH - memH
 		}
 
-		memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), RenderContext{Width: rightW, Height: memH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
+		memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), RenderContext{Width: rightW, Height: memH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds(), SpinnerFrame: a.spinnerFrame})
 		var swapTotal, swapUsed uint64
 		if s.Host != nil {
 			swapTotal, swapUsed = s.Host.SwapTotal, s.Host.SwapUsed
@@ -242,8 +242,8 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 	if s.Host != nil {
 		swapTotal2, swapUsed2 = s.Host.SwapTotal, s.Host.SwapUsed
 	}
-	cpuPanel := renderCPUPanel(cpuHistory, s.Host, RenderContext{Width: width, Height: cpuPanelH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
-	memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), RenderContext{Width: width, Height: narrowMemH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds()})
+	cpuPanel := renderCPUPanel(cpuHistory, s.Host, RenderContext{Width: width, Height: cpuPanelH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds(), SpinnerFrame: a.spinnerFrame})
+	memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), RenderContext{Width: width, Height: narrowMemH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds(), SpinnerFrame: a.spinnerFrame})
 	diskPanel := renderDiskPanel(s.Disks, swapTotal2, swapUsed2, width, diskH, theme)
 	alertPanel := renderAlertPanel(alertPanelOpts{
 		alerts: s.Alerts, width: width, height: alertH, theme: theme,
@@ -314,9 +314,15 @@ func renderServerPanel(a *App, height, width int) string {
 		if statusMsg == "" {
 			statusMsg = "not connected"
 		}
+		isConnecting := sess.ConnState == ConnConnecting || sess.ConnState == ConnSSH
 		statusW := innerW - 3 // 3-char indent
-		for _, chunk := range wrapText(statusMsg, statusW) {
-			line := "   " + muted.Render(chunk)
+		for j, chunk := range wrapText(statusMsg, statusW) {
+			var line string
+			if j == 0 && isConnecting {
+				line = " " + SpinnerView(a.spinnerFrame, chunk, theme)
+			} else {
+				line = "   " + muted.Render(chunk)
+			}
 			if isCursor {
 				line = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(line), innerW))
 			}

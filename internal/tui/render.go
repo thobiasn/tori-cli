@@ -13,11 +13,12 @@ import (
 
 // RenderContext carries shared rendering state passed through panel functions.
 type RenderContext struct {
-	Width       int
-	Height      int
-	Theme       *Theme
-	WindowLabel string
-	WindowSec   int64
+	Width        int
+	Height       int
+	Theme        *Theme
+	WindowLabel  string
+	WindowSec    int64
+	SpinnerFrame int
 }
 
 // Overlay composites fg centered on top of bg. Both strings are

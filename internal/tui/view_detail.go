@@ -321,9 +321,9 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 	}
 	graphW := width - infoW
 
-	infoBox := renderDetailInfoBox(s, det, title, RenderContext{Width: infoW, Height: metricsH, Theme: theme})
+	infoBox := renderDetailInfoBox(s, det, title, RenderContext{Width: infoW, Height: metricsH, Theme: theme, SpinnerFrame: a.spinnerFrame})
 
-	rc := RenderContext{Width: graphW, Height: metricsH, Theme: theme, WindowLabel: a.windowLabel(), WindowSec: a.windowSeconds()}
+	rc := RenderContext{Width: graphW, Height: metricsH, Theme: theme, WindowLabel: a.windowLabel(), WindowSec: a.windowSeconds(), SpinnerFrame: a.spinnerFrame}
 	graphs := renderDetailMetrics(s, det, cm, rc)
 
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, infoBox, graphs)
@@ -405,7 +405,7 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 
 	tableBox := renderDetailContainersBox(s, det, title, tableW, metricsH, theme)
 
-	rc := RenderContext{Width: graphW, Height: metricsH, Theme: theme, WindowLabel: a.windowLabel(), WindowSec: a.windowSeconds()}
+	rc := RenderContext{Width: graphW, Height: metricsH, Theme: theme, WindowLabel: a.windowLabel(), WindowSec: a.windowSeconds(), SpinnerFrame: a.spinnerFrame}
 	graphs := renderDetailGroupMetrics(s, det, rc)
 
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, tableBox, graphs)
@@ -497,7 +497,8 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, rc RenderContext) st
 
 func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMetrics, rc RenderContext) string {
 	if cm == nil {
-		return "  Waiting for metrics..."
+		return lipgloss.Place(rc.Width, rc.Height, lipgloss.Center, lipgloss.Center,
+			SpinnerView(rc.SpinnerFrame, "Waiting for metrics...", rc.Theme))
 	}
 	theme := rc.Theme
 
@@ -561,7 +562,7 @@ func renderDetailInfoBox(s *Session, det *DetailState, title string, rc RenderCo
 	}
 
 	if cm == nil {
-		return Box(title, "  Waiting...", rc.Width, rc.Height, theme)
+		return Box(title, SpinnerViewCentered(rc.SpinnerFrame, "Waiting...", theme, rc.Width-2, rc.Height-2), rc.Width, rc.Height, theme)
 	}
 	innerW := rc.Width - 2
 

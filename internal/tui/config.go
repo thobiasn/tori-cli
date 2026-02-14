@@ -43,23 +43,19 @@ const defaultConfigContent = `# Tori client configuration.
 # Add servers below. Each server needs either a socket path (local)
 # or a host (SSH). See README.md for full documentation.
 #
-# Examples:
-#   [servers.local]
-#   socket = "/run/tori/tori.sock"
+# [servers.local]
+# socket = "/run/tori/tori.sock"
 #
-#   [servers.production]
-#   host = "user@example.com"
-#   # port = 22
-#   # socket = "/run/tori/tori.sock"
-#   # identity_file = "~/.ssh/id_ed25519"
-#   # auto_connect = true
+# [servers.production]
+# host = "user@example.com"
+# port = 22
+# socket = "/run/tori/tori.sock"
+# identity_file = "~/.ssh/id_ed25519"
+# auto_connect = true
 #
 # [display]
 # date_format = "2006-01-02"   # Go time layout
 # time_format = "15:04:05"     # Go time layout
-
-[servers.local]
-socket = "/run/tori/tori.sock"
 `
 
 // EnsureDefaultConfig creates the default config file if it does not exist.
@@ -93,9 +89,6 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.Display.TimeFormat == "" {
 		cfg.Display.TimeFormat = "15:04:05"
-	}
-	if len(cfg.Servers) == 0 {
-		return nil, fmt.Errorf("load config: no servers defined")
 	}
 	for name, srv := range cfg.Servers {
 		if srv.Socket == "" && srv.Host == "" {

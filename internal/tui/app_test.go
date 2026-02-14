@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -263,11 +264,11 @@ func TestAppWindowSize(t *testing.T) {
 func TestAppViewRendersWithoutPanic(t *testing.T) {
 	a := newTestApp()
 
-	// Connecting state.
+	// Connecting state (with animated bird spinner).
 	a.width = 0
 	a.height = 0
 	v := a.View()
-	if v != "Connecting..." {
+	if !strings.Contains(v, "Connecting...") {
 		t.Errorf("zero size should show connecting, got %q", v)
 	}
 

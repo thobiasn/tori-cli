@@ -70,6 +70,9 @@ curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/insta
 
 ```bash
 tori user@your-server
+
+# or edit ~/.config/tori/config.toml and just
+tori
 ```
 
 ## Agent Configuration

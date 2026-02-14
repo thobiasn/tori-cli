@@ -208,7 +208,10 @@ func runClient(args []string) {
 			os.Exit(1)
 		}
 		if len(cfg.Servers) == 0 {
-			fmt.Fprintf(os.Stderr, "no servers configured\n")
+			fmt.Fprintf(os.Stderr, "No servers configured in %s\n\n", cfgPath)
+			fmt.Fprintf(os.Stderr, "Add a server to the config file, or connect directly:\n")
+			fmt.Fprintf(os.Stderr, "  tori user@host            # connect over SSH\n")
+			fmt.Fprintf(os.Stderr, "  tori --socket /path.sock  # connect to local socket\n")
 			os.Exit(1)
 		}
 

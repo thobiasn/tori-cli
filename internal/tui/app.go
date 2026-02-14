@@ -91,6 +91,8 @@ type App struct {
 
 	displayCfg DisplayConfig // date/time format config
 
+	spinnerFrame int // current bird spinner frame index
+
 	// Lazy connection state.
 	ctx              *appCtx          // shared program reference
 	sshPrompt        *sshPromptState  // active SSH prompt modal (nil = none)
@@ -192,6 +194,7 @@ func queryContainersCmd(c *Client) tea.Cmd {
 
 func (a App) Init() tea.Cmd {
 	var cmds []tea.Cmd
+	cmds = append(cmds, spinnerTick())
 
 	// Subscribe already-connected sessions.
 	for _, s := range a.sessions {
@@ -534,6 +537,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			s.Detail.metricsBackfillPending = false
 		}
 		return a, nil
+
+	case spinnerTickMsg:
+		a.spinnerFrame++
+		return a, spinnerTick()
 
 	case tea.KeyMsg:
 		// SSH prompt modal intercepts all keys.
@@ -966,7 +973,7 @@ func (a App) View() string {
 		return fmt.Sprintf("Error: %v\n", a.err)
 	}
 	if a.width == 0 || a.height == 0 {
-		return "Connecting..."
+		return SpinnerView(a.spinnerFrame, "Connecting...", &a.theme)
 	}
 
 	s := a.session()
