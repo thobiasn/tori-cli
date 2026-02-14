@@ -4,6 +4,8 @@ Lightweight server monitoring for Docker environments. A single binary that repl
 
 ![Tori demo](https://github.com/user-attachments/assets/35df5fe1-e61a-4ccc-be34-a31c7a0ea6aa)
 
+This project is still very much in development and being tested. I was frustrated that I couldn't find the monitoring/alerting solution that was just right for small scale hosting on a single or multiple VPSs so I decided to build the thing that was just right for my needs. What I'm saying is that you should use this at your own risk, feel free to open issues if you encounter something but don't expect a professional team to solve your specific needs.
+
 ## Features
 
 - Host metrics — CPU, memory, disk, network, swap, load averages
