@@ -1,8 +1,6 @@
 services:
   tori:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
+    image: ghcr.io/thobiasn/tori-cli:latest
     restart: unless-stopped
     pid: host
     volumes:

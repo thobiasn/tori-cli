@@ -1,0 +1,65 @@
+version: 2
+
+before:
+  hooks:
+    - go vet ./...
+
+builds:
+  - id: tori
+    main: ./cmd/tori
+    binary: tori
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - format: binary
+    name_template: "tori_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+dockers:
+  - id: linux-amd64
+    goos: linux
+    goarch: amd64
+    ids:
+      - tori
+    image_templates:
+      - "ghcr.io/thobiasn/tori-cli:{{ .Version }}-amd64"
+    dockerfile: deploy/Dockerfile.release
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+    extra_files:
+      - deploy/entrypoint.sh
+  - id: linux-arm64
+    goos: linux
+    goarch: arm64
+    ids:
+      - tori
+    image_templates:
+      - "ghcr.io/thobiasn/tori-cli:{{ .Version }}-arm64"
+    dockerfile: deploy/Dockerfile.release
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64"
+    extra_files:
+      - deploy/entrypoint.sh
+
+docker_manifests:
+  - name_template: "ghcr.io/thobiasn/tori-cli:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/thobiasn/tori-cli:{{ .Version }}-amd64"
+      - "ghcr.io/thobiasn/tori-cli:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/thobiasn/tori-cli:latest"
+    image_templates:
+      - "ghcr.io/thobiasn/tori-cli:{{ .Version }}-amd64"
+      - "ghcr.io/thobiasn/tori-cli:{{ .Version }}-arm64"

@@ -18,10 +18,18 @@ import (
 	"github.com/thobiasn/tori-cli/internal/tui"
 )
 
+// version is set via -ldflags at build time. GoReleaser fills this automatically.
+var version = "dev"
+
 func main() {
 	// Askpass mode: when invoked as SSH_ASKPASS, relay prompt over IPC.
 	if sock := os.Getenv("TORI_ASKPASS_SOCK"); sock != "" {
 		runAskpass(sock)
+		return
+	}
+
+	if len(os.Args) >= 2 && os.Args[1] == "--version" {
+		fmt.Println("tori " + version)
 		return
 	}
 

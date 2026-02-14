@@ -1,7 +1,9 @@
 .PHONY: build test vet clean
 
+VERSION ?= dev
+
 build:
-	go build -o tori ./cmd/tori
+	go build -ldflags="-X main.version=$(VERSION)" -o tori ./cmd/tori
 
 test:
 	go test -race ./...

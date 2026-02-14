@@ -1,0 +1,7 @@
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates
+COPY tori /usr/local/bin/tori
+COPY deploy/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["tori", "agent", "--config", "/etc/tori/config.toml"]

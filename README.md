@@ -42,7 +42,7 @@ The agent runs on your server collecting metrics and evaluating alerts 24/7. The
 │  └───────────────────────────────────────┘  │
 │       │                │                    │
 │       ▼                ▼                    │
-│  Docker socket    /proc, /sys              │
+│  Docker socket    /proc, /sys               │
 └─────────────────────────────────────────────┘
 ```
 
@@ -245,10 +245,8 @@ sudo systemctl reload tori             # reload config without restart (SIGHUP)
 
 ### Docker
 
-Build the image:
-
 ```bash
-docker build -f deploy/Dockerfile -t tori .
+docker pull ghcr.io/thobiasn/tori-cli:latest
 ```
 
 Run with a config file on the host:
@@ -263,7 +261,7 @@ docker run -d --name tori \
   -v /run/tori:/run/tori \
   -v tori-data:/var/lib/tori \
   -v ./config.toml:/etc/tori/config.toml:ro \
-  tori
+  ghcr.io/thobiasn/tori-cli:latest
 ```
 
 When running via Docker, set the host paths in your config to the mounted locations:
@@ -296,10 +294,16 @@ sys = "/host/sys"
 socket = "/var/run/docker.sock"
 [collect]
 interval = "10s"' \
-  tori
+  ghcr.io/thobiasn/tori-cli:latest
 ```
 
 A ready-to-use Docker Compose file is provided at `deploy/docker-compose.yml` with `TORI_CONFIG` pre-filled with sensible defaults including alert rules.
+
+To build from source as a Docker image instead:
+
+```bash
+docker build -f deploy/Dockerfile -t tori .
+```
 
 ### From Source
 
