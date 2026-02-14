@@ -447,7 +447,7 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 
 	// Expand modal captures all keys when open.
 	if det.expandModal != nil {
-		return updateExpandModal(det, key)
+		return updateExpandModal(det, a, s, key)
 	}
 
 	// Filter modal captures all keys when open.
@@ -514,40 +514,7 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 	}
 
 	data := det.filteredData()
-	// Compute innerH for cursor bounds (must match renderDetailSingle/Group).
-	contentH := a.height - 2
-	metricsH := contentH / 4
-	if metricsH < 11 {
-		metricsH = 11
-	}
-	logH := contentH - metricsH
-	if logH < 5 {
-		logH = 5
-	}
-	// Account for alert box height (same as renderDetail).
-	var alertCount int
-	if det.isGroupMode() {
-		for _, id := range det.projectIDs {
-			alertCount += len(containerAlerts(s.Alerts, id))
-		}
-	} else {
-		alertCount = len(containerAlerts(s.Alerts, det.containerID))
-	}
-	if alertCount > 0 {
-		alertH := alertCount + 2
-		maxAlertH := contentH / 6
-		if maxAlertH > 2 && alertH > maxAlertH {
-			alertH = maxAlertH
-		}
-		logH -= alertH
-		if logH < 3 {
-			logH = 3
-		}
-	}
-	innerH := logH - 2 // box borders
-	if innerH < 1 {
-		innerH = 1
-	}
+	innerH := detailLogInnerH(a, det, s)
 
 	visibleCount := len(data)
 	if visibleCount > innerH {
@@ -656,18 +623,105 @@ func updateFilterModal(det *DetailState, key string, cfg DisplayConfig) tea.Cmd 
 	return nil
 }
 
+// detailLogInnerH computes the visible log line count (must match renderDetailSingle/Group).
+func detailLogInnerH(a *App, det *DetailState, s *Session) int {
+	contentH := a.height - 2
+	metricsH := contentH / 4
+	if metricsH < 11 {
+		metricsH = 11
+	}
+	logH := contentH - metricsH
+	if logH < 5 {
+		logH = 5
+	}
+	var alertCount int
+	if det.isGroupMode() {
+		for _, id := range det.projectIDs {
+			alertCount += len(containerAlerts(s.Alerts, id))
+		}
+	} else {
+		alertCount = len(containerAlerts(s.Alerts, det.containerID))
+	}
+	if alertCount > 0 {
+		alertH := alertCount + 2
+		maxAlertH := contentH / 6
+		if maxAlertH > 2 && alertH > maxAlertH {
+			alertH = maxAlertH
+		}
+		logH -= alertH
+		if logH < 3 {
+			logH = 3
+		}
+	}
+	innerH := logH - 2
+	if innerH < 1 {
+		innerH = 1
+	}
+	return innerH
+}
+
 // updateExpandModal handles keys inside the log expand modal.
-func updateExpandModal(det *DetailState, key string) tea.Cmd {
+func updateExpandModal(det *DetailState, a *App, s *Session, key string) tea.Cmd {
 	m := det.expandModal
 	switch key {
 	case "esc", "enter":
 		det.expandModal = nil
-	case "j", "down":
+	case "n":
 		m.scroll++
-	case "k", "up":
+	case "p":
 		if m.scroll > 0 {
 			m.scroll--
 		}
+	case "j", "k", "down", "up":
+		data := det.filteredData()
+		if len(data) == 0 {
+			return nil
+		}
+		innerH := detailLogInnerH(a, det, s)
+		// Resolve current absolute index.
+		end := len(data) - det.logScroll
+		if end > len(data) {
+			end = len(data)
+		}
+		start := end - innerH
+		if start < 0 {
+			start = 0
+		}
+		idx := start + det.logCursor
+		// Move to next or previous entry.
+		if key == "j" || key == "down" {
+			if idx+1 >= len(data) {
+				return nil
+			}
+			idx++
+			// Advance cursor or scroll.
+			visibleCount := len(data)
+			if visibleCount > innerH {
+				visibleCount = innerH
+			}
+			if det.logCursor < visibleCount-1 {
+				det.logCursor++
+			} else if det.logScroll > 0 {
+				det.logScroll--
+			}
+		} else {
+			if idx <= 0 {
+				return nil
+			}
+			idx--
+			// Move cursor or scroll.
+			maxScroll := len(data) - innerH
+			if maxScroll < 0 {
+				maxScroll = 0
+			}
+			if det.logCursor > 0 {
+				det.logCursor--
+			} else if det.logScroll < maxScroll {
+				det.logScroll++
+			}
+		}
+		m.entry = data[idx]
+		m.scroll = 0
 	}
 	return nil
 }
@@ -694,7 +748,7 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, tsFor
 	muted := lipgloss.NewStyle().Foreground(theme.Muted)
 	label := lipgloss.NewStyle().Foreground(theme.Muted)
 
-	footerLine := " " + muted.Render("j/k Scroll  Esc Close")
+	footerLine := " " + muted.Render("j/k Next/Prev  n/p Scroll  Esc Close")
 
 	// Metadata header.
 	var header []string

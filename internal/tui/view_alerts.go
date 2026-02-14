@@ -438,14 +438,14 @@ func alertInstanceContainerID(instanceKey string) string {
 }
 
 // updateAlertExpandModal handles keys inside the alert expand modal.
-func updateAlertExpandModal(av *AlertViewState, key string) tea.Cmd {
+func updateAlertExpandModal(av *AlertViewState, s *Session, key string) tea.Cmd {
 	m := av.expandModal
 	switch key {
 	case "esc", "enter":
 		av.expandModal = nil
-	case "j", "down":
+	case "n":
 		m.scroll++
-	case "k", "up":
+	case "p":
 		if m.scroll > 0 {
 			m.scroll--
 		}
@@ -453,6 +453,29 @@ func updateAlertExpandModal(av *AlertViewState, key string) tea.Cmd {
 		if cid := alertInstanceContainerID(m.alert.InstanceKey); cid != "" {
 			av.expandModal = nil
 			return func() tea.Msg { return alertGoToContainerMsg{containerID: cid} }
+		}
+	case "j", "k", "down", "up":
+		items := buildSectionItems(av.alerts, av.showResolved)
+		if key == "j" || key == "down" {
+			for i := av.cursor + 1; i < len(items); i++ {
+				if !items[i].isHeader {
+					av.cursor = i
+					m.alert = items[i].alert
+					m.server = s.Name
+					m.scroll = 0
+					return nil
+				}
+			}
+		} else {
+			for i := av.cursor - 1; i >= 0; i-- {
+				if !items[i].isHeader {
+					av.cursor = i
+					m.alert = items[i].alert
+					m.server = s.Name
+					m.scroll = 0
+					return nil
+				}
+			}
 		}
 	}
 	return nil
@@ -481,7 +504,7 @@ func renderAlertExpandModal(m *alertExpandModal, width, height int, theme *Theme
 	label := lipgloss.NewStyle().Foreground(theme.Muted)
 
 	// Inline footer.
-	footer := "j/k Scroll  Esc Close"
+	footer := "j/k Next/Prev  n/p Scroll  Esc Close"
 	if alertInstanceContainerID(m.alert.InstanceKey) != "" {
 		footer += "  g Container"
 	}
@@ -578,7 +601,7 @@ func updateAlertView(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 
 	// Modal captures all keys when open.
 	if av.expandModal != nil {
-		return updateAlertExpandModal(av, key)
+		return updateAlertExpandModal(av, s, key)
 	}
 	if av.silenceMode {
 		return updateSilencePicker(s, av, key)
