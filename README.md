@@ -75,6 +75,19 @@ tori user@your-server
 tori
 ```
 
+## Updating
+
+Re-run the same install command to update to the latest version. Existing configs are preserved.
+
+```bash
+# Agent (then restart the service)
+curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sudo sh
+sudo systemctl restart tori
+
+# Client
+curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client
+```
+
 ## Agent Configuration
 
 The agent config lives at `/etc/tori/config.toml`. All fields have sensible defaults — an empty config file works out of the box.
