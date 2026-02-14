@@ -348,6 +348,18 @@ docker build -f deploy/Dockerfile -t tori .
 go build -o tori ./cmd/tori
 ```
 
+## Uninstall
+
+```bash
+sudo systemctl disable --now tori
+sudo rm /usr/local/bin/tori
+sudo rm /etc/systemd/system/tori.service
+sudo rm -rf /etc/tori /var/lib/tori /run/tori
+sudo userdel tori
+```
+
+For client-only installs, just remove the binary (`~/.local/bin/tori` or `/usr/local/bin/tori`) and config (`~/.config/tori/`).
+
 ## Connecting
 
 ```bash
