@@ -53,14 +53,35 @@ func NewNotifier(cfg *NotifyConfig) *Notifier {
 	return &Notifier{channels: channels}
 }
 
-// Send dispatches the alert to all enabled channels. Errors are logged, never returned —
-// alerting must not block the collect loop.
+// Send dispatches the alert to all enabled channels with retry. Errors are logged,
+// never returned — alerting must not block the collect loop.
 func (n *Notifier) Send(ctx context.Context, subject, body string) {
 	for _, ch := range n.channels {
-		if err := ch.Send(ctx, subject, body); err != nil {
-			slog.Error("notification failed", "error", err)
+		sendWithRetry(ctx, ch, subject, body)
+	}
+}
+
+// sendWithRetry attempts to send a notification up to 3 times with backoff (1s, 3s).
+// Retries abort early if ctx is cancelled.
+func sendWithRetry(ctx context.Context, ch Channel, subject, body string) {
+	backoffs := []time.Duration{1 * time.Second, 3 * time.Second}
+	var err error
+	for attempt := range 3 {
+		err = ch.Send(ctx, subject, body)
+		if err == nil {
+			return
+		}
+		if attempt < len(backoffs) {
+			slog.Warn("notification failed, retrying", "error", err, "attempt", attempt+1)
+			select {
+			case <-ctx.Done():
+				slog.Error("notification retry aborted", "error", ctx.Err())
+				return
+			case <-time.After(backoffs[attempt]):
+			}
 		}
 	}
+	slog.Error("notification failed after 3 attempts", "error", err)
 }
 
 // emailChannel sends notifications via SMTP.

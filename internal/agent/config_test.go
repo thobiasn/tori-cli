@@ -370,6 +370,94 @@ url = "http://example.com/hook"
 	}
 }
 
+func TestEmailValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  string
+		wantErr bool
+	}{
+		{
+			name: "valid email config",
+			config: `
+[notify.email]
+enabled = true
+smtp_host = "smtp.example.com"
+smtp_port = 587
+from = "alerts@example.com"
+to = ["admin@example.com"]
+`,
+		},
+		{
+			name: "disabled email no fields required",
+			config: `
+[notify.email]
+enabled = false
+`,
+		},
+		{
+			name: "enabled missing smtp_host",
+			config: `
+[notify.email]
+enabled = true
+smtp_port = 587
+from = "alerts@example.com"
+to = ["admin@example.com"]
+`,
+			wantErr: true,
+		},
+		{
+			name: "enabled missing from",
+			config: `
+[notify.email]
+enabled = true
+smtp_host = "smtp.example.com"
+smtp_port = 587
+to = ["admin@example.com"]
+`,
+			wantErr: true,
+		},
+		{
+			name: "enabled empty to",
+			config: `
+[notify.email]
+enabled = true
+smtp_host = "smtp.example.com"
+smtp_port = 587
+from = "alerts@example.com"
+to = []
+`,
+			wantErr: true,
+		},
+		{
+			name: "enabled port 0",
+			config: `
+[notify.email]
+enabled = true
+smtp_host = "smtp.example.com"
+smtp_port = 0
+from = "alerts@example.com"
+to = ["admin@example.com"]
+`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.toml")
+			os.WriteFile(path, []byte(tt.config), 0644)
+			_, err := LoadConfig(path)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestDurationUnmarshal(t *testing.T) {
 	tests := []struct {
 		input string

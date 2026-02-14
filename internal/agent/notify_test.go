@@ -176,6 +176,83 @@ func TestWebhookDisabledSkipped(t *testing.T) {
 	}
 }
 
+func TestWebhookRetrySuccess(t *testing.T) {
+	var mu sync.Mutex
+	attempts := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		attempts++
+		n := attempts
+		mu.Unlock()
+		if n == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	ch := newWebhookChannel(WebhookConfig{Enabled: true, URL: srv.URL})
+	sendWithRetry(context.Background(), ch, "test", "body")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
+	}
+}
+
+func TestWebhookRetryExhausted(t *testing.T) {
+	var mu sync.Mutex
+	attempts := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		attempts++
+		mu.Unlock()
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	ch := newWebhookChannel(WebhookConfig{Enabled: true, URL: srv.URL})
+	// Should not panic — errors are logged after exhausting retries.
+	sendWithRetry(context.Background(), ch, "test", "body")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if attempts != 3 {
+		t.Fatalf("expected 3 attempts, got %d", attempts)
+	}
+}
+
+func TestWebhookRetryContextCancelled(t *testing.T) {
+	var mu sync.Mutex
+	attempts := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		attempts++
+		mu.Unlock()
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel immediately so the retry backoff select picks up ctx.Done().
+	cancel()
+
+	ch := newWebhookChannel(WebhookConfig{Enabled: true, URL: srv.URL})
+	sendWithRetry(ctx, ch, "test", "body")
+
+	mu.Lock()
+	defer mu.Unlock()
+	// First attempt runs, then retry aborts due to cancelled context.
+	if attempts > 2 {
+		t.Fatalf("expected at most 2 attempts with cancelled context, got %d", attempts)
+	}
+}
+
 func TestWebhookHeaderSanitization(t *testing.T) {
 	var gotVal string
 

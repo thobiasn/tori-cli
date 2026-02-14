@@ -142,10 +142,32 @@ func validate(cfg *Config) error {
 			return err
 		}
 	}
+	if err := validateEmail(&cfg.Notify.Email); err != nil {
+		return err
+	}
 	for i, wh := range cfg.Notify.Webhooks {
 		if err := validateWebhook(i, &wh); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func validateEmail(e *EmailConfig) error {
+	if !e.Enabled {
+		return nil
+	}
+	if e.SMTPHost == "" {
+		return fmt.Errorf("email: smtp_host is required when enabled")
+	}
+	if e.SMTPPort <= 0 {
+		return fmt.Errorf("email: smtp_port must be > 0 when enabled")
+	}
+	if e.From == "" {
+		return fmt.Errorf("email: from is required when enabled")
+	}
+	if len(e.To) == 0 {
+		return fmt.Errorf("email: at least one recipient (to) required when enabled")
 	}
 	return nil
 }
