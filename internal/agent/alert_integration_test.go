@@ -36,9 +36,8 @@ func newAlertPipeline(t *testing.T, alerts map[string]AlertConfig) *alertPipelin
 
 	hub := NewHub()
 	dc := &DockerCollector{
-		prevCPU:         make(map[string]cpuPrev),
-		tracked:         map[string]bool{"web": true, "api": true, "db": true},
-		trackedProjects: make(map[string]bool),
+		prevCPU: make(map[string]cpuPrev),
+		tracked: map[string]bool{"web": true, "api": true, "db": true},
 	}
 
 	ew := &EventWatcher{

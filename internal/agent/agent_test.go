@@ -110,11 +110,10 @@ func TestApplyConfigUpdatesFields(t *testing.T) {
 	defer store.Close()
 
 	docker := &DockerCollector{
-		include:           []string{"web-*"},
-		exclude:           nil,
-		prevCPU:           make(map[string]cpuPrev),
-		tracked:         make(map[string]bool),
-		trackedProjects: make(map[string]bool),
+		include: []string{"web-*"},
+		exclude: nil,
+		prevCPU: make(map[string]cpuPrev),
+		tracked: make(map[string]bool),
 	}
 
 	hub := NewHub()
@@ -175,9 +174,8 @@ func TestApplyConfigRebuildsAlerter(t *testing.T) {
 	defer store.Close()
 
 	docker := &DockerCollector{
-		prevCPU:           make(map[string]cpuPrev),
-		tracked:         make(map[string]bool),
-		trackedProjects: make(map[string]bool),
+		prevCPU: make(map[string]cpuPrev),
+		tracked: make(map[string]bool),
 	}
 
 	hub := NewHub()

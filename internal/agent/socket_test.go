@@ -22,8 +22,7 @@ func testSocketServer(t *testing.T, store *Store) (*SocketServer, *Hub, string) 
 			{ID: "def456", Name: "api", Image: "node", State: "running", Project: "myapp"},
 			{ID: "ghi789", Name: "db", Image: "postgres", State: "running", Project: "other"},
 		},
-		tracked:         make(map[string]bool),
-		trackedProjects: make(map[string]bool),
+		tracked: make(map[string]bool),
 	}
 	ss := NewSocketServer(hub, store, dc, nil, 7)
 	path := filepath.Join(t.TempDir(), "test.sock")
@@ -43,8 +42,7 @@ func testSocketServerWithAlerter(t *testing.T, store *Store, alerter *Alerter) (
 		lastContainers: []Container{
 			{ID: "abc123", Name: "web", Image: "nginx", State: "running", Project: "myapp"},
 		},
-		tracked:         make(map[string]bool),
-		trackedProjects: make(map[string]bool),
+		tracked: make(map[string]bool),
 	}
 	ss := NewSocketServer(hub, store, dc, alerter, 7)
 	path := filepath.Join(t.TempDir(), "test.sock")
@@ -861,8 +859,7 @@ func TestSocketConnectionLimit(t *testing.T) {
 	dc := &DockerCollector{
 		prevCPU:           make(map[string]cpuPrev),
 		lastContainers:    []Container{},
-		tracked:         make(map[string]bool),
-		trackedProjects: make(map[string]bool),
+		tracked: make(map[string]bool),
 	}
 	// Create a server with a small semaphore for testing.
 	ss := &SocketServer{
@@ -992,24 +989,21 @@ func TestSocketSetTracking(t *testing.T) {
 	}
 
 	// Verify via IsTracked.
-	if !ss.docker.IsTracked("web", "myapp") {
+	if !ss.docker.IsTracked("web") {
 		t.Error("web should be tracked")
 	}
-	if ss.docker.IsTracked("api", "myapp") {
+	if ss.docker.IsTracked("api") {
 		t.Error("api should still be untracked")
 	}
 
 	// Verify persisted to DB.
 	ctx := t.Context()
-	containers, projects, err := s.LoadTracking(ctx)
+	containers, err := s.LoadTracking(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(containers) != 1 || containers[0] != "web" {
 		t.Errorf("persisted containers = %v, want [web]", containers)
-	}
-	if len(projects) != 0 {
-		t.Errorf("persisted projects = %v, want []", projects)
 	}
 }
 
@@ -1042,9 +1036,9 @@ func TestSocketQueryTracking(t *testing.T) {
 	s := testStore(t)
 	ss, _, path := testSocketServer(t, s)
 
-	// Track some things.
+	// Track some containers.
 	ss.docker.SetTracking("web", "", true)
-	ss.docker.SetTracking("", "myapp", true)
+	ss.docker.SetTracking("api", "", true)
 
 	conn := dial(t, path)
 	env := protocol.NewEnvelopeNoBody(protocol.TypeQueryTracking, 1)
@@ -1065,11 +1059,8 @@ func TestSocketQueryTracking(t *testing.T) {
 	if err := protocol.DecodeBody(resp.Body, &tracking); err != nil {
 		t.Fatal(err)
 	}
-	if len(tracking.TrackedContainers) != 1 || tracking.TrackedContainers[0] != "web" {
-		t.Errorf("tracked containers = %v, want [web]", tracking.TrackedContainers)
-	}
-	if len(tracking.TrackedProjects) != 1 || tracking.TrackedProjects[0] != "myapp" {
-		t.Errorf("tracked projects = %v, want [myapp]", tracking.TrackedProjects)
+	if len(tracking.TrackedContainers) != 2 {
+		t.Errorf("tracked containers = %v, want 2 entries", tracking.TrackedContainers)
 	}
 }
 
@@ -1278,7 +1269,7 @@ func TestSocketQueryMetricsDownsampledSkipsDiskNet(t *testing.T) {
 func TestSocketFileCleanedUpOnStop(t *testing.T) {
 	s := testStore(t)
 	hub := NewHub()
-	dc := &DockerCollector{prevCPU: make(map[string]cpuPrev), tracked: make(map[string]bool), trackedProjects: make(map[string]bool)}
+	dc := &DockerCollector{prevCPU: make(map[string]cpuPrev), tracked: make(map[string]bool)}
 	ss := NewSocketServer(hub, s, dc, nil, 7)
 
 	path := filepath.Join(t.TempDir(), "test.sock")
