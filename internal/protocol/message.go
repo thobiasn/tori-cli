@@ -211,13 +211,15 @@ type SilenceAlertReq struct {
 
 // AlertRuleInfo describes a configured alert rule and its current status.
 type AlertRuleInfo struct {
-	Name         string   `msgpack:"name"`
-	Condition    string   `msgpack:"condition"`
-	Severity     string   `msgpack:"severity"`
-	For          string   `msgpack:"for,omitempty"`
-	Actions      []string `msgpack:"actions"`
-	FiringCount  int      `msgpack:"firing_count"`
-	SilencedUntil int64   `msgpack:"silenced_until,omitempty"` // unix timestamp, 0 = not silenced
+	Name           string   `msgpack:"name"`
+	Condition      string   `msgpack:"condition"`
+	Severity       string   `msgpack:"severity"`
+	For            string   `msgpack:"for,omitempty"`
+	Cooldown       string   `msgpack:"cooldown,omitempty"`
+	NotifyCooldown string   `msgpack:"notify_cooldown,omitempty"`
+	Actions        []string `msgpack:"actions"`
+	FiringCount    int      `msgpack:"firing_count"`
+	SilencedUntil  int64    `msgpack:"silenced_until,omitempty"` // unix timestamp, 0 = not silenced
 }
 
 // QueryAlertRulesResp is the response for TypeQueryAlertRules.

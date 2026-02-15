@@ -36,10 +36,12 @@ type Config struct {
 }
 
 type AlertConfig struct {
-	Condition string   `toml:"condition"`
-	For       Duration `toml:"for"`
-	Severity  string   `toml:"severity"`
-	Actions   []string `toml:"actions"`
+	Condition      string   `toml:"condition"`
+	For            Duration `toml:"for"`
+	Cooldown       Duration `toml:"cooldown"`
+	NotifyCooldown Duration `toml:"notify_cooldown"`
+	Severity       string   `toml:"severity"`
+	Actions        []string `toml:"actions"`
 }
 
 type NotifyConfig struct {
@@ -93,11 +95,12 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	cfg := &Config{}
-	if err := toml.Unmarshal(data, cfg); err != nil {
+	md, err := toml.Decode(string(data), cfg)
+	if err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	setDefaults(cfg)
+	setDefaults(cfg, md)
 
 	if err := validate(cfg); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
@@ -106,7 +109,7 @@ func LoadConfig(path string) (*Config, error) {
 	return cfg, nil
 }
 
-func setDefaults(cfg *Config) {
+func setDefaults(cfg *Config, md toml.MetaData) {
 	if cfg.Storage.Path == "" {
 		cfg.Storage.Path = "/var/lib/tori/tori.db"
 	}
@@ -127,6 +130,15 @@ func setDefaults(cfg *Config) {
 	}
 	if cfg.Collect.Interval.Duration == 0 {
 		cfg.Collect.Interval.Duration = 10 * time.Second
+	}
+	for name, ac := range cfg.Alerts {
+		if !md.IsDefined("alerts", name, "cooldown") {
+			ac.Cooldown.Duration = 5 * time.Minute
+		}
+		if !md.IsDefined("alerts", name, "notify_cooldown") {
+			ac.NotifyCooldown.Duration = 5 * time.Minute
+		}
+		cfg.Alerts[name] = ac
 	}
 }
 
@@ -205,6 +217,15 @@ func validateWebhook(idx int, wh *WebhookConfig) error {
 func validateAlert(name string, ac *AlertConfig) error {
 	if _, err := parseCondition(ac.Condition); err != nil {
 		return fmt.Errorf("alert %q: %w", name, err)
+	}
+	if ac.For.Duration < 0 {
+		return fmt.Errorf("alert %q: for must not be negative", name)
+	}
+	if ac.Cooldown.Duration < 0 {
+		return fmt.Errorf("alert %q: cooldown must not be negative", name)
+	}
+	if ac.NotifyCooldown.Duration < 0 {
+		return fmt.Errorf("alert %q: notify_cooldown must not be negative", name)
 	}
 	switch ac.Severity {
 	case "warning", "critical":

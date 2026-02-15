@@ -259,6 +259,8 @@ if [ ! -f "${CONFIG_DIR}/config.toml" ]; then
 # [alerts.high_cpu]
 # condition = "host.cpu_percent > 90"
 # for = "1m"
+# cooldown = "5m"
+# notify_cooldown = "5m"
 # severity = "critical"
 # actions = ["notify"]
 

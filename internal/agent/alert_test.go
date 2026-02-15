@@ -1275,3 +1275,4 @@ func TestContainerExitCodeAlert(t *testing.T) {
 		t.Errorf("expected resolved, got state %d", inst.state)
 	}
 }
+

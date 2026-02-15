@@ -29,15 +29,18 @@ type alertInstance struct {
 	state        alertState
 	pendingSince time.Time
 	firedAt      time.Time
+	resolvedAt   time.Time // zero = never resolved; used for cooldown
 	dbID         int64
 }
 
 type alertRule struct {
-	name      string
-	condition Condition
-	forDur    time.Duration
-	severity  string
-	actions   []string
+	name           string
+	condition      Condition
+	forDur         time.Duration
+	cooldown       time.Duration
+	notifyCooldown time.Duration
+	severity       string
+	actions        []string
 }
 
 // evalContext bundles the per-evaluation arguments shared by transition and fire.
@@ -50,13 +53,14 @@ type evalContext struct {
 
 // Alerter evaluates alert rules against metric snapshots.
 type Alerter struct {
-	mu        sync.Mutex // protects instances and deferred; held during Evaluate and EvaluateContainerEvent
-	rules     []alertRule
-	instances map[string]*alertInstance
-	deferred  []func()   // slow side effects collected under mu, executed after release
-	store     *Store
-	notifier  *Notifier
-	now       func() time.Time
+	mu           sync.Mutex // protects instances, deferred, lastNotified; held during Evaluate and EvaluateContainerEvent
+	rules        []alertRule
+	instances    map[string]*alertInstance
+	deferred     []func()              // slow side effects collected under mu, executed after release
+	lastNotified map[string]time.Time  // rule name -> last notification time (for notify_cooldown)
+	store        *Store
+	notifier     *Notifier
+	now          func() time.Time
 
 	onStateChange func(a *Alert, state string) // called on "firing" / "resolved"
 
@@ -67,12 +71,13 @@ type Alerter struct {
 // NewAlerter creates an Alerter from the config's alert rules.
 func NewAlerter(alerts map[string]AlertConfig, store *Store, notifier *Notifier) (*Alerter, error) {
 	a := &Alerter{
-		instances: make(map[string]*alertInstance),
-		deferred:  make([]func(), 0, 8),
-		store:     store,
-		notifier:  notifier,
-		now:       time.Now,
-		silences:  make(map[string]time.Time),
+		instances:    make(map[string]*alertInstance),
+		deferred:     make([]func(), 0, 8),
+		lastNotified: make(map[string]time.Time),
+		store:        store,
+		notifier:     notifier,
+		now:          time.Now,
+		silences:     make(map[string]time.Time),
 	}
 
 	// Sort rule names for deterministic evaluation order.
@@ -89,11 +94,13 @@ func NewAlerter(alerts map[string]AlertConfig, store *Store, notifier *Notifier)
 			return nil, fmt.Errorf("alert %q: %w", name, err)
 		}
 		a.rules = append(a.rules, alertRule{
-			name:      name,
-			condition: cond,
-			forDur:    ac.For.Duration,
-			severity:  ac.Severity,
-			actions:   ac.Actions,
+			name:           name,
+			condition:      cond,
+			forDur:         ac.For.Duration,
+			cooldown:       ac.Cooldown.Duration,
+			notifyCooldown: ac.NotifyCooldown.Duration,
+			severity:       ac.Severity,
+			actions:        ac.Actions,
 		})
 	}
 	return a, nil
@@ -253,6 +260,10 @@ func (a *Alerter) transition(ctx context.Context, ec *evalContext, matched bool,
 	switch inst.state {
 	case stateInactive:
 		if matched {
+			// Cooldown: after resolution, suppress re-fire for the configured duration.
+			if ec.rule.cooldown > 0 && !inst.resolvedAt.IsZero() && now.Sub(inst.resolvedAt) < ec.rule.cooldown {
+				break
+			}
 			if ec.rule.forDur == 0 {
 				inst.state = stateFiring
 				a.fire(ctx, ec, inst, now)
@@ -309,6 +320,13 @@ func (a *Alerter) fire(ctx context.Context, ec *evalContext, inst *alertInstance
 	silenced := a.isSilenced(r.name)
 	for _, action := range r.actions {
 		if action == "notify" && !silenced {
+			if r.notifyCooldown > 0 {
+				if last, ok := a.lastNotified[r.name]; ok && now.Sub(last) < r.notifyCooldown {
+					slog.Info("notification suppressed (cooldown)", "rule", r.name, "key", ec.key)
+					continue
+				}
+			}
+			a.lastNotified[r.name] = now
 			ruleName := r.name
 			a.deferred = append(a.deferred, func() {
 				a.notifier.Send(ctx, "Alert: "+ruleName, msg)
@@ -320,6 +338,7 @@ func (a *Alerter) fire(ctx context.Context, ec *evalContext, inst *alertInstance
 func (a *Alerter) resolve(ctx context.Context, r *alertRule, key string, inst *alertInstance, now time.Time) {
 	slog.Info("alert resolved", "key", key)
 	inst.state = stateInactive
+	inst.resolvedAt = now
 
 	if inst.dbID > 0 {
 		if err := a.store.ResolveAlert(ctx, inst.dbID, now); err != nil {
@@ -423,13 +442,15 @@ func (a *Alerter) Silence(ruleName string, dur time.Duration) {
 
 // RuleStatus describes a configured alert rule and its current runtime status.
 type RuleStatus struct {
-	Name          string
-	Condition     string
-	Severity      string
-	For           time.Duration
-	Actions       []string
-	FiringCount   int
-	SilencedUntil time.Time
+	Name           string
+	Condition      string
+	Severity       string
+	For            time.Duration
+	Cooldown       time.Duration
+	NotifyCooldown time.Duration
+	Actions        []string
+	FiringCount    int
+	SilencedUntil  time.Time
 }
 
 // QueryRules returns the status of all configured alert rules.
@@ -463,13 +484,15 @@ func (a *Alerter) QueryRules() []RuleStatus {
 	for i, r := range a.rules {
 		condStr := r.condition.Scope + "." + r.condition.Field + " " + r.condition.Op + " " + conditionValue(&r.condition)
 		out[i] = RuleStatus{
-			Name:          r.name,
-			Condition:     condStr,
-			Severity:      r.severity,
-			For:           r.forDur,
-			Actions:       r.actions,
-			FiringCount:   firingCounts[r.name],
-			SilencedUntil: silences[r.name],
+			Name:           r.name,
+			Condition:      condStr,
+			Severity:       r.severity,
+			For:            r.forDur,
+			Cooldown:       r.cooldown,
+			NotifyCooldown: r.notifyCooldown,
+			Actions:        r.actions,
+			FiringCount:    firingCounts[r.name],
+			SilencedUntil:  silences[r.name],
 		}
 	}
 	return out

@@ -458,6 +458,104 @@ to = ["admin@example.com"]
 	}
 }
 
+func TestLoadConfigAlertDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[alerts.high_cpu]
+condition = "host.cpu_percent > 90"
+severity = "critical"
+actions = ["notify"]
+`), 0644)
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ac := cfg.Alerts["high_cpu"]
+	if ac.Cooldown.Duration != 5*time.Minute {
+		t.Errorf("cooldown = %s, want 5m", ac.Cooldown.Duration)
+	}
+	if ac.NotifyCooldown.Duration != 5*time.Minute {
+		t.Errorf("notify_cooldown = %s, want 5m", ac.NotifyCooldown.Duration)
+	}
+}
+
+func TestLoadConfigAlertCooldownExplicit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[alerts.high_cpu]
+condition = "host.cpu_percent > 90"
+cooldown = "10m"
+notify_cooldown = "0s"
+severity = "critical"
+actions = ["notify"]
+`), 0644)
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ac := cfg.Alerts["high_cpu"]
+	if ac.Cooldown.Duration != 10*time.Minute {
+		t.Errorf("cooldown = %s, want 10m", ac.Cooldown.Duration)
+	}
+	if ac.NotifyCooldown.Duration != 0 {
+		t.Errorf("notify_cooldown = %s, want 0s (explicitly disabled)", ac.NotifyCooldown.Duration)
+	}
+}
+
+func TestLoadConfigAlertNegativeDurations(t *testing.T) {
+	tests := []struct {
+		name   string
+		config string
+	}{
+		{
+			name: "negative for",
+			config: `
+[alerts.bad]
+condition = "host.cpu_percent > 90"
+for = "-5m"
+severity = "critical"
+actions = ["notify"]
+`,
+		},
+		{
+			name: "negative cooldown",
+			config: `
+[alerts.bad]
+condition = "host.cpu_percent > 90"
+cooldown = "-5m"
+severity = "critical"
+actions = ["notify"]
+`,
+		},
+		{
+			name: "negative notify_cooldown",
+			config: `
+[alerts.bad]
+condition = "host.cpu_percent > 90"
+notify_cooldown = "-5m"
+severity = "critical"
+actions = ["notify"]
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.toml")
+			os.WriteFile(path, []byte(tt.config), 0644)
+			_, err := LoadConfig(path)
+			if err == nil {
+				t.Fatal("expected error for negative duration")
+			}
+		})
+	}
+}
+
 func TestDurationUnmarshal(t *testing.T) {
 	tests := []struct {
 		input string
