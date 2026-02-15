@@ -385,6 +385,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				s.RetentionDays = msg.resp.RetentionDays
 			}
 			handleMetricsBackfill(s, msg.resp, msg.start, msg.end, msg.rangeHist)
+			s.BackfillPending = false
 		}
 		return a, nil
 
@@ -884,6 +885,13 @@ func (a *App) handleZoom(key string) tea.Cmd {
 	if a.windowIdx == prev {
 		return nil
 	}
+	// Clear history so graphs show a loading spinner until the backfill arrives.
+	s.HostCPUHistory = NewRingBuffer[float64](ringBufSize)
+	s.HostMemHistory = NewRingBuffer[float64](ringBufSize)
+	s.HostMemUsedHistory = NewRingBuffer[float64](ringBufSize)
+	s.CPUHistory = make(map[string]*RingBuffer[float64])
+	s.MemHistory = make(map[string]*RingBuffer[float64])
+	s.BackfillPending = true
 	s.Detail.metricsBackfilled = false
 	var cmds []tea.Cmd
 	cmds = append(cmds, backfillMetrics(s.Client, timeWindows[a.windowIdx].seconds))

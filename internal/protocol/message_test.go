@@ -723,3 +723,44 @@ func TestContainerEventServiceRoundtrip(t *testing.T) {
 		t.Errorf("service = %q, want %q", decoded.Service, "web")
 	}
 }
+
+func TestQueryLogsRespTotalRoundtrip(t *testing.T) {
+	orig := QueryLogsResp{
+		Entries: []LogEntryMsg{
+			{Timestamp: 1700000000, ContainerID: "abc", ContainerName: "web", Stream: "stdout", Message: "hello"},
+		},
+		Total: 12847,
+	}
+
+	raw, err := msgpack.Marshal(&orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded QueryLogsResp
+	if err := msgpack.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Total != 12847 {
+		t.Errorf("total = %d, want 12847", decoded.Total)
+	}
+	if len(decoded.Entries) != 1 {
+		t.Fatalf("entries len = %d, want 1", len(decoded.Entries))
+	}
+
+	// Verify omitempty: Total=0 should not break decoding.
+	orig2 := QueryLogsResp{
+		Entries: []LogEntryMsg{{Timestamp: 1700000000}},
+	}
+	raw2, err := msgpack.Marshal(&orig2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded2 QueryLogsResp
+	if err := msgpack.Unmarshal(raw2, &decoded2); err != nil {
+		t.Fatal(err)
+	}
+	if decoded2.Total != 0 {
+		t.Errorf("total with omitempty = %d, want 0", decoded2.Total)
+	}
+}

@@ -11,6 +11,9 @@ import (
 	"github.com/thobiasn/tori-cli/internal/protocol"
 )
 
+// logBufCapacity is the number of log entries kept in the detail view ring buffer.
+const logBufCapacity = 500
+
 // DetailState holds state for the container/group detail view.
 type DetailState struct {
 	containerID string   // single-container mode (empty in group mode)
@@ -29,12 +32,13 @@ type DetailState struct {
 	expandModal *logExpandModal // nil = closed
 
 	// Filters.
-	filterProject string // project filter (g key, only meaningful in group mode)
 	filterStream      string // "", "stdout", "stderr"
 	searchText        string // applied text filter
 	filterFrom        int64  // applied from timestamp (0 = no filter)
 	filterTo          int64  // applied to timestamp (0 = no filter)
 	filterModal       *logFilterModal
+
+	totalLogCount int // total log count in scope (from server)
 
 	backfilled             bool
 	metricsBackfilled      bool
@@ -61,6 +65,7 @@ type logExpandModal struct {
 
 type detailLogQueryMsg struct {
 	entries     []protocol.LogEntryMsg
+	total       int    // total log count in scope (from server)
 	containerID string // which detail view requested this
 	project     string
 }
@@ -75,16 +80,16 @@ type detailMetricsQueryMsg struct {
 }
 
 func (s *DetailState) reset() {
-	s.logs = NewRingBuffer[protocol.LogEntryMsg](5000)
+	s.logs = NewRingBuffer[protocol.LogEntryMsg](logBufCapacity)
 	s.logScroll = 0
 	s.logCursor = 0
 	s.expandModal = nil
-	s.filterProject = ""
 	s.filterStream = ""
 	s.searchText = ""
 	s.filterFrom = 0
 	s.filterTo = 0
 	s.filterModal = nil
+	s.totalLogCount = 0
 	s.backfilled = false
 	s.metricsBackfilled = false
 	s.metricsBackfillPending = false
@@ -92,6 +97,11 @@ func (s *DetailState) reset() {
 
 func (s *DetailState) isGroupMode() bool {
 	return s.project != "" && s.containerID == ""
+}
+
+// isSearchActive returns true when a server-side search/time filter is applied.
+func (s *DetailState) isSearchActive() bool {
+	return s.searchText != "" || s.filterFrom != 0 || s.filterTo != 0
 }
 
 func (s *DetailState) onSwitch(c *Client, windowSec int64, retentionDays int) tea.Cmd {
@@ -108,39 +118,15 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64, retentionDays int) te
 	if !s.backfilled {
 		id := s.containerID
 		project := s.project
-		ids := s.projectIDs
-		svcProject := s.svcProject
-		svcService := s.svcService
-		retDays := retentionDays
 		cmds = append(cmds, func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			now := time.Now().Unix()
-			rangeSec := int64(86400) // default 1 day
-			if retDays > 0 {
-				rangeSec = int64(retDays) * 86400
-			}
-			req := &protocol.QueryLogsReq{
-				Start: now - rangeSec,
-				End:   now,
-				Limit: 5000,
-			}
-			// Prefer service/project identity for cross-container history.
-			if svcService != "" {
-				req.Project = svcProject
-				req.Service = svcService
-			} else if project != "" {
-				req.Project = project
-			} else if len(ids) > 0 {
-				req.ContainerIDs = ids
-			} else if id != "" {
-				req.ContainerID = id
-			}
-			entries, err := c.QueryLogs(ctx, req)
+			req := buildLogReq(s, retentionDays)
+			entries, total, err := c.QueryLogs(ctx, req)
 			if err != nil {
 				return detailLogQueryMsg{containerID: id, project: project}
 			}
-			return detailLogQueryMsg{entries: entries, containerID: id, project: project}
+			return detailLogQueryMsg{entries: entries, total: total, containerID: id, project: project}
 		})
 	}
 
@@ -190,7 +176,7 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64, retentionDays int) te
 }
 
 func (s *DetailState) onStreamEntry(entry protocol.LogEntryMsg) {
-	if s.logs == nil {
+	if s.logs == nil || s.isSearchActive() {
 		return
 	}
 	if s.isGroupMode() {
@@ -218,6 +204,9 @@ func (s *DetailState) handleBackfill(msg detailLogQueryMsg) {
 	if msg.containerID != s.containerID || msg.project != s.project {
 		return
 	}
+
+	s.totalLogCount = msg.total
+
 	if len(msg.entries) == 0 {
 		s.backfilled = true
 		return
@@ -237,7 +226,7 @@ func (s *DetailState) handleBackfill(msg detailLogQueryMsg) {
 	// Inject deploy separators at container ID transitions in backfilled data.
 	backfill := injectDeploySeparators(msg.entries)
 
-	newBuf := NewRingBuffer[protocol.LogEntryMsg](5000)
+	newBuf := NewRingBuffer[protocol.LogEntryMsg](logBufCapacity)
 	for _, e := range backfill {
 		if oldestTS == 0 || e.Timestamp < oldestTS {
 			newBuf.Push(e)
@@ -323,7 +312,7 @@ func renderDetailSingle(a *App, s *Session, width, height int) string {
 
 	infoBox := renderDetailInfoBox(s, det, title, RenderContext{Width: infoW, Height: metricsH, Theme: theme, SpinnerFrame: a.spinnerFrame})
 
-	rc := RenderContext{Width: graphW, Height: metricsH, Theme: theme, WindowLabel: a.windowLabel(), WindowSec: a.windowSeconds(), SpinnerFrame: a.spinnerFrame}
+	rc := RenderContext{Width: graphW, Height: metricsH, Theme: theme, WindowLabel: a.windowLabel(), WindowSec: a.windowSeconds(), SpinnerFrame: a.spinnerFrame, Loading: s.BackfillPending}
 	graphs := renderDetailMetrics(s, det, cm, rc)
 
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, infoBox, graphs)
@@ -405,7 +394,7 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 
 	tableBox := renderDetailContainersBox(s, det, title, tableW, metricsH, theme)
 
-	rc := RenderContext{Width: graphW, Height: metricsH, Theme: theme, WindowLabel: a.windowLabel(), WindowSec: a.windowSeconds(), SpinnerFrame: a.spinnerFrame}
+	rc := RenderContext{Width: graphW, Height: metricsH, Theme: theme, WindowLabel: a.windowLabel(), WindowSec: a.windowSeconds(), SpinnerFrame: a.spinnerFrame, Loading: s.BackfillPending}
 	graphs := renderDetailGroupMetrics(s, det, rc)
 
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, tableBox, graphs)
@@ -439,6 +428,10 @@ func renderDetailGroup(a *App, s *Session, width, height int) string {
 }
 
 func renderDetailGroupMetrics(s *Session, det *DetailState, rc RenderContext) string {
+	if rc.Loading {
+		return lipgloss.Place(rc.Width, rc.Height, lipgloss.Center, lipgloss.Center,
+			SpinnerView(rc.SpinnerFrame, "loading...", rc.Theme))
+	}
 	theme := rc.Theme
 
 	// Aggregate CPU/MEM across all containers in the group.
@@ -496,9 +489,9 @@ func renderDetailGroupMetrics(s *Session, det *DetailState, rc RenderContext) st
 }
 
 func renderDetailMetrics(s *Session, det *DetailState, cm *protocol.ContainerMetrics, rc RenderContext) string {
-	if cm == nil {
+	if cm == nil || rc.Loading {
 		return lipgloss.Place(rc.Width, rc.Height, lipgloss.Center, lipgloss.Center,
-			SpinnerView(rc.SpinnerFrame, "Waiting for metrics...", rc.Theme))
+			SpinnerView(rc.SpinnerFrame, "loading...", rc.Theme))
 	}
 	theme := rc.Theme
 
@@ -743,6 +736,83 @@ func renderDetailAlerts(alerts []*protocol.AlertEvent, width, maxH int, theme *T
 		lines = lines[:maxH-2]
 	}
 	return Box("Alerts", strings.Join(lines, "\n"), width, h, theme)
+}
+
+// buildLogReq creates a QueryLogsReq with the detail view's identity filters
+// and a default time range based on retention days.
+func buildLogReq(det *DetailState, retDays int) *protocol.QueryLogsReq {
+	now := time.Now().Unix()
+	rangeSec := int64(86400)
+	if retDays > 0 {
+		rangeSec = int64(retDays) * 86400
+	}
+	req := &protocol.QueryLogsReq{
+		Start: now - rangeSec,
+		End:   now,
+		Limit: logBufCapacity,
+	}
+	if det.svcService != "" {
+		req.Project = det.svcProject
+		req.Service = det.svcService
+	} else if det.project != "" {
+		req.Project = det.project
+	} else if len(det.projectIDs) > 0 {
+		req.ContainerIDs = det.projectIDs
+	} else if det.containerID != "" {
+		req.ContainerID = det.containerID
+	}
+	return req
+}
+
+// fireSearch builds a server-side log query with the current search/time filters
+// and returns a tea.Cmd that produces a detailLogQueryMsg.
+func fireSearch(det *DetailState, c *Client, retDays int) tea.Cmd {
+	id := det.containerID
+	project := det.project
+	from := det.filterFrom
+	to := det.filterTo
+	search := det.searchText
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		req := buildLogReq(det, retDays)
+		req.Search = search
+		if from > 0 {
+			req.Start = from
+		}
+		if to > 0 {
+			req.End = to
+		}
+		entries, total, err := c.QueryLogs(ctx, req)
+		if err != nil {
+			return detailLogQueryMsg{containerID: id, project: project}
+		}
+		return detailLogQueryMsg{entries: entries, total: total, containerID: id, project: project}
+	}
+}
+
+// refetchLogs resets the log buffer and re-fetches recent logs from the server.
+func refetchLogs(det *DetailState, c *Client, retDays int) tea.Cmd {
+	det.logs = NewRingBuffer[protocol.LogEntryMsg](logBufCapacity)
+	det.logScroll = 0
+	det.logCursor = 0
+	det.backfilled = false
+	det.totalLogCount = 0
+
+	id := det.containerID
+	project := det.project
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		req := buildLogReq(det, retDays)
+		entries, total, err := c.QueryLogs(ctx, req)
+		if err != nil {
+			return detailLogQueryMsg{containerID: id, project: project}
+		}
+		return detailLogQueryMsg{entries: entries, total: total, containerID: id, project: project}
+	}
 }
 
 // countLines returns the number of visual lines in a rendered string.

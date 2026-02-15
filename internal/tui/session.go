@@ -41,6 +41,7 @@ type Session struct {
 	HostCPUHistory     *RingBuffer[float64]
 	HostMemHistory     *RingBuffer[float64]
 	HostMemUsedHistory *RingBuffer[float64]
+	BackfillPending    bool // true while a zoom backfill is in-flight
 
 	// Agent capabilities.
 	RetentionDays int

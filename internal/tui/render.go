@@ -19,6 +19,7 @@ type RenderContext struct {
 	WindowLabel  string
 	WindowSec    int64
 	SpinnerFrame int
+	Loading      bool // true while a backfill is in-flight (show spinner instead of graph)
 }
 
 // Overlay composites fg centered on top of bg. Both strings are

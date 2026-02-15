@@ -806,6 +806,55 @@ func TestQueryLogsByServiceNonCompose(t *testing.T) {
 	}
 }
 
+func TestCountLogs(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: ts, ContainerID: "aaa", ContainerName: "web", Project: "myapp", Service: "web", Stream: "stdout", Message: "hello"},
+		{Timestamp: ts, ContainerID: "aaa", ContainerName: "web", Project: "myapp", Service: "web", Stream: "stderr", Message: "error"},
+		{Timestamp: ts, ContainerID: "bbb", ContainerName: "api", Project: "myapp", Service: "api", Stream: "stdout", Message: "started"},
+		{Timestamp: ts, ContainerID: "ccc", ContainerName: "db", Project: "other", Service: "db", Stream: "stdout", Message: "ready"},
+	})
+
+	// Total count (all entries).
+	total, err := s.CountLogs(ctx, LogFilter{Start: ts.Unix(), End: ts.Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 4 {
+		t.Errorf("total = %d, want 4", total)
+	}
+
+	// By container.
+	count, err := s.CountLogs(ctx, LogFilter{Start: ts.Unix(), End: ts.Unix(), ContainerIDs: []string{"aaa"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Errorf("by container = %d, want 2", count)
+	}
+
+	// By project.
+	count, err = s.CountLogs(ctx, LogFilter{Start: ts.Unix(), End: ts.Unix(), Project: "myapp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 {
+		t.Errorf("by project = %d, want 3", count)
+	}
+
+	// By service.
+	count, err = s.CountLogs(ctx, LogFilter{Start: ts.Unix(), End: ts.Unix(), Service: "web", Project: "myapp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Errorf("by service = %d, want 2", count)
+	}
+}
+
 // --- Chatty container characterization tests ---
 
 func TestHighVolumeLogInsertion(t *testing.T) {
