@@ -701,6 +701,12 @@ func (c *connState) queryAlertRules(id uint32) {
 			if rs.For > 0 {
 				info.For = rs.For.String()
 			}
+			if rs.Cooldown > 0 {
+				info.Cooldown = rs.Cooldown.String()
+			}
+			if rs.NotifyCooldown > 0 {
+				info.NotifyCooldown = rs.NotifyCooldown.String()
+			}
 			if !rs.SilencedUntil.IsZero() {
 				info.SilencedUntil = rs.SilencedUntil.Unix()
 			}

@@ -124,12 +124,16 @@ interval = "10s"
 [alerts.container_down]
 condition = "container.state == 'exited'"
 for = "30s"
+# cooldown = "5m"
+# notify_cooldown = "5m"
 severity = "critical"
 actions = ["notify"]
 
 [alerts.high_cpu]
 condition = "host.cpu_percent > 90"
 for = "2m"
+# cooldown = "5m"
+# notify_cooldown = "5m"
 severity = "warning"
 actions = ["notify"]
 
@@ -214,6 +218,16 @@ Alert conditions use the format `scope.field op value`. Available fields:
 | `container.exit_code` | numeric | Container exit code |
 
 Numeric fields support `>`, `<`, `>=`, `<=`, `==`, `!=`. String fields support `==` and `!=` only, with values in single quotes.
+
+Each alert rule supports these optional timing fields:
+
+| Field | Default | Description |
+|---|---|---|
+| `for` | `0s` | Condition must stay true for this duration before firing |
+| `cooldown` | `5m` | After resolution, wait this long before the same instance can re-fire (prevents flapping) |
+| `notify_cooldown` | `5m` | After notifying for a rule, suppress duplicate notifications for this duration (per-rule, not per-instance) |
+
+Set any of these to `"0s"` to disable.
 
 ## Client Configuration
 

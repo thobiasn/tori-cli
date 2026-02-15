@@ -31,12 +31,16 @@ services:
         [alerts.container_down]
         condition = "container.state == 'exited'"
         for = "30s"
+        # cooldown = "5m"
+        # notify_cooldown = "5m"
         severity = "critical"
         actions = ["notify"]
 
         [alerts.high_cpu]
         condition = "host.cpu_percent > 90"
         for = "2m"
+        # cooldown = "5m"
+        # notify_cooldown = "5m"
         severity = "warning"
         actions = ["notify"]
 
