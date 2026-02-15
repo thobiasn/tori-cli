@@ -254,17 +254,17 @@ func (c *Client) QueryMetrics(ctx context.Context, req *protocol.QueryMetricsReq
 	return &r, nil
 }
 
-// QueryLogs returns historical log entries.
-func (c *Client) QueryLogs(ctx context.Context, req *protocol.QueryLogsReq) ([]protocol.LogEntryMsg, error) {
+// QueryLogs returns historical log entries and the total count of logs in scope.
+func (c *Client) QueryLogs(ctx context.Context, req *protocol.QueryLogsReq) ([]protocol.LogEntryMsg, int, error) {
 	resp, err := c.Request(ctx, protocol.TypeQueryLogs, req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var r protocol.QueryLogsResp
 	if err := protocol.DecodeBody(resp.Body, &r); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return r.Entries, nil
+	return r.Entries, r.Total, nil
 }
 
 // QueryAlerts returns historical alerts.

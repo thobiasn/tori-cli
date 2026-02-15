@@ -27,10 +27,10 @@ go test -run TestFunctionName ./...    # run a single test
 
 ## Architecture
 
-Single Go binary with two modes: `tori agent` (server daemon) and `tori connect` (TUI client).
+Single Go binary with two modes: `tori agent` (server daemon) and `tori [user@host]` (TUI client).
 
 ```
-cmd/tori/main.go          — single entry point, subcommands for agent/connect
+cmd/tori/main.go          — single entry point, `agent` subcommand and default TUI client mode
 internal/agent/            — collector, alerter, storage, socket server (flat package — no sub-packages)
 internal/tui/              — bubbletea views and components
 internal/protocol/         — shared message types, msgpack encoding
@@ -40,17 +40,22 @@ deploy/                    — install.sh, tori.service (systemd), Dockerfile, d
 **Actual file layout (internal/agent/):**
 
 ```
-agent.go       — Agent struct, Run() loop, collect() orchestration, shutdown, SIGHUP config reload
-config.go      — Config types (storage, host, docker, collect, alerts, notify), TOML loading, validation
-store.go       — SQLite schema, Store struct, all Insert/Query/Prune methods, metric+alert types
-host.go        — HostCollector: reads /proc (cpu, memory, loadavg, uptime, disk, network)
-docker.go      — DockerCollector: container list, stats, CPU/mem/net/block calc, UpdateContainerState, runtime tracking toggle
-logs.go        — LogTailer: per-container goroutines, Docker log demux via stdcopy, batched insert
-alert.go       — Condition parser, Alerter state machine (inactive→pending→firing→resolved), Evaluate(), EvaluateContainerEvent()
-notify.go      — Notifier: Channel interface (email + multiple webhooks with custom headers/templates)
-events.go      — EventWatcher: Docker Events API listener, real-time container state updates
-hub.go         — Hub: pub/sub message fan-out to connected clients, topic-based subscriptions
-socket.go      — SocketServer: Unix socket listener, per-client connection handling, request dispatch
+agent.go           — Agent struct, Run() loop, collect() orchestration, shutdown, SIGHUP config reload
+config.go          — Config types (storage, host, docker, collect, alerts, notify), TOML loading, validation
+store.go           — SQLite schema, Store struct, metric+alert types
+store_queries.go   — All Insert/Query/Prune/Tracking persistence methods
+host.go            — HostCollector: reads /proc (cpu, memory, loadavg, uptime, disk, network)
+docker.go          — DockerCollector: container list, stats, CPU/mem/net/block calc, runtime tracking toggle
+docker_helpers.go  — Docker API helper functions (inspect, filter matching)
+logs.go            — LogTailer: per-container goroutines, Docker log demux via stdcopy, batched insert
+alert.go           — Alerter state machine (inactive→pending→firing→resolved), Evaluate(), EvaluateContainerEvent()
+condition.go       — Alert condition parser and validation
+notify.go          — Notifier: Channel interface (email + multiple webhooks with custom headers/templates)
+events.go          — EventWatcher: Docker Events API listener, real-time container state updates
+hub.go             — Hub: pub/sub message fan-out to connected clients, topic-based subscriptions
+socket.go          — SocketServer: Unix socket listener, per-client connection handling, request dispatch
+convert.go         — Type conversion helpers between internal and protocol types
+downsample.go      — Metric downsampling for historical queries
 ```
 
 **Critical import rule:** `internal/protocol` is the contract between agent and client. Both `agent` and `tui` import `protocol` but never import each other. This enables splitting into separate binaries later.
@@ -187,7 +192,7 @@ The alerter receives the same data already collected — no additional I/O.
 - Wire format: 4-byte big-endian length prefix + msgpack-encoded `Envelope{Type, ID, Body}`.
 - Two patterns: streaming (ID=0, agent pushes) and request-response (ID>0, client initiates).
 - `protocol.WriteMsg`/`ReadMsg` handle framing. `EncodeBody`/`DecodeBody` for the body field.
-- `MaxMessageSize` = 4MB. Both sides enforce this.
+- `MaxMessageSize` = 16MB. Both sides enforce this.
 - Hub fans out streaming messages by topic (`metrics`, `logs`, `alerts`, `containers`). Clients subscribe/unsubscribe.
 - Socket server limits concurrent connections (configurable). Each client gets its own read/write goroutines.
 - Validation: all string fields (container ID, rule name) are length-bounded and sanitized server-side.
@@ -209,12 +214,12 @@ The alerter receives the same data already collected — no additional I/O.
 - Client has one reader goroutine dispatching streaming msgs via `prog.Send()` and request-response via per-ID channels.
 - Reader goroutine starts in `SetProgram()`, not `NewClient()`, to avoid nil prog race.
 - **Multi-server:** `Session` struct (`session.go`) holds all per-server data (metrics, history, view state). `App` has `sessions map[string]*Session` and `activeSession`. All streaming messages carry a `Server` field for routing to the correct session. Server picker via `S` key when multiple sessions exist.
-- **Tracking toggle:** `t` key in dashboard toggles tracking per-container or per-group. Sends `action:set_tracking` to the agent. Untracked containers are visible but dimmed with `—` stats. Runtime-only state (resets on agent restart).
+- **Tracking toggle:** `t` key in dashboard toggles tracking per-container or per-group. Sends `action:set_tracking` to the agent. Untracked containers are visible but dimmed with `—` stats. Tracking state is persisted to SQLite and survives agent restarts.
 
 ### Docker runtime tracking
 
-- `DockerCollector` has `untracked`/`untrackedProjects` maps for runtime tracking state.
-- `SetTracking(name, project, tracked)` updates maps under `mu`. `IsTracked(name, project)` reads under `mu.RLock`.
+- `DockerCollector` has a single `tracked map[string]bool` keyed by container name.
+- `SetTracking(name, project, tracked)` — if project is set, iterates `lastContainers` and toggles all containers in that project individually. `IsTracked(name)` is a simple map lookup.
 - `Collect()` separates all containers (for TUI visibility) from tracked containers (for log sync/alert eval).
 - Config `include`/`exclude` is the permanent baseline; runtime tracking overlays on top.
 

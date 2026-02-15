@@ -426,7 +426,6 @@ When connected to multiple servers, use `Tab` to focus the servers panel, then `
 | `Enter` | Expand log entry |
 | `s` | Cycle stream filter (all/stdout/stderr) |
 | `f` | Open log filter |
-| `g` | Cycle project filter |
 | `Esc` | Back to dashboard |
 
 ## Security
@@ -437,7 +436,7 @@ When connected to multiple servers, use `Tab` to focus the servers panel, then `
 
 **Config file:** The agent config contains SMTP credentials and webhook URLs. Permissions should be `0600` owned by the user running the agent.
 
-**No exposed ports:** Tori does not listen on any network port. All client communication goes through SSH to the Unix socket. There is no HTTP server, no API endpoint, nothing to expose or firewall.
+**No exposed ports:** Tori does not listen on any network port. All client communication goes through SSH to the Unix socket. There is no HTTP server, no API endpoint, nothing to expose or firewall. SSH compression is enabled by default on all tunnels to reduce bandwidth for metrics and log traffic.
 
 **Log contents:** Tori stores container logs in SQLite. These may contain sensitive application data (tokens, user info, errors with PII). The database file at `/var/lib/tori/tori.db` should have restrictive permissions and the retention policy should be set appropriately.
 

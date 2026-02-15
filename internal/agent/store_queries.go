@@ -300,11 +300,9 @@ func (s *Store) QueryContainerMetrics(ctx context.Context, start, end int64, fil
 	return result, rows.Err()
 }
 
-func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) {
-	query := `SELECT timestamp, container_id, container_name, project, service, stream, message FROM logs WHERE timestamp >= ? AND timestamp <= ?`
-	args := []any{f.Start, f.End}
-
-	// Service/project identity filter takes precedence over container ID filter.
+// logScopeFilter appends WHERE clauses for service/project/container identity
+// to the query. Shared by CountLogs and QueryLogs to keep filter logic in sync.
+func logScopeFilter(query string, args []any, f LogFilter) (string, []any) {
 	if f.Service != "" {
 		if f.Project != "" {
 			query += ` AND project = ? AND service = ?`
@@ -327,6 +325,27 @@ func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) 
 		}
 		query += ` AND container_id IN (` + strings.Join(placeholders, ",") + `)`
 	}
+	return query, args
+}
+
+// CountLogs returns the total number of log entries matching the scope filter
+// (container/project + time range). Search, Stream, and Limit are excluded so
+// the count represents the total scope, not the filtered subset.
+func (s *Store) CountLogs(ctx context.Context, f LogFilter) (int, error) {
+	query := `SELECT COUNT(*) FROM logs WHERE timestamp >= ? AND timestamp <= ?`
+	args := []any{f.Start, f.End}
+	query, args = logScopeFilter(query, args, f)
+
+	var count int
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&count)
+	return count, err
+}
+
+func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) {
+	query := `SELECT timestamp, container_id, container_name, project, service, stream, message FROM logs WHERE timestamp >= ? AND timestamp <= ?`
+	args := []any{f.Start, f.End}
+	query, args = logScopeFilter(query, args, f)
+
 	if f.Stream != "" {
 		query += ` AND stream = ?`
 		args = append(args, f.Stream)

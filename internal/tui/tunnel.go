@@ -66,7 +66,7 @@ func (t *Tunnel) start(host, remoteSock string, opts SSHOptions) error {
 	}
 	t.localSock = filepath.Join(dir, "tori.sock")
 
-	args := []string{"-N", "-o", "ControlPath=none"}
+	args := []string{"-N", "-C", "-o", "ControlPath=none"}
 	if opts.Port > 0 {
 		args = append(args, "-p", strconv.Itoa(opts.Port))
 	}
@@ -166,7 +166,7 @@ func NewTunnelAskpass(host, remoteSock string, promptFn AskpassPromptFn, opts SS
 	go t.askpassLoop(promptFn)
 
 	// Build SSH command.
-	args := []string{"-N", "-o", "ControlPath=none"}
+	args := []string{"-N", "-C", "-o", "ControlPath=none"}
 	if opts.Port > 0 {
 		args = append(args, "-p", strconv.Itoa(opts.Port))
 	}

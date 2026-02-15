@@ -545,6 +545,22 @@ func (c *connState) queryLogs(env *protocol.Envelope) {
 	}
 
 	resp := protocol.QueryLogsResp{Entries: convertLogEntries(entries)}
+
+	// Count total logs in scope (excluding search/stream/limit) so the TUI
+	// can show "X of Y". Non-fatal — proceed with 0 if it fails.
+	countFilter := LogFilter{
+		Start:        filter.Start,
+		End:          filter.End,
+		ContainerIDs: filter.ContainerIDs,
+		Project:      filter.Project,
+		Service:      filter.Service,
+	}
+	if total, err := c.ss.store.CountLogs(c.ctx, countFilter); err != nil {
+		slog.Warn("count logs", "error", err)
+	} else {
+		resp.Total = total
+	}
+
 	c.sendResponse(env.ID, &resp)
 }
 

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -54,40 +53,6 @@ func (s *DetailState) filteredData() []protocol.LogEntryMsg {
 		}
 	}
 	return out
-}
-
-func (s *DetailState) cycleProjectFilter(contInfo []protocol.ContainerInfo) {
-	seen := make(map[string]bool)
-	for _, ci := range contInfo {
-		if ci.Project != "" {
-			seen[ci.Project] = true
-		}
-	}
-	if len(seen) == 0 {
-		s.filterProject = ""
-		return
-	}
-	projects := make([]string, 0, len(seen))
-	for p := range seen {
-		projects = append(projects, p)
-	}
-	sort.Strings(projects)
-
-	if s.filterProject == "" {
-		s.filterProject = projects[0]
-		return
-	}
-	for i, p := range projects {
-		if p == s.filterProject {
-			if i+1 < len(projects) {
-				s.filterProject = projects[i+1]
-			} else {
-				s.filterProject = ""
-			}
-			return
-		}
-	}
-	s.filterProject = ""
 }
 
 // injectDeploySeparators detects container ID transitions in chronologically
@@ -180,12 +145,19 @@ func renderDetailLogs(s *DetailState, rc RenderContext, opts detailLogsOpts) str
 	if opts.label != "" {
 		title += " ── " + opts.label
 	}
-	title += " ── " + FormatNumber(len(data)) + " lines"
-	paused := s.logScroll > 0
-	if paused {
-		title += " ── PAUSED"
+	if s.isSearchActive() {
+		title += " ── " + FormatNumber(len(data)) + " results ── SEARCH"
 	} else {
-		title += " ── LIVE"
+		if s.totalLogCount > 0 {
+			title += " ── " + FormatNumber(len(data)) + " of " + FormatNumber(s.totalLogCount) + " lines"
+		} else {
+			title += " ── " + FormatNumber(len(data)) + " lines"
+		}
+		if s.logScroll > 0 {
+			title += " ── PAUSED"
+		} else {
+			title += " ── LIVE"
+		}
 	}
 
 	return Box(title, strings.Join(lines, "\n"), rc.Width, boxH, theme, opts.focused)
@@ -461,15 +433,15 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 
 	// Filter modal captures all keys when open.
 	if det.filterModal != nil {
-		return updateFilterModal(det, key, a.displayCfg)
+		return updateFilterModal(det, s, key, a.displayCfg)
 	}
 
 	if key == "esc" {
-		if det.searchText != "" || det.filterFrom != 0 || det.filterTo != 0 {
+		if det.isSearchActive() {
 			det.searchText = ""
 			det.filterFrom = 0
 			det.filterTo = 0
-			det.resetLogPosition()
+			return refetchLogs(det, s.Client, s.RetentionDays)
 		} else if det.filterStream != "" {
 			det.filterStream = ""
 			det.resetLogPosition()
@@ -490,10 +462,6 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 		default:
 			det.filterStream = ""
 		}
-		det.resetLogPosition()
-		return nil
-	case "g":
-		det.cycleProjectFilter(s.ContInfo)
 		det.resetLogPosition()
 		return nil
 	}
@@ -577,7 +545,7 @@ func updateDetail(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
 }
 
 // updateFilterModal handles keys inside the filter modal.
-func updateFilterModal(det *DetailState, key string, cfg DisplayConfig) tea.Cmd {
+func updateFilterModal(det *DetailState, s *Session, key string, cfg DisplayConfig) tea.Cmd {
 	m := det.filterModal
 	switch key {
 	case "tab":
@@ -587,7 +555,17 @@ func updateFilterModal(det *DetailState, key string, cfg DisplayConfig) tea.Cmd 
 		det.filterFrom = parseFilterBound(m.fromDate.resolved(), m.fromTime.resolved(), cfg.DateFormat, cfg.TimeFormat, false)
 		det.filterTo = parseFilterBound(m.toDate.resolved(), m.toTime.resolved(), cfg.DateFormat, cfg.TimeFormat, true)
 		det.filterModal = nil
-		det.resetLogPosition()
+
+		if det.isSearchActive() {
+			// Server-side search: reset buffer and fetch filtered results.
+			det.logs = NewRingBuffer[protocol.LogEntryMsg](logBufCapacity)
+			det.logScroll = 0
+			det.logCursor = 0
+			det.backfilled = false
+			return fireSearch(det, s.Client, s.RetentionDays)
+		}
+		// All filters cleared — return to live tailing.
+		return refetchLogs(det, s.Client, s.RetentionDays)
 	case "esc":
 		det.filterModal = nil
 	case "backspace":

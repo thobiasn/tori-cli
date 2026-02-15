@@ -137,6 +137,7 @@ type QueryLogsReq struct {
 // QueryLogsResp is the response for TypeQueryLogs.
 type QueryLogsResp struct {
 	Entries []LogEntryMsg `msgpack:"entries"`
+	Total   int           `msgpack:"total,omitempty"`
 }
 
 // QueryAlertsReq is the body for TypeQueryAlerts.
