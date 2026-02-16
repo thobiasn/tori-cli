@@ -89,9 +89,14 @@ func runAgent(args []string) {
 	sighup := make(chan os.Signal, 1)
 	signal.Notify(sighup, syscall.SIGHUP)
 	go func() {
-		for range sighup {
-			if err := a.Reload(); err != nil {
-				slog.Error("config reload failed", "error", err)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-sighup:
+				if err := a.Reload(); err != nil {
+					slog.Error("config reload failed", "error", err)
+				}
 			}
 		}
 	}()

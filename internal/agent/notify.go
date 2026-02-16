@@ -89,7 +89,7 @@ type emailChannel struct {
 	cfg EmailConfig
 }
 
-func (e *emailChannel) Send(_ context.Context, subject, body string) error {
+func (e *emailChannel) Send(ctx context.Context, subject, body string) error {
 	addr := net.JoinHostPort(e.cfg.SMTPHost, fmt.Sprintf("%d", e.cfg.SMTPPort))
 
 	// Sanitize header values to prevent SMTP header injection.
@@ -104,8 +104,9 @@ func (e *emailChannel) Send(_ context.Context, subject, body string) error {
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\n\r\n%s",
 		from, toHeader, subject, time.Now().Format(time.RFC1123Z), body)
 
-	// Use a dialer with timeout so SMTP doesn't block the collect loop indefinitely.
-	conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	// Use a context-aware dialer so SMTP respects cancellation.
+	dialer := net.Dialer{Timeout: 10 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return fmt.Errorf("smtp connect: %w", err)
 	}

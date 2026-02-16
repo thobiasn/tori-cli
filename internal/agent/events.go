@@ -105,7 +105,7 @@ func (ew *EventWatcher) watch(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			ew.handleEvent(msg)
+			ew.handleEvent(ctx, msg)
 		}
 	}
 }
@@ -138,7 +138,7 @@ const (
 	maxActionLen      = 64
 )
 
-func (ew *EventWatcher) handleEvent(msg events.Message) {
+func (ew *EventWatcher) handleEvent(ctx context.Context, msg events.Message) {
 	action := msg.Action
 	actionStr := string(action)
 
@@ -211,7 +211,7 @@ func (ew *EventWatcher) handleEvent(msg events.Message) {
 			if isHealth {
 				cm.State = "running"
 			}
-			alerter.EvaluateContainerEvent(context.Background(), cm)
+			alerter.EvaluateContainerEvent(ctx, cm)
 		}
 	}
 }

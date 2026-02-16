@@ -144,7 +144,7 @@ func TestApplyConfigUpdatesFields(t *testing.T) {
 		Docker:  DockerConfig{Include: []string{"api-*"}, Exclude: []string{"test-*"}},
 	}
 
-	a.applyConfig(newCfg)
+	a.applyConfig(context.Background(),newCfg)
 
 	if a.cfg.Storage.RetentionDays != 14 {
 		t.Errorf("retention = %d, want 14", a.cfg.Storage.RetentionDays)
@@ -216,7 +216,7 @@ func TestApplyConfigRebuildsAlerter(t *testing.T) {
 		},
 	}
 
-	a.applyConfig(newCfg)
+	a.applyConfig(context.Background(),newCfg)
 
 	if a.alerter == nil {
 		t.Fatal("alerter should be set after reload with alert rules")
@@ -231,7 +231,7 @@ func TestApplyConfigRebuildsAlerter(t *testing.T) {
 		Collect: CollectConfig{Interval: Duration{Duration: 10 * time.Second}},
 	}
 
-	a.applyConfig(noAlertCfg)
+	a.applyConfig(context.Background(),noAlertCfg)
 
 	if a.alerter != nil {
 		t.Error("alerter should be nil after reload without alert rules")
