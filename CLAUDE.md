@@ -216,6 +216,26 @@ The alerter receives the same data already collected — no additional I/O.
 - **Multi-server:** `Session` struct (`session.go`) holds all per-server data (metrics, history, view state). `App` has `sessions map[string]*Session` and `activeSession`. All streaming messages carry a `Server` field for routing to the correct session. Server picker via `S` key when multiple sessions exist.
 - **Tracking toggle:** `t` key in dashboard toggles tracking per-container or per-group. Sends `action:set_tracking` to the agent. Untracked containers are visible but dimmed with `—` stats. Tracking state is persisted to SQLite and survives agent restarts.
 
+### TUI theming conventions
+
+- All colors live in a single `Theme` struct (`internal/tui2/theme.go`). Views reference `theme.Foo`, never raw color values.
+- Color helper functions (e.g., `containerCPUColor`, `containerMemColor`, `UsageColor`, `StateColor`) take a `*Theme` and return `lipgloss.Color`.
+- Selected/cursor rows use `Reverse(true)` — no separate selection color needed.
+- Untracked containers render the entire row with `FgDim` (dimmed).
+- Semantic colors: `Healthy` (green), `Warning` (amber), `Critical` (red), `FgDim` (muted/informational).
+
+### Container resource limit display
+
+- **Limits come from `ContainerInspect`**: `HostConfig.NanoCPUs` (or `CPUQuota/CPUPeriod`) for CPU, `HostConfig.Memory` for memory. Cached with inspect results.
+- **`CPULimit`** (float64, cores): 0 = no limit. Not persisted to DB — live-only data for TUI coloring.
+- **`MemLimit`** semantics changed: 0 = no configured limit, >0 = configured limit in bytes. The stats API's `MemoryStats.Limit` (which equals host total when uncapped) is overridden to 0 when no Docker limit is set.
+- **`MemPercent`** is always valid: with a limit it's `usage/limit*100`, without it's `usage/host_total*100`. The override only affects `MemLimit` (coloring mode), not `MemPercent`.
+- **CPU coloring — always host-relative, plus limit-relative when capped**: CPU is a zero-sum shared resource, so high usage is always worth flagging. Host-relative thresholds: <3% `FgDim`, 3–8% `Fg`, >8% `Warning`, >25% `Critical`. When a CPU limit exists, also compute limit-relative severity (<70% `FgDim`, 70–89% `Warning`, ≥90% `Critical`) and use whichever is worse. This means a container at 5% host CPU but 92% of its 0.05 limit shows `Critical`, and a container at 12% host CPU but 30% of its limit still shows `Warning` from the host rule.
+- **Memory coloring — "no limit = no severity"**: memory is not zero-sum in the same way as CPU; usage without a limit may be intended. No limit: always `FgDim`. Has limit: <70% `FgDim`, 70–89% `Warning`, ≥90% `Critical`.
+- **CPU threshold math**: `CPUPercent` uses docker stats convention (100% = 1 core). `CPULimit` is in cores. Percentage of limit = `CPUPercent / CPULimit`. No host CPU count needed.
+- **Project summary rows**: color = worst severity among child containers for CPU and memory independently (tracked via `colorRank` helper: FgDim=0, Fg=1, Warning=2, Critical=3).
+- **Edge cases**: container with >100% of limit still shows `Critical`. Mixed limits in a group (some with, some without) — each child colored independently, summary takes worst.
+
 ### Docker runtime tracking
 
 - `DockerCollector` has a single `tracked map[string]bool` keyed by container name.
