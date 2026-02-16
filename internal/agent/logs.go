@@ -54,7 +54,7 @@ func (lt *LogTailer) Sync(ctx context.Context, containers []Container) {
 			lt.tailers[c.ID] = cancel
 			lt.wg.Add(1)
 			idProject, idService := serviceIdentity(c.Project, c.Service, c.Name)
-			go lt.tail(tailerCtx, c.ID, c.Name, idProject, idService)
+			go lt.tail(tailerCtx, c.ID, c.Name, idProject, idService, c.StartedAt)
 		}
 	}
 
@@ -79,16 +79,24 @@ func (lt *LogTailer) Stop() {
 	lt.wg.Wait()
 }
 
-func (lt *LogTailer) tail(ctx context.Context, containerID, containerName, project, service string) {
+func (lt *LogTailer) tail(ctx context.Context, containerID, containerName, project, service string, startedAt int64) {
 	defer lt.wg.Done()
 
-	logs, err := lt.client.ContainerLogs(ctx, containerID, container.LogsOptions{
+	opts := container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     true,
-		Tail:       "0", // only new logs
 		Timestamps: true,
-	})
+	}
+	if startedAt > 0 {
+		// Fetch logs from container start so we don't miss lines produced
+		// between the container starting and the tailer attaching.
+		opts.Since = time.Unix(startedAt, 0).UTC().Format(time.RFC3339)
+	} else {
+		opts.Tail = "0"
+	}
+
+	logs, err := lt.client.ContainerLogs(ctx, containerID, opts)
 	if err != nil {
 		slog.Warn("failed to start log tail", "container", containerName, "error", err)
 		return
