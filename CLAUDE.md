@@ -236,6 +236,13 @@ The alerter receives the same data already collected — no additional I/O.
 - **Project summary rows**: color = worst severity among child containers for CPU and memory independently (tracked via `colorRank` helper: FgDim=0, Fg=1, Warning=2, Critical=3).
 - **Edge cases**: container with >100% of limit still shows `Critical`. Mixed limits in a group (some with, some without) — each child colored independently, summary takes worst.
 
+### Dashboard secondary metrics line
+
+- Single centered line below the host sparklines: `disk 15.3% · load 0.38 0.40 0.33`.
+- Labels (`disk`, `load`) always `FgDim`. Only the values get severity-colored.
+- **Disk**: shows the highest `Percent` across all mountpoints. Thresholds: <70% `FgDim`, 70–89% `Warning`, ≥90% `Critical`. Aligns with `host.disk_percent > 90` alert rule.
+- **Load**: all three values colored as a group based on `load1 / CPUs`. Ratio <0.7 `FgDim`, 0.7–1.0 `Warning`, >1.0 `Critical`. `CPUs` is the logical core count from `/proc/stat` (`cpuN` lines), propagated as `HostMetrics.CPUs` (live-only, not persisted).
+
 ### Docker runtime tracking
 
 - `DockerCollector` has a single `tracked map[string]bool` keyed by container name.

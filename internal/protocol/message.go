@@ -242,6 +242,7 @@ type ErrorResult struct {
 
 type HostMetrics struct {
 	CPUPercent float64 `msgpack:"cpu_percent"`
+	CPUs       int     `msgpack:"cpus,omitempty"`
 	MemTotal   uint64  `msgpack:"mem_total"`
 	MemUsed    uint64  `msgpack:"mem_used"`
 	MemPercent float64 `msgpack:"mem_percent"`

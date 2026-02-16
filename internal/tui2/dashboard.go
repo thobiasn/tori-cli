@@ -133,12 +133,38 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		sections = append(sections, renderHostGraphs(s, contentW, theme))
 	}
 
-	// 4. Divider
-	sections = append(sections, renderSpacedDivider(contentW, theme))
+	// 4. Disk + load summary line
+	summaryLine := 0
+	if s.Host != nil {
+		muted := lipgloss.NewStyle().Foreground(theme.FgDim)
+		var parts []string
+		if len(s.Disks) > 0 {
+			// Use the highest disk usage percentage.
+			var maxPct float64
+			for _, d := range s.Disks {
+				if d.Percent > maxPct {
+					maxPct = d.Percent
+				}
+			}
+			diskColor := diskSeverityColor(maxPct, theme)
+			parts = append(parts,
+				muted.Render("disk ")+lipgloss.NewStyle().Foreground(diskColor).Render(fmt.Sprintf("%.1f%%", maxPct)))
+		}
+		loadColor := loadSeverityColor(s.Host.Load1, s.Host.CPUs, theme)
+		loadVals := fmt.Sprintf("%.2f %.2f %.2f", s.Host.Load1, s.Host.Load5, s.Host.Load15)
+		parts = append(parts,
+			muted.Render("load ")+lipgloss.NewStyle().Foreground(loadColor).Render(loadVals))
+		sep := " " + muted.Render("·") + " "
+		sections = append(sections, centerText(strings.Join(parts, sep), contentW))
+		summaryLine = 1
+	}
 
-	// 5. Container list (fills remaining space)
-	// Fixed sections: header(2) + time divider(2) + host graphs(4) + divider(2) + divider(1) + status(1) + help(1) = 13
-	fixedH := 13
+	// 5. Divider
+	sections = append(sections, renderDivider(contentW, theme))
+
+	// 6. Container list (fills remaining space)
+	// Fixed sections: header(2) + time divider(2) + host graphs(4) + divider(1) + divider(1) + status(1) + help(1) = 12
+	fixedH := 12 + summaryLine
 	if s.Host == nil {
 		fixedH -= 4 // no host graphs
 	}
@@ -186,7 +212,11 @@ func renderHeader(a *App, s *Session, w int, theme *Theme) string {
 	accent := lipgloss.NewStyle().Foreground(theme.Accent)
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
 
-	logo := accent.Render("—(•)>")
+	bird := "—(•)>"
+	if a.birdBlink {
+		bird = "—(-)>"
+	}
+	logo := accent.Render(bird)
 
 	// Server name + health status + alert summary.
 	var statusStr, alertStr string
@@ -251,6 +281,7 @@ func renderHostGraphs(s *Session, w int, theme *Theme) string {
 		indent + memTop + pctPad + "\n" +
 		muted.Render("mem ") + memBot + muted.Render(memPct)
 }
+
 
 func renderDivider(w int, theme *Theme) string {
 	style := lipgloss.NewStyle().Foreground(theme.Border)
@@ -598,6 +629,35 @@ func containerMemColor(memPct float64, memLimit uint64, theme *Theme) lipgloss.C
 	case memPct >= 90:
 		return theme.Critical
 	case memPct >= 70:
+		return theme.Warning
+	default:
+		return theme.FgDim
+	}
+}
+
+// diskSeverityColor returns a color for disk usage percentage.
+// Thresholds align with the alert rule host.disk_percent > 90.
+func diskSeverityColor(pct float64, theme *Theme) lipgloss.Color {
+	switch {
+	case pct >= 90:
+		return theme.Critical
+	case pct >= 70:
+		return theme.Warning
+	default:
+		return theme.FgDim
+	}
+}
+
+// loadSeverityColor returns a color for load average based on load1 / CPU count.
+func loadSeverityColor(load1 float64, cpus int, theme *Theme) lipgloss.Color {
+	if cpus <= 0 {
+		cpus = 1
+	}
+	ratio := load1 / float64(cpus)
+	switch {
+	case ratio > 1.0:
+		return theme.Critical
+	case ratio >= 0.7:
 		return theme.Warning
 	default:
 		return theme.FgDim

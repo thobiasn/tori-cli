@@ -279,7 +279,7 @@ func (a *Agent) collect(ctx context.Context) {
 	update := &protocol.MetricsUpdate{Timestamp: ts.Unix()}
 	if hostMetrics != nil {
 		update.Host = &protocol.HostMetrics{
-			CPUPercent: hostMetrics.CPUPercent, MemTotal: hostMetrics.MemTotal,
+			CPUPercent: hostMetrics.CPUPercent, CPUs: hostMetrics.CPUs, MemTotal: hostMetrics.MemTotal,
 			MemUsed: hostMetrics.MemUsed, MemPercent: hostMetrics.MemPercent,
 			MemCached: hostMetrics.MemCached, MemFree: hostMetrics.MemFree,
 			SwapTotal: hostMetrics.SwapTotal, SwapUsed: hostMetrics.SwapUsed,

@@ -58,6 +58,9 @@ type ruleCountMsg struct {
 	count  int
 }
 
+// birdBlinkResetMsg signals the bird eye should reopen.
+type birdBlinkResetMsg struct{}
+
 // Backfill messages.
 type metricsBackfillMsg struct {
 	server    string
@@ -102,6 +105,7 @@ type App struct {
 	switcherCursor int
 
 	spinnerFrame int
+	birdBlink    bool // true = bird eye closed (data just arrived)
 
 	// Connection lifecycle.
 	ctx              *appCtx
@@ -462,6 +466,16 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.groups = buildGroups(msg.Containers, s.ContInfo)
 			}
 		}
+		if !a.birdBlink {
+			a.birdBlink = true
+			return a, tea.Tick(150*time.Millisecond, func(time.Time) tea.Msg {
+				return birdBlinkResetMsg{}
+			})
+		}
+		return a, nil
+
+	case birdBlinkResetMsg:
+		a.birdBlink = false
 		return a, nil
 
 	case metricsBackfillMsg:

@@ -261,6 +261,7 @@ func (s *Store) ensureColumns() {
 // HostMetrics represents a single host metrics snapshot.
 type HostMetrics struct {
 	CPUPercent float64
+	CPUs       int // number of logical CPU cores (live-only, not persisted)
 	MemTotal   uint64
 	MemUsed    uint64
 	MemPercent float64

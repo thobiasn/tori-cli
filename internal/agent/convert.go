@@ -8,7 +8,7 @@ func convertTimedHost(src []TimedHostMetrics) []protocol.TimedHostMetrics {
 		out[i] = protocol.TimedHostMetrics{
 			Timestamp: s.Timestamp.Unix(),
 			HostMetrics: protocol.HostMetrics{
-				CPUPercent: s.CPUPercent, MemTotal: s.MemTotal, MemUsed: s.MemUsed, MemPercent: s.MemPercent,
+				CPUPercent: s.CPUPercent, CPUs: s.CPUs, MemTotal: s.MemTotal, MemUsed: s.MemUsed, MemPercent: s.MemPercent,
 				MemCached: s.MemCached, MemFree: s.MemFree,
 				SwapTotal: s.SwapTotal, SwapUsed: s.SwapUsed,
 				Load1: s.Load1, Load5: s.Load5, Load15: s.Load15, Uptime: s.Uptime,
