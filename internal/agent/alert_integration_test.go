@@ -889,7 +889,7 @@ func TestShutdownResolvesAlerts(t *testing.T) {
 	}
 
 	// Simulate shutdown.
-	alerter.ResolveAll()
+	alerter.ResolveAll(context.Background())
 
 	firing, _ = s.QueryFiringAlerts(ctx)
 	if len(firing) != 0 {

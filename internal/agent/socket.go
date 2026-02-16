@@ -40,6 +40,8 @@ type SocketServer struct {
 	path          string
 	wg            sync.WaitGroup
 	connSem       chan struct{}
+	ctx           context.Context
+	cancel        context.CancelFunc
 
 	alerterMu sync.RWMutex
 	alerter   *Alerter
@@ -98,6 +100,7 @@ func (ss *SocketServer) Start(path string) error {
 		return fmt.Errorf("chmod socket: %w", err)
 	}
 
+	ss.ctx, ss.cancel = context.WithCancel(context.Background())
 	ss.listener = ln
 	ss.path = path
 	ss.wg.Add(1)
@@ -108,6 +111,9 @@ func (ss *SocketServer) Start(path string) error {
 
 // Stop closes the listener, waits for all connections, and removes the socket file.
 func (ss *SocketServer) Stop() {
+	if ss.cancel != nil {
+		ss.cancel()
+	}
 	if ss.listener != nil {
 		ss.listener.Close()
 	}
@@ -150,7 +156,7 @@ func (ss *SocketServer) handleConn(conn net.Conn) {
 
 	slog.Info("client connected", "remote", conn.RemoteAddr())
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ss.ctx)
 	defer cancel()
 
 	c := &connState{

@@ -412,13 +412,13 @@ func (a *Alerter) AdoptFiring(ctx context.Context) error {
 }
 
 // ResolveAll resolves all firing alerts. Called before replacing the alerter on config reload.
-func (a *Alerter) ResolveAll() {
+func (a *Alerter) ResolveAll(ctx context.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	now := a.now()
 	for key, inst := range a.instances {
 		if inst.state == stateFiring {
-			a.resolve(context.Background(), a.ruleForKey(key), key, inst, now)
+			a.resolve(ctx, a.ruleForKey(key), key, inst, now)
 		}
 	}
 }

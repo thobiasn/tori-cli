@@ -237,7 +237,9 @@ func (a *App) processAutoConnectQueue() tea.Cmd {
 }
 
 // connectServerCmd returns a tea.Cmd that connects to a server in a goroutine.
-func connectServerCmd(name string, cfg ServerConfig, appctx *appCtx) tea.Cmd {
+// ctx must be created by the caller on the Update thread (not inside the goroutine)
+// so that connectCancel can be set without a data race.
+func connectServerCmd(name string, cfg ServerConfig, appctx *appCtx, ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
 		remoteSock := cfg.Socket
 		if remoteSock == "" {
@@ -275,9 +277,6 @@ func connectServerCmd(name string, cfg ServerConfig, appctx *appCtx) tea.Cmd {
 				return connectDoneMsg{server: name, err: fmt.Errorf("tunnel: %w", err)}
 			}
 
-			// Wait for tunnel with generous timeout.
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancel()
 			if err := tunnel.WaitReady(ctx); err != nil {
 				tunnel.Close()
 				return connectDoneMsg{server: name, err: fmt.Errorf("tunnel: %w", err)}
@@ -288,7 +287,7 @@ func connectServerCmd(name string, cfg ServerConfig, appctx *appCtx) tea.Cmd {
 			sockPath = remoteSock
 		}
 
-		conn, err := net.Dial("unix", sockPath)
+		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
 		if err != nil {
 			if tunnel != nil {
 				tunnel.Close()
@@ -316,7 +315,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		s.ConnState = ConnConnecting
 		s.ConnMsg = "connecting..."
 		a.connecting = msg.name
-		return a, connectServerCmd(msg.name, s.Config, a.ctx)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		s.connectCancel = cancel
+		return a, connectServerCmd(msg.name, s.Config, a.ctx, ctx)
 
 	case disconnectServerMsg:
 		s := a.sessions[msg.name]
@@ -561,6 +562,11 @@ func (a *App) handleConnectDone(msg connectDoneMsg) (App, tea.Cmd) {
 
 	if a.connecting == msg.server {
 		a.connecting = ""
+	}
+
+	if s.connectCancel != nil {
+		s.connectCancel()
+		s.connectCancel = nil
 	}
 
 	if msg.err != nil {

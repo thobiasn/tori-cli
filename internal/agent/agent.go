@@ -143,7 +143,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		case <-ticker.C:
 			a.collect(ctx)
 		case newCfg := <-a.reload:
-			a.applyConfig(newCfg)
+			a.applyConfig(ctx, newCfg)
 			ticker.Reset(a.cfg.Collect.Interval.Duration)
 		}
 	}
@@ -168,7 +168,7 @@ func nonReloadableFields(old, updated *Config) {
 	}
 }
 
-func (a *Agent) applyConfig(newCfg *Config) {
+func (a *Agent) applyConfig(ctx context.Context, newCfg *Config) {
 	nonReloadableFields(a.cfg, newCfg)
 
 	// Reloadable fields.
@@ -191,14 +191,14 @@ func (a *Agent) applyConfig(newCfg *Config) {
 		}
 		alerter.onStateChange = a.makeOnStateChange()
 		if a.alerter != nil {
-			a.alerter.ResolveAll()
+			a.alerter.ResolveAll(ctx)
 		}
 		a.alerter = alerter
 		a.socket.SetAlerter(alerter)
 		a.events.SetAlerter(alerter)
 	} else {
 		if a.alerter != nil {
-			a.alerter.ResolveAll()
+			a.alerter.ResolveAll(ctx)
 		}
 		a.alerter = nil
 		a.socket.SetAlerter(nil)
