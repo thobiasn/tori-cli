@@ -15,7 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/thobiasn/tori-cli/internal/agent"
-	"github.com/thobiasn/tori-cli/internal/tui"
+	tui "github.com/thobiasn/tori-cli/internal/tui2"
 )
 
 // version is set via -ldflags at build time. GoReleaser fills this automatically.
