@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/thobiasn/tori-cli/internal/protocol"
@@ -34,7 +35,7 @@ type SocketServer struct {
 	hub           *Hub
 	store         *Store
 	docker        *DockerCollector
-	retentionDays int
+	retentionDays atomic.Int32
 	listener      net.Listener
 	path          string
 	wg            sync.WaitGroup
@@ -47,14 +48,15 @@ type SocketServer struct {
 // NewSocketServer creates a SocketServer. Call Start to begin accepting connections.
 // retentionDays controls the maximum query range; 0 falls back to 24h.
 func NewSocketServer(hub *Hub, store *Store, docker *DockerCollector, alerter *Alerter, retentionDays int) *SocketServer {
-	return &SocketServer{
-		hub:           hub,
-		store:         store,
-		docker:        docker,
-		alerter:       alerter,
-		retentionDays: retentionDays,
-		connSem:       make(chan struct{}, maxConnections),
+	ss := &SocketServer{
+		hub:     hub,
+		store:   store,
+		docker:  docker,
+		alerter: alerter,
+		connSem: make(chan struct{}, maxConnections),
 	}
+	ss.retentionDays.Store(int32(retentionDays))
+	return ss
 }
 
 // SetAlerter replaces the alerter used for silence operations.
@@ -64,9 +66,14 @@ func (ss *SocketServer) SetAlerter(a *Alerter) {
 	ss.alerter = a
 }
 
+// SetRetentionDays updates the retention days used for query range limits.
+func (ss *SocketServer) SetRetentionDays(days int) {
+	ss.retentionDays.Store(int32(days))
+}
+
 // maxQueryRange returns the maximum allowed query range in seconds.
 func (ss *SocketServer) maxQueryRange() int64 {
-	r := int64(ss.retentionDays) * 86400
+	r := int64(ss.retentionDays.Load()) * 86400
 	if r <= 0 {
 		return defaultMaxQueryRange
 	}
@@ -476,7 +483,7 @@ func (c *connState) queryMetrics(env *protocol.Envelope) {
 	containerOut := convertTimedContainer(containers)
 
 	resp := protocol.QueryMetricsResp{
-		RetentionDays: c.ss.retentionDays,
+		RetentionDays: int(c.ss.retentionDays.Load()),
 	}
 
 	if req.Points > 0 {

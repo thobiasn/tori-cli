@@ -179,6 +179,7 @@ func (a *Agent) applyConfig(newCfg *Config) {
 
 	// Docker filters.
 	a.docker.SetFilters(newCfg.Docker.Include, newCfg.Docker.Exclude)
+	a.socket.SetRetentionDays(newCfg.Storage.RetentionDays)
 
 	// Rebuild alerter + notifier if alert/notify config changed.
 	if len(newCfg.Alerts) > 0 {

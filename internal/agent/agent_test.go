@@ -149,6 +149,9 @@ func TestApplyConfigUpdatesFields(t *testing.T) {
 	if a.cfg.Storage.RetentionDays != 14 {
 		t.Errorf("retention = %d, want 14", a.cfg.Storage.RetentionDays)
 	}
+	if got := ss.retentionDays.Load(); got != 14 {
+		t.Errorf("socket retentionDays = %d, want 14", got)
+	}
 	if a.cfg.Collect.Interval.Duration != 30*time.Second {
 		t.Errorf("interval = %s, want 30s", a.cfg.Collect.Interval.Duration)
 	}
