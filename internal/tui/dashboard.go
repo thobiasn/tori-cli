@@ -245,13 +245,19 @@ func renderHostGraphs(a *App, s *Session, w int, theme *Theme) string {
 	indent := strings.Repeat(" ", labelW)
 	pctPad := strings.Repeat(" ", pctW)
 
-	if s.Host == nil {
+	if s.Host == nil || s.BackfillPending {
 		cpuTop, cpuBot := LoadingSparkline(a.spinnerFrame, graphW, theme.FgDim)
 		memTop, memBot := LoadingSparkline(a.spinnerFrame+3, graphW, theme.FgDim)
+		cpuPct := pctPad
+		memPct := pctPad
+		if s.Host != nil {
+			cpuPct = muted.Render(rightAlign(fmt.Sprintf(" %.1f%%", s.Host.CPUPercent), pctW))
+			memPct = muted.Render(rightAlign(fmt.Sprintf(" %.1f%%", s.Host.MemPercent), pctW))
+		}
 		return indent + cpuTop + pctPad + "\n" +
-			muted.Render("cpu ") + cpuBot + pctPad + "\n" +
+			muted.Render("cpu ") + cpuBot + cpuPct + "\n" +
 			indent + memTop + pctPad + "\n" +
-			muted.Render("mem ") + memBot + pctPad
+			muted.Render("mem ") + memBot + memPct
 	}
 
 	cpuTop, cpuBot := Sparkline(s.HostCPUHist.Data(), graphW, theme.GraphCPU)
