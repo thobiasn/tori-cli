@@ -97,6 +97,7 @@ func (a *App) handleDetailKey(msg tea.KeyMsg) (App, tea.Cmd) {
 
 	case "G":
 		det.logScroll = 0
+		det.logPaused = false
 		data := det.filteredData()
 		if len(data) > 0 {
 			det.logCursor = len(data) - 1
@@ -118,10 +119,13 @@ func (a *App) handleDetailKey(msg tea.KeyMsg) (App, tea.Cmd) {
 	case "j", "down":
 		if det.logCursor < visibleCount-1 {
 			det.logCursor++
-		} else if det.logScroll > 0 {
-			det.logScroll--
+		}
+		// Resume when cursor reaches the bottom of visible entries.
+		if det.logPaused && det.logCursor >= visibleCount-1 {
+			det.resetLogPosition()
 		}
 	case "k", "up":
+		det.logPaused = true
 		if det.logCursor > 0 {
 			det.logCursor--
 		} else if det.logScroll < maxScroll {
@@ -171,6 +175,7 @@ func updateFilterModal(det *DetailState, s *Session, key string, cfg DisplayConf
 			det.logs = NewRingBuffer[protocol.LogEntryMsg](logBufCapacity)
 			det.logScroll = 0
 			det.logCursor = 0
+			det.logPaused = false
 			det.backfilled = false
 			return fireSearch(det, s.Client, s.RetentionDays)
 		}

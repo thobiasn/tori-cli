@@ -236,6 +236,10 @@ func (a *Agent) makeOnStateChange() func(alert *Alert, state string) {
 }
 
 func (a *Agent) collect(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+
 	ts := time.Now()
 
 	// Host metrics.
@@ -256,6 +260,9 @@ func (a *Agent) collect(ctx context.Context) {
 
 	// Docker metrics.
 	containerMetrics, containers, err := a.docker.Collect(ctx)
+	if ctx.Err() != nil {
+		return
+	}
 	if err != nil {
 		slog.Error("docker collect failed", "error", err)
 	} else {

@@ -1,0 +1,32 @@
+name: monitoring
+services:
+  grafana:
+    image: alpine:3.21
+    command: >
+      sh -c "
+        /opt/log-generator.sh &
+        sleep infinity
+      "
+    environment:
+      SERVICE_TYPE: generic
+    volumes:
+      - ./log-generator.sh:/opt/log-generator.sh:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "true"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  prometheus:
+    image: alpine:3.21
+    command: >
+      sh -c "
+        /opt/log-generator.sh &
+        sleep infinity
+      "
+    environment:
+      SERVICE_TYPE: generic
+    volumes:
+      - ./log-generator.sh:/opt/log-generator.sh:ro
+    restart: unless-stopped

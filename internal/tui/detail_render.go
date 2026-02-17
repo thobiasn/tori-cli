@@ -42,9 +42,10 @@ func renderDetail(a *App, s *Session, width, height int) string {
 	var alertLines int
 	alerts := collectDetailAlerts(det, s.Alerts)
 	if len(alerts) > 0 {
+		sections = append(sections, "") // blank line before alerts
 		alertStr := renderDetailAlerts(alerts, contentW, theme)
 		sections = append(sections, alertStr)
-		alertLines = countLines(alertStr)
+		alertLines = 1 + countLines(alertStr)
 	}
 
 	// 6. Divider.
@@ -393,12 +394,16 @@ func renderDetailAlerts(alerts []*protocol.AlertEvent, w int, theme *Theme) stri
 			dur := time.Since(time.Unix(a.FiredAt, 0))
 			since = formatCompactDuration(dur)
 		}
-		icon := lipgloss.NewStyle().Foreground(theme.Warning).Render("⚠")
+		sevColor := theme.Warning
+		if a.Severity == "critical" {
+			sevColor = theme.Critical
+		}
+		icon := lipgloss.NewStyle().Foreground(sevColor).Render("▲")
 		name := lipgloss.NewStyle().Foreground(theme.FgBright).Render(Truncate(a.RuleName, 20))
 		cond := lipgloss.NewStyle().Foreground(theme.FgDim).Render(Truncate(a.Condition, w-40))
-		state := lipgloss.NewStyle().Foreground(theme.Warning).Render(a.State)
+		state := lipgloss.NewStyle().Foreground(sevColor).Render(a.State)
 		line := fmt.Sprintf("%s %s — %s — %s %s", icon, name, cond, state, since)
-		lines = append(lines, TruncateStyled(line, w))
+		lines = append(lines, centerText(TruncateStyled(line, w), w))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -508,7 +513,7 @@ func renderLogStatus(det *DetailState, w int, theme *Theme) string {
 	}
 	if det.isSearchActive() {
 		status += sep + muted.Render("SEARCH")
-	} else if det.logScroll > 0 {
+	} else if det.logPaused {
 		status += sep + muted.Render("PAUSED")
 	} else {
 		status += sep + lipgloss.NewStyle().Foreground(theme.Healthy).Render("LIVE")

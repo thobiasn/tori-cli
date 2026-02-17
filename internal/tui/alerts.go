@@ -114,6 +114,7 @@ func buildAlertList(firing map[int64]*protocol.AlertEvent, resolved []protocol.A
 			condition:   e.Condition,
 			instanceKey: e.InstanceKey,
 			message:     e.Message,
+			acked:       e.Acknowledged,
 		})
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -326,8 +327,12 @@ func (a *App) ackCurrentAlert() (App, tea.Cmd) {
 		return *a, nil
 	}
 	item := items[av.alertCursor]
-	if item.resolved {
+	if item.resolved || item.acked {
 		return *a, nil
+	}
+	// Optimistically mark as acked so the UI updates immediately.
+	if e, ok := s.Alerts[item.id]; ok {
+		e.Acknowledged = true
 	}
 	client := s.Client
 	server := s.Name

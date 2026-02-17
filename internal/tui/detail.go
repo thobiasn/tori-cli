@@ -26,6 +26,7 @@ type DetailState struct {
 	logs      *RingBuffer[protocol.LogEntryMsg]
 	logScroll int
 	logCursor int
+	logPaused bool
 
 	expandModal *logExpandModal
 	filterModal *logFilterModal
@@ -92,6 +93,7 @@ func (s *DetailState) reset() {
 	s.logs = NewRingBuffer[protocol.LogEntryMsg](logBufCapacity)
 	s.logScroll = 0
 	s.logCursor = 0
+	s.logPaused = false
 	s.expandModal = nil
 	s.filterModal = nil
 	s.filterStream = ""
@@ -204,6 +206,9 @@ func (s *DetailState) onStreamEntry(entry protocol.LogEntryMsg) {
 		for _, id := range s.projectIDs {
 			if entry.ContainerID == id {
 				s.logs.Push(entry)
+				if s.logPaused {
+					s.logScroll++
+				}
 				return
 			}
 		}
@@ -213,6 +218,9 @@ func (s *DetailState) onStreamEntry(entry protocol.LogEntryMsg) {
 		return
 	}
 	s.logs.Push(entry)
+	if s.logPaused {
+		s.logScroll++
+	}
 }
 
 func (s *DetailState) handleBackfill(msg detailLogQueryMsg) {
@@ -362,6 +370,7 @@ func (s *DetailState) matchesFilter(entry protocol.LogEntryMsg) bool {
 
 func (s *DetailState) resetLogPosition() {
 	s.logScroll = 0
+	s.logPaused = false
 	s.logCursor = len(s.filteredData()) - 1
 	if s.logCursor < 0 {
 		s.logCursor = 0
@@ -399,7 +408,20 @@ func (a *App) enterDetail() (App, tea.Cmd) {
 
 	item := items[a.cursor]
 	det := &s.Detail
-	det.reset()
+
+	// Check if we're re-entering the same container/project.
+	sameTarget := false
+	if item.isProject {
+		g := a.groups[item.groupIdx]
+		sameTarget = det.project == g.name
+	} else {
+		c := a.groups[item.groupIdx].containers[item.contIdx]
+		sameTarget = det.containerID == c.ID
+	}
+
+	if !sameTarget {
+		det.reset()
+	}
 
 	if item.isProject {
 		g := a.groups[item.groupIdx]
@@ -409,6 +431,7 @@ func (a *App) enterDetail() (App, tea.Cmd) {
 			det.projectIDs[i] = c.ID
 		}
 		// Pre-compute max service name width for aligned log columns.
+		det.maxSvcNameW = 0
 		for _, c := range g.containers {
 			name := c.Service
 			if name == "" {

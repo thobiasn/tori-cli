@@ -111,42 +111,22 @@ func (t Theme) StatusDotColor(state, health string) lipgloss.Color {
 	return t.Healthy
 }
 
-// cpuHostColor returns severity based on host-relative CPU usage.
-func cpuHostColor(cpuPct float64, theme *Theme) lipgloss.Color {
+// containerCPUColor returns a color for CPU percentage based on configured limit.
+// No limit = no severity (dim), same logic as memory.
+// Has limit: color by percentage of limit.
+func containerCPUColor(cpuPct, cpuLimit float64, theme *Theme) lipgloss.Color {
+	if cpuLimit == 0 {
+		return theme.FgDim
+	}
+	pctOfLimit := cpuPct / cpuLimit
 	switch {
-	case cpuPct > 25:
+	case pctOfLimit >= 90:
 		return theme.Critical
-	case cpuPct > 8:
+	case pctOfLimit >= 70:
 		return theme.Warning
-	case cpuPct >= 3:
-		return theme.Fg
 	default:
 		return theme.FgDim
 	}
-}
-
-// containerCPUColor returns a color for CPU percentage.
-// Always considers host-relative severity (CPU is zero-sum on the host).
-// When a limit exists, also considers limit-relative severity; uses whichever is worse.
-func containerCPUColor(cpuPct, cpuLimit float64, theme *Theme) lipgloss.Color {
-	hostColor := cpuHostColor(cpuPct, theme)
-	if cpuLimit == 0 {
-		return hostColor
-	}
-	pctOfLimit := cpuPct / cpuLimit
-	var limitColor lipgloss.Color
-	switch {
-	case pctOfLimit >= 90:
-		limitColor = theme.Critical
-	case pctOfLimit >= 70:
-		limitColor = theme.Warning
-	default:
-		limitColor = theme.FgDim
-	}
-	if colorRank(limitColor, theme) > colorRank(hostColor, theme) {
-		return limitColor
-	}
-	return hostColor
 }
 
 // containerMemColor returns a color for memory percentage based on configured limit.

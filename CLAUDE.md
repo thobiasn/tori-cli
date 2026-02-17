@@ -133,7 +133,8 @@ Code is a liability, not an asset. Every line we write is a line we have to main
 ### Alert system
 
 - Conditions are 3-token strings: `scope.field op value` (e.g., `host.cpu_percent > 90`, `container.state == 'exited'`).
-- Host fields: `cpu_percent`, `memory_percent`, `disk_percent`, `load1`, `load5`, `load15`, `swap_percent`. Container fields: `cpu_percent`, `memory_percent`, `state`, `health`, `restart_count`, `exit_code`.
+- Host fields: `cpu_percent`, `memory_percent`, `disk_percent`, `load1`, `load5`, `load15`, `swap_percent`. Container fields: `cpu_percent`, `cpu_limit_percent`, `memory_percent`, `state`, `health`, `restart_count`, `exit_code`.
+- `cpu_limit_percent` = `CPUPercent / CPULimit` when a CPU limit is configured, 0 when not. Preferred over `cpu_percent` for container alerts since it's relative to the container's actual constraint.
 - Field names are validated against a whitelist in `parseCondition`. String fields (`state`, `health`) only allow `==`/`!=`.
 - Alerter instances are keyed: `rulename` for host, `rulename:containerID` for container, `rulename:mountpoint` for disk.
 - State machine: inactive → pending (if `for > 0`) → firing → resolved → inactive. `for = 0` skips pending.
@@ -230,8 +231,8 @@ The alerter receives the same data already collected — no additional I/O.
 - **`CPULimit`** (float64, cores): 0 = no limit. Not persisted to DB — live-only data for TUI coloring.
 - **`MemLimit`** semantics changed: 0 = no configured limit, >0 = configured limit in bytes. The stats API's `MemoryStats.Limit` (which equals host total when uncapped) is overridden to 0 when no Docker limit is set.
 - **`MemPercent`** is always valid: with a limit it's `usage/limit*100`, without it's `usage/host_total*100`. The override only affects `MemLimit` (coloring mode), not `MemPercent`.
-- **CPU coloring — always host-relative, plus limit-relative when capped**: CPU is a zero-sum shared resource, so high usage is always worth flagging. Host-relative thresholds: <3% `FgDim`, 3–8% `Fg`, >8% `Warning`, >25% `Critical`. When a CPU limit exists, also compute limit-relative severity (<70% `FgDim`, 70–89% `Warning`, ≥90% `Critical`) and use whichever is worse. This means a container at 5% host CPU but 92% of its 0.05 limit shows `Critical`, and a container at 12% host CPU but 30% of its limit still shows `Warning` from the host rule.
-- **Memory coloring — "no limit = no severity"**: memory is not zero-sum in the same way as CPU; usage without a limit may be intended. No limit: always `FgDim`. Has limit: <70% `FgDim`, 70–89% `Warning`, ≥90% `Critical`.
+- **CPU coloring — "no limit = no severity"**: same logic as memory. No limit: always `FgDim`. Has limit: <70% `FgDim`, 70–89% `Warning`, ≥90% `Critical`. The host CPU sparkline already shows overall machine pressure; individual containers without limits aren't inherently problematic.
+- **Memory coloring — "no limit = no severity"**: No limit: always `FgDim`. Has limit: <70% `FgDim`, 70–89% `Warning`, ≥90% `Critical`.
 - **CPU threshold math**: `CPUPercent` uses docker stats convention (100% = 1 core). `CPULimit` is in cores. Percentage of limit = `CPUPercent / CPULimit`. No host CPU count needed.
 - **Project summary rows**: color = worst severity among child containers for CPU and memory independently (tracked via `colorRank` helper: FgDim=0, Fg=1, Warning=2, Critical=3).
 - **Edge cases**: container with >100% of limit still shows `Critical`. Mixed limits in a group (some with, some without) — each child colored independently, summary takes worst.

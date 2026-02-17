@@ -196,6 +196,10 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 	var tracked []Container // returned for log sync / alert eval
 
 	for _, c := range containers {
+		if ctx.Err() != nil {
+			return nil, nil, ctx.Err()
+		}
+
 		name := containerName(c.Names)
 		if !d.matchFilter(name) {
 			continue
