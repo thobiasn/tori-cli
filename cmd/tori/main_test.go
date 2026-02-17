@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	tui "github.com/thobiasn/tori-cli/internal/tui2"
+	"github.com/thobiasn/tori-cli/internal/tui"
 )
 
 func TestParseClientArgs(t *testing.T) {

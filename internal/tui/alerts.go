@@ -1,4 +1,4 @@
-package tui2
+package tui
 
 import (
 	"context"
@@ -20,16 +20,16 @@ const (
 
 // AlertsState holds the state for the alerts view.
 type AlertsState struct {
-	rules         []protocol.AlertRuleInfo
-	resolved      []protocol.AlertMsg
-	focus         alertsSection
-	alertCursor   int
-	ruleCursor    int
+	rules        []protocol.AlertRuleInfo
+	resolved     []protocol.AlertMsg
+	focus        alertsSection
+	alertCursor  int
+	ruleCursor   int
 	showResolved bool
 	alertDialog  bool // true when alert detail dialog is open
 	ruleDialog   bool // true when rule detail dialog is open
 	silenceModal *silenceModalState
-	loaded        bool
+	loaded       bool
 }
 
 type silenceModalState struct {

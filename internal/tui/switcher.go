@@ -1,4 +1,4 @@
-package tui2
+package tui
 
 import (
 	"strings"
@@ -9,7 +9,7 @@ import (
 // renderSwitcher renders the server switcher modal overlay.
 func renderSwitcher(a *App, width, height int) string {
 	theme := &a.theme
-	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
+	muted := mutedStyle(theme)
 
 	modalW := 56
 	if modalW > width-4 {
@@ -80,7 +80,7 @@ func renderSwitcher(a *App, width, height int) string {
 		row := dot + " " + name + suffix
 
 		if i == a.switcherCursor {
-			row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW-4))
+			row = cursorRow(row, innerW-4)
 		}
 
 		rows = append(rows, row)

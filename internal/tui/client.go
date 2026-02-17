@@ -40,16 +40,16 @@ type ConnErrMsg struct {
 // Client wraps a protocol connection to the agent and dispatches
 // streaming messages as tea.Msg values.
 type Client struct {
-	conn     net.Conn
-	server   string // session name for message routing
-	mu       sync.Mutex // serializes writes
-	nextID   atomic.Uint32
-	pendMu   sync.Mutex
-	pending  map[uint32]chan *protocol.Envelope
-	prog     *tea.Program
-	done     chan struct{} // closed when readLoop exits
-	started  sync.Once    // ensures readLoop starts exactly once
-	closed   atomic.Bool  // set by Close to suppress spurious ConnErrMsg
+	conn    net.Conn
+	server  string     // session name for message routing
+	mu      sync.Mutex // serializes writes
+	nextID  atomic.Uint32
+	pendMu  sync.Mutex
+	pending map[uint32]chan *protocol.Envelope
+	prog    *tea.Program
+	done    chan struct{} // closed when readLoop exits
+	started sync.Once     // ensures readLoop starts exactly once
+	closed  atomic.Bool   // set by Close to suppress spurious ConnErrMsg
 }
 
 // NewClient wraps an existing connection. Call SetProgram to start reading.

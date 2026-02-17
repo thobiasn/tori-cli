@@ -17,15 +17,15 @@ const (
 	ConnError                       // connection failure
 )
 
-// Session holds all per-server state: connection, accumulated data, and view state.
+// Session holds all per-server state: connection and accumulated data.
 type Session struct {
-	Name      string
-	Client    *Client
-	Tunnel    *Tunnel // nil for local connections
-	ConnState ConnState
-	ConnMsg   string
-	Config    ServerConfig           // server config for lazy connection
-	connectCancel context.CancelFunc // cancels in-flight connection
+	Name          string
+	Client        *Client
+	Tunnel        *Tunnel
+	ConnState     ConnState
+	ConnMsg       string
+	Config        ServerConfig
+	connectCancel context.CancelFunc
 
 	// Accumulated live data.
 	Host       *protocol.HostMetrics
@@ -34,40 +34,39 @@ type Session struct {
 	ContInfo   []protocol.ContainerInfo
 	Alerts     map[int64]*protocol.AlertEvent
 
-	// History buffers.
-	Rates              *RateCalc
-	CPUHistory         map[string]*RingBuffer[float64]
-	MemHistory         map[string]*RingBuffer[float64]
-	HostCPUHistory     *RingBuffer[float64]
-	HostMemHistory     *RingBuffer[float64]
-	HostMemUsedHistory *RingBuffer[float64]
-	BackfillPending    bool // true while a zoom backfill is in-flight
+	// Alert rules.
+	RuleCount int // number of configured alert rules
 
-	// Agent capabilities.
-	RetentionDays int
+	// History for dashboard graphs.
+	HostCPUHist     *RingBuffer[float64]
+	HostMemHist     *RingBuffer[float64]
+	Rates           *RateCalc
+	BackfillPending bool // true while a backfill query is in-flight
+	RetentionDays   int  // reported by agent, limits zoom range
 
-	// Per-session view state.
-	Dash   DashboardState
-	Alertv AlertViewState
+	// Detail view state.
 	Detail DetailState
+
+	// Alerts view state.
+	AlertsView AlertsState
 
 	Err error
 }
 
+// histBufSize is the number of data points in each ring buffer.
+// 600 points covers ~100 minutes at 10s intervals, and serves as the
+// downsampling target for historical queries.
+const histBufSize = 600
+
 // NewSession creates a session with initialized buffers.
 func NewSession(name string, client *Client, tunnel *Tunnel) *Session {
 	return &Session{
-		Name:                 name,
-		Client:               client,
-		Tunnel:               tunnel,
-		Alerts:               make(map[int64]*protocol.AlertEvent),
-		Rates:                NewRateCalc(),
-		CPUHistory:           make(map[string]*RingBuffer[float64]),
-		MemHistory:           make(map[string]*RingBuffer[float64]),
-		HostCPUHistory:       NewRingBuffer[float64](ringBufSize),
-		HostMemHistory:       NewRingBuffer[float64](ringBufSize),
-		HostMemUsedHistory: NewRingBuffer[float64](ringBufSize),
-		Dash:                 newDashboardState(),
-		Alertv:               newAlertViewState(),
+		Name:        name,
+		Client:      client,
+		Tunnel:      tunnel,
+		Alerts:      make(map[int64]*protocol.AlertEvent),
+		HostCPUHist: NewRingBuffer[float64](histBufSize),
+		HostMemHist: NewRingBuffer[float64](histBufSize),
+		Rates:       NewRateCalc(),
 	}
 }
