@@ -31,7 +31,7 @@ type Tunnel struct {
 	cmd       *exec.Cmd
 	localSock string
 	done      chan error
-	stderr    *bytes.Buffer // SSH stderr output for error reporting
+	stderr    *bytes.Buffer                               // SSH stderr output for error reporting
 	execFn    func(name string, args ...string) *exec.Cmd // injectable for testing
 
 	// Askpass IPC state (only set when created via NewTunnelAskpass).

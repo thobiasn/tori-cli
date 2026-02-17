@@ -279,7 +279,7 @@ func (a *Agent) collect(ctx context.Context) {
 	update := &protocol.MetricsUpdate{Timestamp: ts.Unix()}
 	if hostMetrics != nil {
 		update.Host = &protocol.HostMetrics{
-			CPUPercent: hostMetrics.CPUPercent, MemTotal: hostMetrics.MemTotal,
+			CPUPercent: hostMetrics.CPUPercent, CPUs: hostMetrics.CPUs, MemTotal: hostMetrics.MemTotal,
 			MemUsed: hostMetrics.MemUsed, MemPercent: hostMetrics.MemPercent,
 			MemCached: hostMetrics.MemCached, MemFree: hostMetrics.MemFree,
 			SwapTotal: hostMetrics.SwapTotal, SwapUsed: hostMetrics.SwapUsed,
@@ -305,7 +305,8 @@ func (a *Agent) collect(ctx context.Context) {
 			ID: c.ID, Name: c.Name, Image: c.Image, State: c.State,
 			Project: c.Project, Service: c.Service,
 			Health: c.Health, StartedAt: c.StartedAt, RestartCount: c.RestartCount, ExitCode: c.ExitCode,
-			CPUPercent: c.CPUPercent, MemUsage: c.MemUsage, MemLimit: c.MemLimit, MemPercent: c.MemPercent,
+			CPUPercent: c.CPUPercent, CPULimit: c.CPULimit,
+			MemUsage: c.MemUsage, MemLimit: c.MemLimit, MemPercent: c.MemPercent,
 			NetRx: c.NetRx, NetTx: c.NetTx, BlockRead: c.BlockRead, BlockWrite: c.BlockWrite, PIDs: c.PIDs,
 			DiskUsage: c.DiskUsage,
 		})

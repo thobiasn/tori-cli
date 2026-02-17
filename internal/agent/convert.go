@@ -8,7 +8,7 @@ func convertTimedHost(src []TimedHostMetrics) []protocol.TimedHostMetrics {
 		out[i] = protocol.TimedHostMetrics{
 			Timestamp: s.Timestamp.Unix(),
 			HostMetrics: protocol.HostMetrics{
-				CPUPercent: s.CPUPercent, MemTotal: s.MemTotal, MemUsed: s.MemUsed, MemPercent: s.MemPercent,
+				CPUPercent: s.CPUPercent, CPUs: s.CPUs, MemTotal: s.MemTotal, MemUsed: s.MemUsed, MemPercent: s.MemPercent,
 				MemCached: s.MemCached, MemFree: s.MemFree,
 				SwapTotal: s.SwapTotal, SwapUsed: s.SwapUsed,
 				Load1: s.Load1, Load5: s.Load5, Load15: s.Load15, Uptime: s.Uptime,
@@ -54,7 +54,8 @@ func convertTimedContainer(src []TimedContainerMetrics) []protocol.TimedContaine
 			Timestamp: s.Timestamp.Unix(),
 			ContainerMetrics: protocol.ContainerMetrics{
 				Project: s.Project, Service: s.Service,
-				CPUPercent: s.CPUPercent, MemUsage: s.MemUsage, MemLimit: s.MemLimit, MemPercent: s.MemPercent,
+				CPUPercent: s.CPUPercent, CPULimit: s.CPULimit,
+				MemUsage: s.MemUsage, MemLimit: s.MemLimit, MemPercent: s.MemPercent,
 				NetRx: s.NetRx, NetTx: s.NetTx, BlockRead: s.BlockRead, BlockWrite: s.BlockWrite, PIDs: s.PIDs,
 			},
 		}

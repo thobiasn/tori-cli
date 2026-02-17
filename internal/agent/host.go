@@ -108,6 +108,19 @@ func (h *HostCollector) readCPU(m *HostMetrics) error {
 	h.prevTotal = total
 	h.hasPrev = true
 
+	// Count per-CPU lines (cpu0, cpu1, ...) for CPU count.
+	var cpus int
+	for scanner.Scan() {
+		if strings.HasPrefix(scanner.Text(), "cpu") {
+			cpus++
+		} else {
+			break
+		}
+	}
+	if cpus > 0 {
+		m.CPUs = cpus
+	}
+
 	return nil
 }
 

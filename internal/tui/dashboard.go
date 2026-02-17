@@ -1,34 +1,13 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/thobiasn/tori-cli/internal/protocol"
 )
-
-type dashFocus int
-
-const (
-	focusServers    dashFocus = iota // default: servers focused on open
-	focusAlerts
-	focusContainers
-)
-
-// DashboardState holds dashboard-specific state.
-type DashboardState struct {
-	cursor    int
-	collapsed map[string]bool
-	groups    []containerGroup
-
-	alertCursor      int
-	alertExpandModal *alertExpandModal // nil = closed
-}
 
 type containerGroup struct {
 	name       string
@@ -36,15 +15,30 @@ type containerGroup struct {
 	running    int
 }
 
-func newDashboardState() DashboardState {
-	return DashboardState{
-		collapsed: make(map[string]bool),
+// listItem represents a selectable row in the container list.
+type listItem struct {
+	isProject bool
+	groupIdx  int
+	contIdx   int // only valid when !isProject
+}
+
+// buildSelectableItems builds a flat list of selectable items from groups,
+// respecting collapsed state.
+func buildSelectableItems(groups []containerGroup, collapsed map[string]bool) []listItem {
+	var items []listItem
+	for gi, g := range groups {
+		items = append(items, listItem{isProject: true, groupIdx: gi})
+		if !collapsed[g.name] {
+			for ci := range g.containers {
+				items = append(items, listItem{groupIdx: gi, contIdx: ci})
+			}
+		}
 	}
+	return items
 }
 
 // buildGroups groups containers by compose project. "other" is for unlabeled.
 func buildGroups(containers []protocol.ContainerMetrics, contInfo []protocol.ContainerInfo) []containerGroup {
-	// Build project lookup from contInfo.
 	projectOf := make(map[string]string, len(contInfo))
 	for _, ci := range contInfo {
 		projectOf[ci.ID] = ci.Project
@@ -56,7 +50,7 @@ func buildGroups(containers []protocol.ContainerMetrics, contInfo []protocol.Con
 		seen[c.ID] = true
 		proj := projectOf[c.ID]
 		if proj == "" && c.Project != "" {
-			proj = c.Project // fallback to service identity from metrics
+			proj = c.Project
 		}
 		if proj == "" {
 			proj = "other"
@@ -64,7 +58,7 @@ func buildGroups(containers []protocol.ContainerMetrics, contInfo []protocol.Con
 		grouped[proj] = append(grouped[proj], c)
 	}
 
-	// Inject untracked containers from contInfo as stubs (zero stats).
+	// Inject untracked containers from contInfo as stubs.
 	for _, ci := range contInfo {
 		if seen[ci.ID] {
 			continue
@@ -72,6 +66,7 @@ func buildGroups(containers []protocol.ContainerMetrics, contInfo []protocol.Con
 		stub := protocol.ContainerMetrics{
 			ID: ci.ID, Name: ci.Name, Image: ci.Image,
 			State: ci.State, Health: ci.Health,
+			Project: ci.Project, Service: ci.Service,
 			StartedAt: ci.StartedAt, RestartCount: ci.RestartCount,
 			ExitCode: ci.ExitCode,
 		}
@@ -82,7 +77,6 @@ func buildGroups(containers []protocol.ContainerMetrics, contInfo []protocol.Con
 		grouped[proj] = append(grouped[proj], stub)
 	}
 
-	// Sort group names alpha, "other" last.
 	names := make([]string, 0, len(grouped))
 	for n := range grouped {
 		names = append(names, n)
@@ -106,465 +100,244 @@ func buildGroups(containers []protocol.ContainerMetrics, contInfo []protocol.Con
 				running++
 			}
 		}
-		// Sort containers within group by name.
 		sort.Slice(conts, func(i, j int) bool {
-			return conts[i].Name < conts[j].Name
+			ni, nj := conts[i].Service, conts[j].Service
+			if ni == "" {
+				ni = conts[i].Name
+			}
+			if nj == "" {
+				nj = conts[j].Name
+			}
+			return ni < nj
 		})
 		groups = append(groups, containerGroup{name: name, containers: conts, running: running})
 	}
 	return groups
 }
 
-// renderDashboard assembles the dashboard layout.
+const maxContentW = 80
+
+// renderDashboard assembles the full dashboard view.
 func renderDashboard(a *App, s *Session, width, height int) string {
 	theme := &a.theme
 
-	// Minimum size checks.
-	if width < 80 {
-		return fmt.Sprintf("\n  Terminal too narrow (need 80+ columns, have %d)", width)
-	}
-	if height < 24 {
-		return fmt.Sprintf("\n  Terminal too short (need 24+ rows, have %d)", height)
+	// Content width: capped at maxContentW, centered.
+	contentW := width
+	if contentW > maxContentW {
+		contentW = maxContentW
 	}
 
-	// Height calculations.
-	alertH := 3
-	if len(s.Alerts) > 0 {
-		alertH = len(s.Alerts) + 2
-		maxAlertH := height / 4
-		if maxAlertH < 3 {
-			maxAlertH = 3
-		}
-		if alertH > maxAlertH {
-			alertH = maxAlertH
-		}
-	}
+	var sections []string
 
-	cpuH := height * 28 / 100
-	if cpuH < 12 {
-		cpuH = 12
-	}
+	// 1. Header: logo + server name + status
+	sections = append(sections, renderHeader(a, s, contentW, theme))
 
-	middleH := height - cpuH - alertH
-	if middleH < 8 {
-		middleH = 8
-	}
+	// 2. Divider with time window label
+	sections = append(sections, renderLabeledDivider(a.windowLabel(), contentW, theme))
 
-	cpuHistory := s.HostCPUHistory.Data()
-	windowLabel := a.windowLabel()
+	// 3. Host metrics graphs (cpu + mem braille, 2 rows each)
+	sections = append(sections, renderHostGraphs(a, s, contentW, theme))
 
-	if width >= 100 {
-		// Wide: server panel left, host metrics right; alert panel full-width below; containers at bottom.
-		srvW := 32
-		hostW := width - srvW
-		leftW := hostW * 65 / 100
-		rightW := hostW - leftW
-
-		cpuPanel := renderCPUPanel(cpuHistory, s.Host, RenderContext{Width: leftW, Height: cpuH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds(), SpinnerFrame: a.spinnerFrame, Loading: s.BackfillPending})
-		// Split right column: memory on top, disks on bottom.
-		diskH := len(s.Disks)*3 + 2 // 3 lines per disk (divider + used + free) + borders
-		if s.Host != nil && s.Host.SwapTotal > 0 {
-			diskH += 3 // swap: divider + used + free
-		}
-		if diskH < 3 {
-			diskH = 3
-		}
-		if diskH > cpuH/2 {
-			diskH = cpuH / 2
-		}
-		memH := cpuH - diskH
-		if memH < 8 {
-			memH = 8
-			diskH = cpuH - memH
-		}
-
-		memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), RenderContext{Width: rightW, Height: memH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds(), SpinnerFrame: a.spinnerFrame, Loading: s.BackfillPending})
-		var swapTotal, swapUsed uint64
-		if s.Host != nil {
-			swapTotal, swapUsed = s.Host.SwapTotal, s.Host.SwapUsed
-		}
-		diskPanel := renderDiskPanel(s.Disks, swapTotal, swapUsed, rightW, diskH, theme)
-		rightCol := lipgloss.JoinVertical(lipgloss.Left, memPanel, diskPanel)
-		hostRow := lipgloss.JoinHorizontal(lipgloss.Top, cpuPanel, rightCol)
-
-		serverPanel := renderServerPanel(a, cpuH, srvW)
-		topRow := lipgloss.JoinHorizontal(lipgloss.Top, serverPanel, hostRow)
-
-		alertPanel := renderAlertPanel(alertPanelOpts{
-			alerts: s.Alerts, width: width, height: alertH, theme: theme,
-			tsFormat: a.tsFormat(), cursor: s.Dash.alertCursor, focused: a.dashFocus == focusAlerts,
-		})
-
-		contH := middleH
-		contPanel := renderContainerPanel(containerPanelOpts{
-			groups: s.Dash.groups, collapsed: s.Dash.collapsed, cursor: s.Dash.cursor,
-			alerts: s.Alerts, contInfo: s.ContInfo,
-			rc: RenderContext{Width: width, Height: contH, Theme: theme}, focused: a.dashFocus == focusContainers,
-		})
-
-		return strings.Join([]string{topRow, alertPanel, contPanel}, "\n")
-	}
-
-	// Narrow (80-99): stacked layout with server panel.
-	// 2 lines per server (name + status) + dividers between + borders.
-	n := len(a.sessionOrder)
-	srvH := n*2 + 2
-	if n > 1 {
-		srvH += n - 1 // dividers between servers
-	}
-	serverPanel := renderServerPanel(a, srvH, width)
-
-	diskH := len(s.Disks)*3 + 2
-	if s.Host != nil && s.Host.SwapTotal > 0 {
-		diskH += 3
-	}
-	if diskH < 3 {
-		diskH = 3
-	}
-	if diskH > 14 {
-		diskH = 14
-	}
-	narrowMemH := 8
-	minCpuPanelH := 8
-	hostH := cpuH + narrowMemH + diskH
-	cpuPanelH := hostH - narrowMemH - diskH
-	if cpuPanelH < minCpuPanelH {
-		cpuPanelH = minCpuPanelH
-		hostH = cpuPanelH + narrowMemH + diskH
-	}
-
-	contH := height - alertH - srvH - hostH
-	if contH < 4 {
-		contH = 4
-	}
-
-	var swapTotal2, swapUsed2 uint64
+	// 4. Disk + load summary line
+	summaryLine := 1
 	if s.Host != nil {
-		swapTotal2, swapUsed2 = s.Host.SwapTotal, s.Host.SwapUsed
-	}
-	cpuPanel := renderCPUPanel(cpuHistory, s.Host, RenderContext{Width: width, Height: cpuPanelH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds(), SpinnerFrame: a.spinnerFrame, Loading: s.BackfillPending})
-	memPanel := renderMemPanel(s.Host, s.HostMemUsedHistory.Data(), RenderContext{Width: width, Height: narrowMemH, Theme: theme, WindowLabel: windowLabel, WindowSec: a.windowSeconds(), SpinnerFrame: a.spinnerFrame, Loading: s.BackfillPending})
-	diskPanel := renderDiskPanel(s.Disks, swapTotal2, swapUsed2, width, diskH, theme)
-	alertPanel := renderAlertPanel(alertPanelOpts{
-		alerts: s.Alerts, width: width, height: alertH, theme: theme,
-		tsFormat: a.tsFormat(), cursor: s.Dash.alertCursor, focused: a.dashFocus == focusAlerts,
-	})
-	contPanel := renderContainerPanel(containerPanelOpts{
-		groups: s.Dash.groups, collapsed: s.Dash.collapsed, cursor: s.Dash.cursor,
-		alerts: s.Alerts, contInfo: s.ContInfo,
-		rc: RenderContext{Width: width, Height: contH, Theme: theme}, focused: a.dashFocus == focusContainers,
-	})
-
-	return strings.Join([]string{serverPanel, cpuPanel, memPanel, diskPanel, alertPanel, contPanel}, "\n")
-}
-
-// renderServerPanel renders the server list panel.
-func renderServerPanel(a *App, height, width int) string {
-	theme := &a.theme
-	innerW := width - 2
-	muted := lipgloss.NewStyle().Foreground(theme.Muted)
-
-	var lines []string
-	for i, name := range a.sessionOrder {
-		sess := a.sessions[name]
-
-		// Divider between servers.
-		if i > 0 {
-			div := muted.Render(strings.Repeat("─", innerW-2))
-			lines = append(lines, " "+div)
-		}
-
-		// Status indicator color based on connection state.
-		var indicatorColor lipgloss.Color
-		switch sess.ConnState {
-		case ConnReady:
-			indicatorColor = theme.Healthy
-		case ConnConnecting, ConnSSH:
-			indicatorColor = theme.Warning
-		case ConnError:
-			indicatorColor = theme.Critical
-		default:
-			indicatorColor = theme.Muted
-		}
-		indicator := lipgloss.NewStyle().Foreground(indicatorColor).Render("●")
-
-		isCursor := a.dashFocus == focusServers && i == a.serverCursor
-		isActive := a.dashFocus == focusContainers && name == a.activeSession
-
-		// Name line: "● servername" — wrap if needed.
-		namePrefix := fmt.Sprintf(" %s ", indicator)
-		nameW := innerW - 3 // "● " prefix = 3 chars
-		for j, chunk := range wrapText(name, nameW) {
-			var line string
-			if j == 0 {
-				line = namePrefix + chunk
-			} else {
-				line = "   " + chunk
-			}
-			if isCursor {
-				line = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(line), innerW))
-			} else if isActive {
-				line = lipgloss.NewStyle().Foreground(theme.Accent).Render(Truncate(stripANSI(line), innerW))
-			}
-			lines = append(lines, TruncateStyled(line, innerW))
-		}
-
-		// Status message — wrap if needed.
-		statusMsg := sess.ConnMsg
-		if statusMsg == "" {
-			statusMsg = "not connected"
-		}
-		isConnecting := sess.ConnState == ConnConnecting || sess.ConnState == ConnSSH
-		statusW := innerW - 3 // 3-char indent
-		for j, chunk := range wrapText(statusMsg, statusW) {
-			var line string
-			if j == 0 && isConnecting {
-				line = " " + SpinnerView(a.spinnerFrame, chunk, theme)
-			} else {
-				line = "   " + muted.Render(chunk)
-			}
-			if isCursor {
-				line = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(line), innerW))
-			}
-			lines = append(lines, TruncateStyled(line, innerW))
-		}
-	}
-
-	return Box("Servers", strings.Join(lines, "\n"), width, height, theme, a.dashFocus == focusServers)
-}
-
-// updateDashboard handles keys for the dashboard view.
-func updateDashboard(a *App, s *Session, msg tea.KeyMsg) tea.Cmd {
-	key := msg.String()
-
-	if key == "tab" {
-		hasAlerts := len(s.Alerts) > 0
-		switch a.dashFocus {
-		case focusServers:
-			if hasAlerts {
-				a.dashFocus = focusAlerts
-			} else {
-				a.dashFocus = focusContainers
-			}
-		case focusAlerts:
-			a.dashFocus = focusContainers
-		case focusContainers:
-			a.dashFocus = focusServers
-		}
-		return nil
-	}
-
-	if a.dashFocus == focusServers {
-		return updateServerFocus(a, s, key)
-	}
-
-	if a.dashFocus == focusAlerts {
-		if s.Dash.alertExpandModal != nil {
-			return updateDashAlertExpandModal(&s.Dash, s.Name, key)
-		}
-		return updateDashAlertFocus(s, key)
-	}
-
-	switch key {
-	case "j", "down":
-		max := maxCursorPos(s.Dash.groups, s.Dash.collapsed)
-		if s.Dash.cursor < max {
-			s.Dash.cursor++
-		}
-	case "k", "up":
-		if s.Dash.cursor > 0 {
-			s.Dash.cursor--
-		}
-	case " ":
-		name := cursorGroupName(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
-		if name != "" {
-			s.Dash.collapsed[name] = !s.Dash.collapsed[name]
-		}
-	case "enter":
-		if s.Client == nil {
-			return nil
-		}
-		id := cursorContainerID(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
-		if id != "" {
-			s.Detail.containerID = id
-			s.Detail.project = ""
-			// Set service identity for cross-container history queries.
-			s.Detail.svcProject = ""
-			s.Detail.svcService = ""
-			for _, ci := range s.ContInfo {
-				if ci.ID == id {
-					if ci.Project != "" && ci.Service != "" {
-						s.Detail.svcProject = ci.Project
-						s.Detail.svcService = ci.Service
-					} else if ci.Name != "" {
-						s.Detail.svcService = ci.Name
-					}
-					break
+		muted := mutedStyle(theme)
+		var parts []string
+		if len(s.Disks) > 0 {
+			var maxPct float64
+			for _, d := range s.Disks {
+				if d.Percent > maxPct {
+					maxPct = d.Percent
 				}
 			}
-			s.Detail.reset()
-			a.active = viewDetail
-			return s.Detail.onSwitch(s.Client, a.windowSeconds(), s.RetentionDays)
+			diskColor := diskSeverityColor(maxPct, theme)
+			parts = append(parts,
+				muted.Render("disk ")+lipgloss.NewStyle().Foreground(diskColor).Render(fmt.Sprintf("%.1f%%", maxPct)))
 		}
-		// Enter on group header opens detail in group mode.
-		groupName := cursorGroupName(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
-		if groupName != "" && groupName != "other" {
-			s.Detail.containerID = ""
-			s.Detail.project = groupName
-			s.Detail.svcProject = ""
-			s.Detail.svcService = ""
-			s.Detail.reset()
-			// Populate projectIDs from contInfo.
-			s.Detail.projectIDs = nil
-			for _, ci := range s.ContInfo {
-				if ci.Project == groupName {
-					s.Detail.projectIDs = append(s.Detail.projectIDs, ci.ID)
-				}
-			}
-			a.active = viewDetail
-			return s.Detail.onSwitch(s.Client, a.windowSeconds(), s.RetentionDays)
-		}
-	case "t":
-		return toggleTracking(s)
+		loadColor := loadSeverityColor(s.Host.Load1, s.Host.CPUs, theme)
+		loadVals := fmt.Sprintf("%.2f %.2f %.2f", s.Host.Load1, s.Host.Load5, s.Host.Load15)
+		parts = append(parts,
+			muted.Render("load ")+lipgloss.NewStyle().Foreground(loadColor).Render(loadVals))
+		sections = append(sections, centerText(strings.Join(parts, styledSep(theme)), contentW))
+	} else {
+		sections = append(sections, centerText(mutedStyle(theme).Render("disk —  ·  load — — —"), contentW))
 	}
-	return nil
+
+	// 5. Divider
+	sections = append(sections, renderDivider(contentW, theme))
+
+	// 6. Container list (fills remaining space)
+	// Fixed sections: header(3) + time divider(2) + host graphs(4) + divider(1) + divider(1) + status(1) + help(1) = 13
+	fixedH := 13 + summaryLine
+	contH := height - fixedH
+	if contH < 1 {
+		contH = 1
+	}
+	sections = append(sections, renderContainerList(a, s, contentW, contH, theme))
+
+	// 5. Divider
+	sections = append(sections, renderDivider(contentW, theme))
+
+	// 6. Status line
+	sections = append(sections, renderStatusLine(s, contentW, theme))
+
+	// 7. Help bar
+	sections = append(sections, dashboardHelpBar(contentW, theme))
+
+	return pageFrame(strings.Join(sections, "\n"), contentW, width, height)
 }
 
-// toggleTracking toggles tracking for the container or group at the cursor.
-func toggleTracking(s *Session) tea.Cmd {
-	if s.Client == nil {
+func renderHeader(a *App, s *Session, w int, theme *Theme) string {
+	muted := mutedStyle(theme)
+
+	var logo string
+	if s.Host == nil {
+		logo = accentStyle(theme).Render(strings.TrimLeft(birdFrames[a.spinnerFrame%len(birdFrames)], " "))
+	} else {
+		logo = birdIcon(a.birdBlink, theme)
+	}
+
+	// No connection attempted yet — bird + status only, no server name.
+	if s.ConnState == ConnNone {
+		return centerText(logo, w) + "\n\n" + centerText(muted.Render("not connected"), w)
+	}
+
+	// Server name + health status + alert summary.
+	var statusStr, alertStr string
+	switch s.ConnState {
+	case ConnReady:
+		statusStr = lipgloss.NewStyle().Foreground(theme.Healthy).Render("healthy")
+		if n := len(s.Alerts); n > 0 {
+			alertStr = lipgloss.NewStyle().Foreground(theme.Critical).Render(fmt.Sprintf("%d alert(s)", n))
+		} else {
+			alertStr = lipgloss.NewStyle().Foreground(theme.Healthy).Render("✓ all clear")
+		}
+	case ConnConnecting, ConnSSH:
+		statusStr = muted.Render("connecting…")
+	case ConnError:
+		statusStr = lipgloss.NewStyle().Foreground(theme.Critical).Render("error")
+	default:
+		statusStr = muted.Render("disconnected")
+	}
+
+	sep := styledSep(theme)
+	nameBold := lipgloss.NewStyle().Bold(true).Render(s.Name)
+	infoLine := nameBold + sep + statusStr
+	if alertStr != "" {
+		infoLine += sep + alertStr
+	}
+
+	return centerText(logo, w) + "\n\n" + centerText(infoLine, w)
+}
+
+// renderHostGraphs renders CPU and memory as 2-row braille sparklines.
+// When host data hasn't arrived yet, renders animated loading waves.
+func renderHostGraphs(a *App, s *Session, w int, theme *Theme) string {
+	muted := mutedStyle(theme)
+
+	// "cpu " / "mem " = 4 chars label, " XX.X%" = 7 chars max suffix.
+	labelW := 4
+	pctW := 7
+	graphW := w - labelW - pctW
+	if graphW < 5 {
+		graphW = 5
+	}
+	indent := strings.Repeat(" ", labelW)
+	pctPad := strings.Repeat(" ", pctW)
+
+	if s.Host == nil {
+		cpuTop, cpuBot := LoadingSparkline(a.spinnerFrame, graphW, theme.FgDim)
+		memTop, memBot := LoadingSparkline(a.spinnerFrame+3, graphW, theme.FgDim)
+		return indent + cpuTop + pctPad + "\n" +
+			muted.Render("cpu ") + cpuBot + pctPad + "\n" +
+			indent + memTop + pctPad + "\n" +
+			muted.Render("mem ") + memBot + pctPad
+	}
+
+	cpuTop, cpuBot := Sparkline(s.HostCPUHist.Data(), graphW, theme.GraphCPU)
+	cpuPct := rightAlign(fmt.Sprintf(" %.1f%%", s.Host.CPUPercent), pctW)
+
+	memTop, memBot := Sparkline(s.HostMemHist.Data(), graphW, theme.GraphMem)
+	memPct := rightAlign(fmt.Sprintf(" %.1f%%", s.Host.MemPercent), pctW)
+
+	return indent + cpuTop + pctPad + "\n" +
+		muted.Render("cpu ") + cpuBot + muted.Render(cpuPct) + "\n" +
+		indent + memTop + pctPad + "\n" +
+		muted.Render("mem ") + memBot + muted.Render(memPct)
+}
+
+func renderStatusLine(s *Session, w int, theme *Theme) string {
+	muted := mutedStyle(theme)
+	sep := muted.Render(" · ")
+
+	var parts []string
+	contCount := len(s.Containers) + countUntrackedStubs(s)
+	parts = append(parts, muted.Render(fmt.Sprintf("%d containers", contCount)))
+
+	if s.RuleCount > 0 {
+		parts = append(parts, muted.Render(fmt.Sprintf("%d rules active", s.RuleCount)))
+	}
+
+	if s.Host != nil && s.Host.Uptime > 0 {
+		parts = append(parts, muted.Render(FormatUptime(s.Host.Uptime)+" uptime"))
+	}
+
+	line := strings.Join(parts, sep)
+	return centerText(line, w)
+}
+
+// countUntrackedStubs counts ContInfo entries not present in Containers.
+func countUntrackedStubs(s *Session) int {
+	seen := make(map[string]bool, len(s.Containers))
+	for _, c := range s.Containers {
+		seen[c.ID] = true
+	}
+	count := 0
+	for _, ci := range s.ContInfo {
+		if !seen[ci.ID] {
+			count++
+		}
+	}
+	return count
+}
+
+func dashboardHelpBar(w int, theme *Theme) string {
+	return renderHelpBar([]helpBinding{
+		{"j/k", "navigate"},
+		{"enter", "detail"},
+		{"space", "expand"},
+		{"2", "alerts"},
+		{"?", "help"},
+		{"q", "quit"},
+	}, w, theme)
+}
+
+// containerCount returns the total number of containers across all groups.
+func containerCount(groups []containerGroup) int {
+	n := 0
+	for _, g := range groups {
+		n += len(g.containers)
+	}
+	return n
+}
+
+// containerAtCursor returns the container metrics at the cursor position,
+// or nil if the cursor is on a project row.
+func containerAtCursor(groups []containerGroup, items []listItem, cursor int) *protocol.ContainerMetrics {
+	if cursor < 0 || cursor >= len(items) {
 		return nil
 	}
-	groupName := cursorGroupName(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
-	if groupName != "" && groupName != "other" {
-		// Toggle project tracking.
-		tracked := isProjectTracked(groupName, s.ContInfo)
-		client := s.Client
-		return func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			client.SetTracking(ctx, "", groupName, !tracked)
-			return trackingDoneMsg{server: client.server}
-		}
-	}
-	id := cursorContainerID(s.Dash.groups, s.Dash.collapsed, s.Dash.cursor)
-	if id != "" {
-		name := containerNameByID(id, s.ContInfo)
-		tracked := isContainerTracked(id, s.ContInfo)
-		client := s.Client
-		return func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			client.SetTracking(ctx, name, "", !tracked)
-			return trackingDoneMsg{server: client.server}
-		}
-	}
-	return nil
-}
-
-// updateServerFocus handles keys when the server panel has focus.
-func updateServerFocus(a *App, s *Session, key string) tea.Cmd {
-	switch key {
-	case "j", "down":
-		if a.serverCursor < len(a.sessionOrder)-1 {
-			a.serverCursor++
-			a.activeSession = a.sessionOrder[a.serverCursor]
-			if s := a.session(); s != nil && s.Client != nil {
-				return backfillMetrics(s.Client, a.windowSeconds())
-			}
-		}
-	case "k", "up":
-		if a.serverCursor > 0 {
-			a.serverCursor--
-			a.activeSession = a.sessionOrder[a.serverCursor]
-			if s := a.session(); s != nil && s.Client != nil {
-				return backfillMetrics(s.Client, a.windowSeconds())
-			}
-		}
-	case "enter":
-		srv := a.sessions[a.sessionOrder[a.serverCursor]]
-		if srv == nil {
-			break
-		}
-		switch srv.ConnState {
-		case ConnNone, ConnError:
-			srv.ConnState = ConnNone
-			srv.Err = nil
-			return func() tea.Msg { return connectServerMsg{name: srv.Name} }
-		case ConnReady:
-			if len(s.Alerts) > 0 {
-				a.dashFocus = focusAlerts
-			} else {
-				a.dashFocus = focusContainers
-			}
-		}
-	}
-	return nil
-}
-
-// updateDashAlertFocus handles keys when the alerts panel has focus.
-func updateDashAlertFocus(s *Session, key string) tea.Cmd {
-	sorted := sortedAlerts(s.Alerts)
-	n := len(sorted)
-	if n == 0 {
+	item := items[cursor]
+	if item.isProject {
 		return nil
 	}
-	switch key {
-	case "j", "down":
-		if s.Dash.alertCursor < n-1 {
-			s.Dash.alertCursor++
-		}
-	case "k", "up":
-		if s.Dash.alertCursor > 0 {
-			s.Dash.alertCursor--
-		}
-	case "enter":
-		if s.Dash.alertCursor < n {
-			e := sorted[s.Dash.alertCursor]
-			s.Dash.alertExpandModal = &alertExpandModal{
-				alert:  alertEventToMsg(e),
-				server: s.Name,
-			}
-		}
-	}
-	return nil
+	return &groups[item.groupIdx].containers[item.contIdx]
 }
 
-// updateDashAlertExpandModal handles keys inside the dashboard alert expand modal.
-func updateDashAlertExpandModal(dash *DashboardState, server, key string) tea.Cmd {
-	m := dash.alertExpandModal
-	switch key {
-	case "esc", "enter":
-		dash.alertExpandModal = nil
-	case "j", "down":
-		m.scroll++
-	case "k", "up":
-		if m.scroll > 0 {
-			m.scroll--
-		}
-	case "g":
-		if cid := alertInstanceContainerID(m.alert.InstanceKey); cid != "" {
-			dash.alertExpandModal = nil
-			return func() tea.Msg { return alertGoToContainerMsg{containerID: cid} }
-		}
+// groupAtCursor returns the group name at the cursor position.
+func groupAtCursor(groups []containerGroup, items []listItem, cursor int) string {
+	if cursor < 0 || cursor >= len(items) {
+		return ""
 	}
-	return nil
-}
-
-func isProjectTracked(project string, contInfo []protocol.ContainerInfo) bool {
-	for _, ci := range contInfo {
-		if ci.Project == project && ci.Tracked {
-			return true
-		}
-	}
-	return false
-}
-
-func isContainerTracked(id string, contInfo []protocol.ContainerInfo) bool {
-	for _, ci := range contInfo {
-		if ci.ID == id {
-			return ci.Tracked
-		}
-	}
-	return false
+	return groups[items[cursor].groupIdx].name
 }

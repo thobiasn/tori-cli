@@ -242,6 +242,7 @@ type ErrorResult struct {
 
 type HostMetrics struct {
 	CPUPercent float64 `msgpack:"cpu_percent"`
+	CPUs       int     `msgpack:"cpus,omitempty"`
 	MemTotal   uint64  `msgpack:"mem_total"`
 	MemUsed    uint64  `msgpack:"mem_used"`
 	MemPercent float64 `msgpack:"mem_percent"`
@@ -286,6 +287,7 @@ type ContainerMetrics struct {
 	RestartCount int     `msgpack:"restart_count,omitempty"`
 	ExitCode     int     `msgpack:"exit_code,omitempty"`
 	CPUPercent   float64 `msgpack:"cpu_percent"`
+	CPULimit     float64 `msgpack:"cpu_limit,omitempty"`
 	MemUsage     uint64  `msgpack:"mem_usage"`
 	MemLimit     uint64  `msgpack:"mem_limit"`
 	MemPercent   float64 `msgpack:"mem_percent"`

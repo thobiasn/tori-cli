@@ -41,6 +41,8 @@ type inspectResult struct {
 	startedAt    int64
 	restartCount int
 	exitCode     int
+	cpuLimit     float64   // configured CPU limit in cores (0 = no limit)
+	memLimit     int64     // configured memory limit in bytes (0 = no limit)
 	cachedAt     time.Time
 }
 
@@ -260,6 +262,7 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 				StartedAt:    ir.startedAt,
 				RestartCount: ir.restartCount,
 				ExitCode:     ir.exitCode,
+				CPULimit:     ir.cpuLimit,
 				DiskUsage:    diskUsage,
 			})
 			continue
@@ -279,6 +282,7 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 				StartedAt:    ir.startedAt,
 				RestartCount: ir.restartCount,
 				ExitCode:     ir.exitCode,
+				CPULimit:     ir.cpuLimit,
 				DiskUsage:    diskUsage,
 			})
 			continue
@@ -289,7 +293,17 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 		m.StartedAt = ir.startedAt
 		m.RestartCount = ir.restartCount
 		m.ExitCode = ir.exitCode
+		m.CPULimit = ir.cpuLimit
 		m.DiskUsage = diskUsage
+		// Override MemLimit: use configured limit from inspect (0 = no configured limit).
+		// The stats-based MemLimit equals host total memory when uncapped, which can't
+		// distinguish "has limit" from "no limit". MemPercent is already computed from
+		// stats before this override, so it stays correct in both cases.
+		if ir.memLimit > 0 {
+			m.MemLimit = uint64(ir.memLimit)
+		} else {
+			m.MemLimit = 0
+		}
 		metrics = append(metrics, *m)
 	}
 
@@ -340,6 +354,14 @@ func (d *DockerCollector) inspectContainer(ctx context.Context, id string) inspe
 		r.exitCode = inspect.State.ExitCode
 	}
 	r.restartCount = inspect.RestartCount
+	if inspect.HostConfig != nil {
+		if inspect.HostConfig.NanoCPUs > 0 {
+			r.cpuLimit = float64(inspect.HostConfig.NanoCPUs) / 1e9
+		} else if inspect.HostConfig.CPUQuota > 0 && inspect.HostConfig.CPUPeriod > 0 {
+			r.cpuLimit = float64(inspect.HostConfig.CPUQuota) / float64(inspect.HostConfig.CPUPeriod)
+		}
+		r.memLimit = inspect.HostConfig.Memory // 0 = no limit
+	}
 	return r
 }
 
