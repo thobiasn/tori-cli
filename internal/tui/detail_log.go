@@ -12,17 +12,24 @@ import (
 	"github.com/thobiasn/tori-cli/internal/protocol"
 )
 
-// injectDeploySeparators detects container ID transitions and inserts
-// synthetic "redeployed" separator entries at each boundary.
+// injectDeploySeparators detects when a container name reappears with a
+// different ID (i.e. it was redeployed) and inserts a synthetic separator.
+// Simple container ID changes between different containers in a project
+// are not redeploys and are ignored.
 func injectDeploySeparators(entries []protocol.LogEntryMsg) []protocol.LogEntryMsg {
 	if len(entries) == 0 {
 		return entries
 	}
+	// Track the last-seen container ID per container name.
+	seen := make(map[string]string) // name -> containerID
 	out := make([]protocol.LogEntryMsg, 0, len(entries)+4)
-	prevID := entries[0].ContainerID
-	out = append(out, entries[0])
-	for _, e := range entries[1:] {
-		if e.ContainerID != prevID && e.Stream != "event" {
+	for _, e := range entries {
+		if e.Stream == "event" {
+			out = append(out, e)
+			continue
+		}
+		prevID, known := seen[e.ContainerName]
+		if known && prevID != e.ContainerID {
 			out = append(out, protocol.LogEntryMsg{
 				Timestamp:     e.Timestamp,
 				ContainerID:   e.ContainerID,
@@ -30,8 +37,8 @@ func injectDeploySeparators(entries []protocol.LogEntryMsg) []protocol.LogEntryM
 				Stream:        "event",
 				Message:       fmt.Sprintf("── %s redeployed ──", e.ContainerName),
 			})
-			prevID = e.ContainerID
 		}
+		seen[e.ContainerName] = e.ContainerID
 		out = append(out, e)
 	}
 	return out
@@ -88,6 +95,7 @@ func refetchLogs(det *DetailState, c *Client, retDays int) tea.Cmd {
 	det.logs = NewRingBuffer[protocol.LogEntryMsg](logBufCapacity)
 	det.logScroll = 0
 	det.logCursor = 0
+	det.logPaused = false
 	det.backfilled = false
 	det.totalLogCount = 0
 

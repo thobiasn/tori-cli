@@ -159,6 +159,13 @@ func (ss *SocketServer) handleConn(conn net.Conn) {
 	ctx, cancel := context.WithCancel(ss.ctx)
 	defer cancel()
 
+	// Close the connection when context is cancelled so the blocking
+	// ReadMsg call below unblocks during shutdown.
+	go func() {
+		<-ctx.Done()
+		conn.Close()
+	}()
+
 	c := &connState{
 		ss:   ss,
 		conn: conn,
@@ -171,7 +178,7 @@ func (ss *SocketServer) handleConn(conn net.Conn) {
 	for {
 		env, err := protocol.ReadMsg(conn)
 		if err != nil {
-			if !isEOF(err) && !isClosedErr(err) {
+			if !isEOF(err) && !isClosedErr(err) && ctx.Err() == nil {
 				slog.Warn("read error", "error", err)
 			}
 			return
@@ -383,14 +390,15 @@ func (c *connState) subscribeAlerts() {
 	}
 	for _, a := range alerts {
 		event := &protocol.AlertEvent{
-			ID:          a.ID,
-			RuleName:    a.RuleName,
-			Severity:    a.Severity,
-			Condition:   a.Condition,
-			InstanceKey: a.InstanceKey,
-			FiredAt:     a.FiredAt.Unix(),
-			Message:     a.Message,
-			State:       "firing",
+			ID:           a.ID,
+			RuleName:     a.RuleName,
+			Severity:     a.Severity,
+			Condition:    a.Condition,
+			InstanceKey:  a.InstanceKey,
+			FiredAt:      a.FiredAt.Unix(),
+			Message:      a.Message,
+			State:        "firing",
+			Acknowledged: a.Acknowledged,
 		}
 		env, err := protocol.NewEnvelope(protocol.TypeAlertEvent, 0, event)
 		if err != nil {
@@ -649,8 +657,8 @@ func (c *connState) silenceAlert(env *protocol.Envelope) {
 		c.sendError(env.ID, "alerter not configured")
 		return
 	}
-	if req.Duration <= 0 || req.Duration > maxSilenceDuration {
-		c.sendError(env.ID, fmt.Sprintf("duration must be 1-%d seconds", maxSilenceDuration))
+	if req.Duration < 0 || req.Duration > maxSilenceDuration {
+		c.sendError(env.ID, fmt.Sprintf("duration must be 0-%d seconds", maxSilenceDuration))
 		return
 	}
 	if !alerter.HasRule(req.RuleName) {
@@ -658,7 +666,11 @@ func (c *connState) silenceAlert(env *protocol.Envelope) {
 		return
 	}
 	alerter.Silence(req.RuleName, time.Duration(req.Duration)*time.Second)
-	c.sendResult(env.ID, &protocol.Result{OK: true, Message: "silenced"})
+	msg := "silenced"
+	if req.Duration == 0 {
+		msg = "unsilenced"
+	}
+	c.sendResult(env.ID, &protocol.Result{OK: true, Message: msg})
 }
 
 func (c *connState) setTracking(env *protocol.Envelope) {

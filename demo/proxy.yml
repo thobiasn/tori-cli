@@ -1,0 +1,19 @@
+name: proxy
+services:
+  traefik:
+    image: alpine:3.21
+    command: >
+      sh -c "
+        /opt/log-generator.sh &
+        sleep infinity
+      "
+    environment:
+      SERVICE_TYPE: generic
+    volumes:
+      - ./log-generator.sh:/opt/log-generator.sh:ro
+    restart: unless-stopped
+
+  certbot:
+    image: alpine:3.21
+    command: sh -c "echo certificates up to date && exit 0"
+    restart: "no"

@@ -18,12 +18,13 @@ var validFields = map[string]map[string]bool{
 		"swap_percent":   true,
 	},
 	"container": {
-		"cpu_percent":    true,
-		"memory_percent": true,
-		"state":          true,
-		"health":         true,
-		"restart_count":  true,
-		"exit_code":      true,
+		"cpu_percent":       true,
+		"cpu_limit_percent": true,
+		"memory_percent":    true,
+		"state":             true,
+		"health":            true,
+		"restart_count":     true,
+		"exit_code":         true,
 	},
 }
 
@@ -157,6 +158,11 @@ func containerFieldNum(c *ContainerMetrics, field string) float64 {
 	switch field {
 	case "cpu_percent":
 		return c.CPUPercent
+	case "cpu_limit_percent":
+		if c.CPULimit == 0 {
+			return 0
+		}
+		return c.CPUPercent / c.CPULimit
 	case "memory_percent":
 		return c.MemPercent
 	case "restart_count":

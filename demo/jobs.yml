@@ -1,0 +1,30 @@
+name: jobs
+services:
+  scheduler:
+    image: alpine:3.21
+    command: >
+      sh -c "
+        /opt/log-generator.sh &
+        sleep infinity
+      "
+    environment:
+      SERVICE_TYPE: scheduler
+    volumes:
+      - ./log-generator.sh:/opt/log-generator.sh:ro
+    restart: unless-stopped
+
+  cleanup:
+    image: alpine:3.21
+    command: >
+      sh -c "
+        /opt/log-generator.sh &
+        delay=$$(awk 'BEGIN{srand(); print int(30 + rand()*30)}')
+        sleep $$delay
+        echo cleanup failed: lock acquisition timeout
+        exit 1
+      "
+    environment:
+      SERVICE_TYPE: scheduler
+    volumes:
+      - ./log-generator.sh:/opt/log-generator.sh:ro
+    restart: unless-stopped

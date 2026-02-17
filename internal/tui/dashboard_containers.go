@@ -53,10 +53,10 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 			if item.groupIdx > 0 && !a.collapsed[a.groups[item.groupIdx-1].name] {
 				lines = append(lines, "")
 			}
-			row := renderProjectRow(a, g, idx, w, trackedState, metricsAvail, theme)
+			row := renderProjectRow(a, g, idx, w, s.Alerts, trackedState, metricsAvail, theme)
 			lines = append(lines, row)
 		} else {
-			row := renderContainerRow(g.containers[item.contIdx], idx, a.cursor, w, now, trackedState, metricsAvail, theme)
+			row := renderContainerRow(g.containers[item.contIdx], idx, a.cursor, w, now, s.Alerts, trackedState, metricsAvail, theme)
 			lines = append(lines, row)
 		}
 	}
@@ -77,7 +77,7 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 	return scrollAndPad(lines, cursorLine, maxH)
 }
 
-func renderProjectRow(a *App, g containerGroup, idx, w int, trackedState, metricsAvail map[string]bool, theme *Theme) string {
+func renderProjectRow(a *App, g containerGroup, idx, w int, alerts map[int64]*protocol.AlertEvent, trackedState, metricsAvail map[string]bool, theme *Theme) string {
 	muted := mutedStyle(theme)
 
 	projNameMax := w - 2 - colsW - minGap
@@ -134,6 +134,9 @@ func renderProjectRow(a *App, g containerGroup, idx, w int, trackedState, metric
 		}
 	}
 
+	// Alert indicator: worst severity across all children.
+	alertInd := projectAlertIndicator(g, alerts, theme)
+
 	// CPU column.
 	var cpuStr string
 	if (!allTracked || !anyMetrics) && cpuSum == 0 {
@@ -172,7 +175,7 @@ func renderProjectRow(a *App, g containerGroup, idx, w int, trackedState, metric
 	name := Truncate(g.name, projNameMax)
 	nameStyled := lipgloss.NewStyle().Foreground(theme.Fg).Bold(true).Render(name)
 
-	prefix := chevronStyled + " " + nameStyled
+	prefix := chevronStyled + " " + nameStyled + alertInd
 	prefixW := lipgloss.Width(prefix)
 	gap := w - prefixW - colsW
 	if gap < 1 {
@@ -186,7 +189,7 @@ func renderProjectRow(a *App, g containerGroup, idx, w int, trackedState, metric
 	return TruncateStyled(row, w)
 }
 
-func renderContainerRow(c protocol.ContainerMetrics, idx, cursor, w int, now int64, trackedState, metricsAvail map[string]bool, theme *Theme) string {
+func renderContainerRow(c protocol.ContainerMetrics, idx, cursor, w int, now int64, alerts map[int64]*protocol.AlertEvent, trackedState, metricsAvail map[string]bool, theme *Theme) string {
 	muted := mutedStyle(theme)
 	contNameMax := w - 4 - colsW - minGap
 	if contNameMax < 8 {
@@ -264,7 +267,9 @@ func renderContainerRow(c protocol.ContainerMetrics, idx, cursor, w int, now int
 		styledStat = muted.Render(statStr)
 	}
 
-	prefix := "  " + dot + " " + lipgloss.NewStyle().Foreground(theme.FgBright).Render(name)
+	alertInd := containerAlertIndicator(alerts, c.ID, theme)
+
+	prefix := "  " + dot + " " + lipgloss.NewStyle().Foreground(theme.FgBright).Render(name) + alertInd
 	prefixW := lipgloss.Width(prefix)
 	gap := w - prefixW - colsW
 	if gap < 1 {
@@ -278,5 +283,64 @@ func renderContainerRow(c protocol.ContainerMetrics, idx, cursor, w int, now int
 		row = muted.Render(stripANSI(row))
 	}
 	return TruncateStyled(row, w)
+}
+
+// containerAlertIndicator returns severity-colored ▲ markers for firing alerts on a container.
+func containerAlertIndicator(alerts map[int64]*protocol.AlertEvent, containerID string, theme *Theme) string {
+	suffix := ":" + containerID
+	var warnings, criticals int
+	for _, a := range alerts {
+		if a.State != "firing" || !strings.HasSuffix(a.InstanceKey, suffix) {
+			continue
+		}
+		if a.Severity == "critical" {
+			criticals++
+		} else {
+			warnings++
+		}
+	}
+	if criticals == 0 && warnings == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(" ")
+	crit := lipgloss.NewStyle().Foreground(theme.Critical).Render("▲")
+	for range criticals {
+		b.WriteString(crit)
+	}
+	warn := lipgloss.NewStyle().Foreground(theme.Warning).Render("▲")
+	for range warnings {
+		b.WriteString(warn)
+	}
+	return b.String()
+}
+
+// projectAlertIndicator returns a single ▲ colored by worst alert severity across all containers in a group.
+func projectAlertIndicator(g containerGroup, alerts map[int64]*protocol.AlertEvent, theme *Theme) string {
+	worst := 0 // 0=none, 1=warning, 2=critical
+	for _, c := range g.containers {
+		suffix := ":" + c.ID
+		for _, a := range alerts {
+			if a.State != "firing" || !strings.HasSuffix(a.InstanceKey, suffix) {
+				continue
+			}
+			if a.Severity == "critical" {
+				worst = 2
+			} else if worst < 1 {
+				worst = 1
+			}
+		}
+		if worst == 2 {
+			break
+		}
+	}
+	switch worst {
+	case 2:
+		return " " + lipgloss.NewStyle().Foreground(theme.Critical).Render("▲")
+	case 1:
+		return " " + lipgloss.NewStyle().Foreground(theme.Warning).Render("▲")
+	default:
+		return ""
+	}
 }
 

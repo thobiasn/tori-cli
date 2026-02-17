@@ -210,8 +210,9 @@ Alert conditions use the format `scope.field op value`. Available fields:
 | `host.load5` | numeric | 5-minute load average |
 | `host.load15` | numeric | 15-minute load average |
 | `host.swap_percent` | numeric | Swap usage percentage |
-| `container.cpu_percent` | numeric | Container CPU usage |
-| `container.memory_percent` | numeric | Container memory usage |
+| `container.cpu_percent` | numeric | Container CPU usage (100% = 1 core) |
+| `container.cpu_limit_percent` | numeric | CPU usage as percentage of configured limit (0 if no limit) |
+| `container.memory_percent` | numeric | Container memory usage (% of limit, or % of host total if no limit) |
 | `container.state` | string | Container state (e.g. `'running'`, `'exited'`) |
 | `container.health` | string | Container health (e.g. `'healthy'`, `'unhealthy'`) |
 | `container.restart_count` | numeric | Container restart count |

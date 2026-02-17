@@ -464,7 +464,6 @@ func TestSocketSilenceValidation(t *testing.T) {
 		req      protocol.SilenceAlertReq
 		wantErr  string
 	}{
-		{"zero duration", protocol.SilenceAlertReq{RuleName: "high_cpu", Duration: 0}, "duration"},
 		{"negative duration", protocol.SilenceAlertReq{RuleName: "high_cpu", Duration: -1}, "duration"},
 		{"too long", protocol.SilenceAlertReq{RuleName: "high_cpu", Duration: maxSilenceDuration + 1}, "duration"},
 		{"unknown rule", protocol.SilenceAlertReq{RuleName: "nonexistent", Duration: 60}, "unknown rule"},

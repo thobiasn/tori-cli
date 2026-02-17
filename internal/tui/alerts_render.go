@@ -181,7 +181,11 @@ func renderAlertRow(item alertItem, w int, now time.Time, contInfo []protocol.Co
 
 	dur := formatCompactDuration(now.Sub(time.Unix(item.firedAt, 0)))
 	sev := lipgloss.NewStyle().Foreground(sevColor)
-	right := sev.Render("FIRING") + " " + sev.Render(dur)
+	statusLabel := "FIRING"
+	if item.acked {
+		statusLabel = "ACK"
+	}
+	right := sev.Render(statusLabel) + " " + sev.Render(dur)
 	return padBetween(left, right, w)
 }
 
@@ -256,8 +260,7 @@ func renderRuleRow(rule protocol.AlertRuleInfo, w int, now time.Time, theme *The
 	var statusText string
 	var statusStyle lipgloss.Style
 	if rule.SilencedUntil > 0 && time.Unix(rule.SilencedUntil, 0).After(now) {
-		remaining := formatCompactDuration(time.Until(time.Unix(rule.SilencedUntil, 0)))
-		statusText = "silenced " + remaining
+		statusText = "silenced"
 		statusStyle = muted
 	} else if rule.FiringCount > 0 {
 		if rule.FiringCount == 1 {

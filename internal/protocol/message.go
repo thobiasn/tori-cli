@@ -74,15 +74,16 @@ type LogEntryMsg struct {
 
 // AlertEvent is pushed on alert state transitions.
 type AlertEvent struct {
-	ID          int64  `msgpack:"id"`
-	RuleName    string `msgpack:"rule_name"`
-	Severity    string `msgpack:"severity"`
-	Condition   string `msgpack:"condition"`
-	InstanceKey string `msgpack:"instance_key"`
-	FiredAt     int64  `msgpack:"fired_at"`
-	ResolvedAt  int64  `msgpack:"resolved_at,omitempty"`
-	Message     string `msgpack:"message"`
-	State       string `msgpack:"state"` // "firing" or "resolved"
+	ID           int64  `msgpack:"id"`
+	RuleName     string `msgpack:"rule_name"`
+	Severity     string `msgpack:"severity"`
+	Condition    string `msgpack:"condition"`
+	InstanceKey  string `msgpack:"instance_key"`
+	FiredAt      int64  `msgpack:"fired_at"`
+	ResolvedAt   int64  `msgpack:"resolved_at,omitempty"`
+	Message      string `msgpack:"message"`
+	State        string `msgpack:"state"` // "firing" or "resolved"
+	Acknowledged bool   `msgpack:"acknowledged,omitempty"`
 }
 
 // ContainerEvent is pushed on container lifecycle changes (start, die, etc.).

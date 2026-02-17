@@ -1,0 +1,21 @@
+[storage]
+path = "/tmp/tori/tori.db"
+retention_days = 1
+
+[socket]
+path = "/tmp/tori/tori.sock"
+
+[collect]
+interval = "5s"
+
+[alerts.container_down]
+condition = "container.state == 'exited'"
+for = "10s"
+severity = "critical"
+actions = ["notify"]
+
+[alerts.container_memory]
+condition = "container.memory_percent > 80"
+for = "30s"
+severity = "warning"
+actions = ["notify"]
