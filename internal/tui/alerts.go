@@ -118,7 +118,10 @@ func buildAlertList(firing map[int64]*protocol.AlertEvent, resolved []protocol.A
 		})
 	}
 	sort.Slice(items, func(i, j int) bool {
-		return items[i].firedAt > items[j].firedAt
+		if items[i].firedAt != items[j].firedAt {
+			return items[i].firedAt > items[j].firedAt
+		}
+		return items[i].id < items[j].id
 	})
 
 	if !showResolved {
@@ -145,7 +148,10 @@ func buildAlertList(firing map[int64]*protocol.AlertEvent, resolved []protocol.A
 		})
 	}
 	sort.Slice(resolvedItems, func(i, j int) bool {
-		return resolvedItems[i].resolvedAt > resolvedItems[j].resolvedAt
+		if resolvedItems[i].resolvedAt != resolvedItems[j].resolvedAt {
+			return resolvedItems[i].resolvedAt > resolvedItems[j].resolvedAt
+		}
+		return resolvedItems[i].id < resolvedItems[j].id
 	})
 
 	items = append(items, resolvedItems...)

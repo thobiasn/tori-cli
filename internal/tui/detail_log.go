@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -472,6 +473,7 @@ func containerAlerts(alerts map[int64]*protocol.AlertEvent, containerID string) 
 			out = append(out, a)
 		}
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
 }
 
