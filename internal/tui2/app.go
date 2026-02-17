@@ -140,6 +140,7 @@ func NewApp(sessions map[string]*Session, display DisplayConfig) App {
 	// Default to first auto-connect server, or first server overall.
 	active := ""
 	showSwitcher := true
+	var autoQueue []string
 	for _, name := range order {
 		if active == "" {
 			active = name
@@ -149,16 +150,18 @@ func NewApp(sessions map[string]*Session, display DisplayConfig) App {
 				active = name // first auto-connect becomes active
 			}
 			showSwitcher = false
+			autoQueue = append(autoQueue, name)
 		}
 	}
 
 	return App{
-		sessions:      sessions,
-		sessionOrder:  order,
-		activeSession: active,
-		switcher:      showSwitcher,
-		theme:         DefaultTheme(),
-		display:       display,
+		sessions:         sessions,
+		sessionOrder:     order,
+		activeSession:    active,
+		switcher:         showSwitcher,
+		autoConnectQueue: autoQueue,
+		theme:            DefaultTheme(),
+		display:          display,
 		collapsed:     make(map[string]bool),
 		ctx:           &appCtx{},
 	}
@@ -205,14 +208,7 @@ func (a App) Init() tea.Cmd {
 		}
 	}
 
-	// Build auto-connect queue.
-	for _, name := range a.sessionOrder {
-		s := a.sessions[name]
-		if s.Config.AutoConnect && s.ConnState == ConnNone {
-			a.autoConnectQueue = append(a.autoConnectQueue, name)
-		}
-	}
-
+	// Auto-connect queue is built in NewApp; kick off the first connection.
 	if cmd := a.processAutoConnectQueue(); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
