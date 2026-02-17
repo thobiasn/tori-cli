@@ -65,7 +65,7 @@ func renderDetail(a *App, s *Session, width, height int) string {
 	sections = append(sections, renderDetailLogs(det, s, contentW, logH, a.display, theme))
 
 	// 9. Footer: help bar.
-	sections = append(sections, renderDetailHelp(det, contentW, theme))
+	sections = append(sections, renderDetailHelp(contentW, theme))
 
 	content := strings.Join(sections, "\n")
 
@@ -538,23 +538,18 @@ func levelColor(level string, theme *Theme) lipgloss.Style {
 	}
 }
 
-func renderDetailHelp(det *DetailState, w int, theme *Theme) string {
+func renderDetailHelp(w int, theme *Theme) string {
 	dim := lipgloss.NewStyle().Foreground(theme.FgDim)
 	bright := lipgloss.NewStyle().Foreground(theme.Fg)
 
 	type binding struct{ key, label string }
 	bindings := []binding{
-		{"Esc", "back"},
+		{"esc", "back"},
 		{"j/k", "scroll"},
-		{"G", "latest"},
-		{"Enter", "expand"},
-		{"s", "stream"},
 		{"f", "filter"},
+		{"i", "info"},
+		{"?", "help"},
 	}
-	if !det.isGroupMode() {
-		bindings = append(bindings, binding{"i", "info"})
-	}
-	bindings = append(bindings, binding{"+/-", "zoom"})
 
 	var parts []string
 	for _, b := range bindings {

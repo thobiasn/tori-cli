@@ -47,6 +47,9 @@ type Session struct {
 	// Detail view state.
 	Detail DetailState
 
+	// Alerts view state.
+	AlertsView AlertsState
+
 	Err error
 }
 

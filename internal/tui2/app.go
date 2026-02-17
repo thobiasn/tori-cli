@@ -90,6 +90,7 @@ type view int
 const (
 	viewDashboard view = iota
 	viewDetail
+	viewAlerts
 )
 
 // App is the root Bubbletea model.
@@ -118,6 +119,7 @@ type App struct {
 
 	spinnerFrame int
 	birdBlink    bool // true = bird eye closed (data just arrived)
+	helpModal    bool
 
 	// Connection lifecycle.
 	ctx              *appCtx
@@ -157,6 +159,23 @@ func (a *App) SetProgram(p *tea.Program) {
 
 // Err returns the application-level error, if any.
 func (a App) Err() error { return a.err }
+
+// hasActiveSubModal returns true if a view-level modal is open that should
+// capture keys before the global help handler.
+func (a *App) hasActiveSubModal() bool {
+	s := a.session()
+	if s == nil {
+		return false
+	}
+	if a.view == viewDetail {
+		det := &s.Detail
+		return det.expandModal != nil || det.filterModal != nil || det.infoOverlay
+	}
+	if a.view == viewAlerts {
+		return s.AlertsView.silenceModal != nil
+	}
+	return a.switcher
+}
 
 // session returns the currently active session, or nil.
 func (a *App) session() *Session {
@@ -579,6 +598,27 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case alertsDataMsg:
+		if s := a.sessions[msg.server]; s != nil {
+			s.AlertsView.rules = msg.rules
+			s.AlertsView.resolved = msg.resolved
+			s.AlertsView.loaded = true
+			s.RuleCount = len(msg.rules)
+		}
+		return a, nil
+
+	case alertAckDoneMsg:
+		if s := a.sessions[msg.server]; s != nil && s.Client != nil {
+			return a, queryAlertsData(s.Client, msg.server)
+		}
+		return a, nil
+
+	case alertSilenceDoneMsg:
+		if s := a.sessions[msg.server]; s != nil && s.Client != nil {
+			return a, queryAlertsData(s.Client, msg.server)
+		}
+		return a, nil
+
 	case spinnerTickMsg:
 		a.spinnerFrame++
 		return a, spinnerTick()
@@ -710,6 +750,10 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Global quit.
 	if key == "q" || key == "ctrl+c" {
+		if a.helpModal {
+			a.helpModal = false
+			return a, nil
+		}
 		for _, s := range a.sessions {
 			if s.connectCancel != nil {
 				s.connectCancel()
@@ -718,9 +762,28 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, tea.Quit
 	}
 
+	// Help modal blocks all input.
+	if a.helpModal {
+		if key == "?" || key == "esc" {
+			a.helpModal = false
+		}
+		return a, nil
+	}
+
+	// Open help modal (unless a sub-modal is active).
+	if key == "?" && !a.hasActiveSubModal() {
+		a.helpModal = true
+		return a, nil
+	}
+
 	// Detail view captures its own keys.
 	if a.view == viewDetail {
 		return a.handleDetailKey(msg)
+	}
+
+	// Alerts view captures its own keys.
+	if a.view == viewAlerts {
+		return a.handleAlertsKey(msg)
 	}
 
 	// Server switcher.
@@ -794,8 +857,7 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case "2":
-		// Alerts view not yet built.
-		return a, nil
+		return a, a.enterAlerts()
 	}
 
 	return a, nil
@@ -1009,6 +1071,8 @@ func (a App) View() string {
 	switch a.view {
 	case viewDetail:
 		content = renderDetail(&a, s, a.width, a.height)
+	case viewAlerts:
+		content = renderAlerts(&a, s, a.width, a.height)
 	default:
 		content = renderDashboard(&a, s, a.width, a.height)
 	}
@@ -1020,6 +1084,8 @@ func (a App) View() string {
 		modal = a.renderSSHPromptModal(a.width, a.height)
 	case a.switcher:
 		modal = renderSwitcher(&a, a.width, a.height)
+	case a.helpModal:
+		modal = renderHelpModal(&a, s, a.width, a.height)
 	}
 	if modal != "" {
 		content = Overlay(content, modal, a.width, a.height)

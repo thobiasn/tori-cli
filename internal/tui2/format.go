@@ -408,6 +408,85 @@ func formatCompactUptime(seconds int64) string {
 	return fmt.Sprintf("%dm", mins)
 }
 
+// renderHelpModal renders the help overlay for the current view.
+func renderHelpModal(a *App, s *Session, width, height int) string {
+	theme := &a.theme
+	fg := lipgloss.NewStyle().Foreground(theme.Fg)
+	dim := lipgloss.NewStyle().Foreground(theme.FgDim)
+
+	type binding struct{ key, desc string }
+	var bindings []binding
+
+	switch a.view {
+	case viewDetail:
+		det := &s.Detail
+		bindings = []binding{
+			{"esc", "back to dashboard"},
+			{"j/k", "scroll logs"},
+			{"G", "jump to latest"},
+			{"enter", "expand log entry"},
+			{"s", "cycle stream filter"},
+			{"f", "open filter dialog"},
+			{"+/-", "zoom time range"},
+		}
+		if !det.isGroupMode() {
+			bindings = append(bindings, binding{"i", "toggle info overlay"})
+		}
+		bindings = append(bindings, binding{"? / esc", "close help"})
+
+	case viewAlerts:
+		bindings = []binding{
+			{"tab", "switch focus"},
+			{"j/k", "navigate"},
+			{"enter", "expand details"},
+			{"a", "acknowledge alert"},
+			{"s", "silence rule/alert"},
+			{"r", "show/hide resolved"},
+			{"g", "go to container"},
+			{"1", "dashboard view"},
+			{"? / esc", "close help"},
+			{"q", "quit"},
+		}
+
+	default: // dashboard
+		bindings = []binding{
+			{"j/k", "navigate containers"},
+			{"enter", "open detail view"},
+			{"space", "expand/collapse project"},
+			{"t", "track container"},
+			{"+/-", "zoom time range"},
+			{"S", "switch server"},
+			{"2", "alerts view"},
+			{"? / esc", "close help"},
+			{"q", "quit"},
+		}
+	}
+
+	const keyW = 12
+	var lines []string
+	lines = append(lines, "")
+	for _, b := range bindings {
+		keyStr := b.key
+		for len(keyStr) < keyW {
+			keyStr += " "
+		}
+		lines = append(lines, "  "+fg.Render(keyStr)+dim.Render(b.desc))
+	}
+	lines = append(lines, "")
+
+	content := strings.Join(lines, "\n")
+	modalW := 40
+	if modalW > width-4 {
+		modalW = width - 4
+	}
+	modalH := len(lines) + 2
+	if modalH > height-2 {
+		modalH = height - 2
+	}
+
+	return renderBox("help", content, modalW, modalH, theme)
+}
+
 // wrapText wraps a string into lines of the given width, breaking on rune boundaries.
 func wrapText(s string, width int) []string {
 	if width <= 0 {

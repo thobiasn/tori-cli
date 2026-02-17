@@ -728,17 +728,12 @@ func renderHelpBar(a *App, w int, theme *Theme) string {
 	type binding struct{ key, label string }
 	bindings := []binding{
 		{"j/k", "navigate"},
+		{"enter", "detail"},
 		{"space", "expand"},
-		{"t", "track"},
-		{"+/-", "zoom"},
+		{"2", "alerts"},
+		{"?", "help"},
+		{"q", "quit"},
 	}
-	if len(a.sessions) > 1 {
-		bindings = append(bindings, binding{"S", "servers"})
-	}
-	bindings = append(bindings,
-		binding{"?", "help"},
-		binding{"q", "quit"},
-	)
 
 	var parts []string
 	for _, b := range bindings {
