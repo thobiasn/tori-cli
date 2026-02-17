@@ -137,12 +137,10 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 	sections = append(sections, renderLabeledDivider(a.windowLabel(), contentW, theme))
 
 	// 3. Host metrics graphs (cpu + mem braille, 2 rows each)
-	if s.Host != nil {
-		sections = append(sections, renderHostGraphs(s, contentW, theme))
-	}
+	sections = append(sections, renderHostGraphs(a, s, contentW, theme))
 
 	// 4. Disk + load summary line
-	summaryLine := 0
+	summaryLine := 1
 	if s.Host != nil {
 		muted := lipgloss.NewStyle().Foreground(theme.FgDim)
 		var parts []string
@@ -164,7 +162,9 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 			muted.Render("load ")+lipgloss.NewStyle().Foreground(loadColor).Render(loadVals))
 		sep := " " + muted.Render("·") + " "
 		sections = append(sections, centerText(strings.Join(parts, sep), contentW))
-		summaryLine = 1
+	} else {
+		muted := lipgloss.NewStyle().Foreground(theme.FgDim)
+		sections = append(sections, centerText(muted.Render("disk —  ·  load — — —"), contentW))
 	}
 
 	// 5. Divider
@@ -173,9 +173,6 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 	// 6. Container list (fills remaining space)
 	// Fixed sections: header(3) + time divider(2) + host graphs(4) + divider(1) + divider(1) + status(1) + help(1) = 13
 	fixedH := 13 + summaryLine
-	if s.Host == nil {
-		fixedH -= 4 // no host graphs
-	}
 	contH := height - fixedH
 	if contH < 1 {
 		contH = 1
@@ -220,9 +217,13 @@ func renderHeader(a *App, s *Session, w int, theme *Theme) string {
 	accent := lipgloss.NewStyle().Foreground(theme.Accent)
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
 
-	bird := "—(•)>"
-	if a.birdBlink {
+	var bird string
+	if s.Host == nil {
+		bird = strings.TrimLeft(birdFrames[a.spinnerFrame%len(birdFrames)], " ")
+	} else if a.birdBlink {
 		bird = "—(-)>"
+	} else {
+		bird = "—(•)>"
 	}
 	logo := accent.Render(bird)
 
@@ -255,11 +256,8 @@ func renderHeader(a *App, s *Session, w int, theme *Theme) string {
 }
 
 // renderHostGraphs renders CPU and memory as 2-row braille sparklines.
-func renderHostGraphs(s *Session, w int, theme *Theme) string {
-	if s.Host == nil {
-		return ""
-	}
-
+// When host data hasn't arrived yet, renders animated loading waves.
+func renderHostGraphs(a *App, s *Session, w int, theme *Theme) string {
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
 
 	// "cpu " / "mem " = 4 chars label, " XX.X%" = 7 chars max suffix.
@@ -271,6 +269,15 @@ func renderHostGraphs(s *Session, w int, theme *Theme) string {
 	}
 	indent := strings.Repeat(" ", labelW)
 	pctPad := strings.Repeat(" ", pctW)
+
+	if s.Host == nil {
+		cpuTop, cpuBot := LoadingSparkline(a.spinnerFrame, graphW, theme.FgDim)
+		memTop, memBot := LoadingSparkline(a.spinnerFrame+3, graphW, theme.FgDim)
+		return indent + cpuTop + pctPad + "\n" +
+			muted.Render("cpu ") + cpuBot + pctPad + "\n" +
+			indent + memTop + pctPad + "\n" +
+			muted.Render("mem ") + memBot + pctPad
+	}
 
 	cpuTop, cpuBot := Sparkline(s.HostCPUHist.Data(), graphW, theme.GraphCPU)
 	cpuPct := fmt.Sprintf(" %.1f%%", s.Host.CPUPercent)
@@ -331,6 +338,12 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 		trackedState[ci.ID] = ci.Tracked
 	}
 
+	// Build metrics availability lookup (containers with real metrics data).
+	metricsAvail := make(map[string]bool, len(s.Containers))
+	for _, c := range s.Containers {
+		metricsAvail[c.ID] = true
+	}
+
 	// Column widths (right-aligned, fixed).
 	const cpuW = 6  // " 0.6%" or "13.0%"
 	const memW = 8  // "  30.9M" or " 710.1M"
@@ -375,6 +388,7 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 			var cpuSum float64
 			var memSum uint64
 			allTracked := true
+			anyMetrics := false
 			worstCPUColor := theme.FgDim
 			worstMemColor := theme.FgDim
 			hasCheck := false
@@ -398,6 +412,10 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 					continue
 				}
 				if c.State == "running" {
+					if !metricsAvail[c.ID] {
+						continue // stub — no metrics yet
+					}
+					anyMetrics = true
 					cpuSum += c.CPUPercent
 					memSum += c.MemUsage
 					cc := containerCPUColor(c.CPUPercent, c.CPULimit, theme)
@@ -413,7 +431,7 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 
 			// CPU column.
 			var cpuStr string
-			if !allTracked && cpuSum == 0 {
+			if (!allTracked || !anyMetrics) && cpuSum == 0 {
 				cpuStr = "—"
 			} else {
 				cpuStr = fmt.Sprintf("%.1f%%", cpuSum)
@@ -424,7 +442,7 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 
 			// MEM column.
 			var memStr string
-			if !allTracked && memSum == 0 {
+			if (!allTracked || !anyMetrics) && memSum == 0 {
 				memStr = "—"
 			} else {
 				memStr = formatBytes(memSum)
@@ -488,9 +506,11 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 			}
 			name = Truncate(name, contNameMax)
 
+			stub := tracked && c.State == "running" && !metricsAvail[c.ID]
+
 			// CPU column.
 			var cpuStr string
-			if !tracked {
+			if !tracked || stub {
 				cpuStr = "—"
 			} else if c.State != "running" {
 				cpuStr = c.State
@@ -506,7 +526,7 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 
 			// MEM column.
 			var memStr string
-			if !tracked || c.State != "running" {
+			if !tracked || stub || c.State != "running" {
 				memStr = "—"
 			} else {
 				memStr = formatBytes(c.MemUsage)
@@ -525,7 +545,7 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 
 			// Status column (uptime or state).
 			var statStr string
-			if !tracked {
+			if !tracked || stub {
 				statStr = "—"
 			} else if c.State != "running" {
 				statStr = ""
@@ -538,7 +558,7 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 
 			// Color the columns.
 			var styledCPU, styledMem, styledStat string
-			if !tracked || c.State != "running" {
+			if !tracked || stub || c.State != "running" {
 				styledCPU = muted.Render(cpuStr)
 				styledMem = muted.Render(memStr)
 				styledStat = muted.Render(statStr)

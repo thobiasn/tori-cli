@@ -40,7 +40,7 @@ func renderDetail(a *App, s *Session, width, height int) string {
 	sections = append(sections, renderLabeledDivider(a.windowLabel(), contentW, theme))
 
 	// 3+4. CPU and MEM sparklines (2 rows each).
-	sections = append(sections, renderDetailGraphs(det, s, contentW, theme))
+	sections = append(sections, renderDetailGraphs(a, det, s, contentW, theme))
 
 	// 5. Alert banner.
 	var alertLines int
@@ -138,25 +138,29 @@ func renderDetailTopBar(a *App, s *Session, w int) string {
 			parts = append(parts, lipgloss.NewStyle().Foreground(theme.Warning).Render(label))
 		}
 
-		// Health summary.
+		// Health summary (use ContInfo fallback when metrics haven't arrived).
 		hasCheck := false
 		worstHealth := "healthy"
 		total := len(det.projectIDs)
 		running := 0
 		for _, id := range det.projectIDs {
-			cm := findContainer(id, s.Containers)
-			if cm == nil {
+			var state, health string
+			if cm := findContainer(id, s.Containers); cm != nil {
+				state, health = cm.State, cm.Health
+			} else if ci := findContInfo(id, s.ContInfo); ci != nil {
+				state, health = ci.State, ci.Health
+			} else {
 				continue
 			}
-			if cm.State == "running" {
+			if state == "running" {
 				running++
 			}
-			if hasHealthcheck(cm.Health) {
+			if hasHealthcheck(health) {
 				hasCheck = true
-				if cm.Health == "unhealthy" {
+				if health == "unhealthy" {
 					worstHealth = "unhealthy"
-				} else if cm.Health != "healthy" && worstHealth != "unhealthy" {
-					worstHealth = cm.Health
+				} else if health != "healthy" && worstHealth != "unhealthy" {
+					worstHealth = health
 				}
 			}
 		}
@@ -204,7 +208,9 @@ func renderDetailTopBar(a *App, s *Session, w int) string {
 	}
 
 	if cm == nil {
-		return padBetween(breadcrumb, muted.Render("loading..."), w)
+		dot := lipgloss.NewStyle().Foreground(theme.FgDim).Render("●")
+		right = dot + " " + muted.Render("—")
+		return padBetween(breadcrumb, right, w)
 	}
 
 	var parts []string
@@ -258,7 +264,7 @@ func padBetween(left, right string, w int) string {
 	return left + strings.Repeat(" ", gap) + right
 }
 
-func renderDetailGraphs(det *DetailState, s *Session, w int, theme *Theme) string {
+func renderDetailGraphs(a *App, det *DetailState, s *Session, w int, theme *Theme) string {
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
 
 	labelW := 4 // "cpu " / "mem "
@@ -269,6 +275,39 @@ func renderDetailGraphs(det *DetailState, s *Session, w int, theme *Theme) strin
 	}
 	indent := strings.Repeat(" ", labelW)
 	pctPad := strings.Repeat(" ", pctW)
+
+	// Check if we have any metrics data for this container/group.
+	hasMetrics := false
+	if det.isGroupMode() {
+		for _, id := range det.projectIDs {
+			if findContainer(id, s.Containers) != nil {
+				hasMetrics = true
+				break
+			}
+		}
+	} else {
+		hasMetrics = findContainer(det.containerID, s.Containers) != nil
+	}
+
+	// Loading state: no metrics data yet — show animated sparklines with dashes.
+	if !hasMetrics {
+		cpuTop, cpuBot := LoadingSparkline(a.spinnerFrame, graphW, theme.FgDim)
+		memTop, memBot := LoadingSparkline(a.spinnerFrame+3, graphW, theme.FgDim)
+		dashVal := muted.Render("—")
+		rightAlign := func(s string) string {
+			w := lipgloss.Width(s)
+			if w < pctW {
+				return strings.Repeat(" ", pctW-w) + s
+			}
+			return s
+		}
+		cpuRight := rightAlign(dashVal)
+		memRight := rightAlign(dashVal)
+		return indent + cpuTop + pctPad + "\n" +
+			muted.Render("cpu ") + cpuBot + cpuRight + "\n" +
+			indent + memTop + pctPad + "\n" +
+			muted.Render("mem ") + memBot + memRight
+	}
 
 	// CPU value.
 	var cpuVal float64
@@ -733,6 +772,7 @@ func renderProjectInfoDialog(det *DetailState, s *Session, width, height int, th
 		health   string
 		cpu      float64
 		mem      uint64
+		stub     bool  // true = no metrics yet, show "—" for cpu/mem
 		uptime   int64 // seconds, 0 if not running
 		dotColor lipgloss.Color
 	}
@@ -740,6 +780,7 @@ func renderProjectInfoDialog(det *DetailState, s *Session, width, height int, th
 	nameW := 0
 	var totalCPU float64
 	var totalMem uint64
+	anyMetrics := false
 	images := make(map[string]struct{})
 	running := 0
 	allHealthy := true
@@ -747,41 +788,72 @@ func renderProjectInfoDialog(det *DetailState, s *Session, width, height int, th
 	now := time.Now().Unix()
 	for _, id := range det.projectIDs {
 		cm := findContainer(id, s.Containers)
-		if cm == nil {
+		ci := findContInfo(id, s.ContInfo)
+
+		// Need at least one source of data.
+		if cm == nil && ci == nil {
 			continue
 		}
+
 		name := serviceNameByID(id, s.ContInfo)
-		if name == "" {
+		if name == "" && cm != nil {
 			name = cm.Name
 		}
 		if n := len([]rune(name)); n > nameW {
 			nameW = n
 		}
 
-		var up int64
-		if cm.State == "running" && cm.StartedAt > 0 {
-			up = now - cm.StartedAt
+		var state, health, image string
+		var startedAt int64
+		var restartCount int
+		var cpuVal float64
+		var memVal uint64
+		isStub := cm == nil
+
+		if cm != nil {
+			state, health = cm.State, cm.Health
+			startedAt = cm.StartedAt
+			restartCount = cm.RestartCount
+			cpuVal = cm.CPUPercent
+			memVal = cm.MemUsage
+			image = cm.Image
+		} else {
+			state, health = ci.State, ci.Health
+			startedAt = ci.StartedAt
+			restartCount = ci.RestartCount
+			image = ci.Image
 		}
-		if cm.State == "running" {
+		_ = restartCount
+
+		var up int64
+		if state == "running" && startedAt > 0 {
+			up = now - startedAt
+		}
+		if state == "running" {
 			running++
 		}
-		if hasHealthcheck(cm.Health) && cm.Health != "healthy" {
+		if hasHealthcheck(health) && health != "healthy" {
 			allHealthy = false
+		}
+
+		if !isStub {
+			anyMetrics = true
+			totalCPU += cpuVal
+			totalMem += memVal
 		}
 
 		rows = append(rows, row{
 			name:     name,
-			state:    cm.State,
-			health:   cm.Health,
-			cpu:      cm.CPUPercent,
-			mem:      cm.MemUsage,
+			state:    state,
+			health:   health,
+			cpu:      cpuVal,
+			mem:      memVal,
+			stub:     isStub,
 			uptime:   up,
-			dotColor: theme.StatusDotColor(cm.State, cm.Health),
+			dotColor: theme.StatusDotColor(state, health),
 		})
-		totalCPU += cm.CPUPercent
-		totalMem += cm.MemUsage
-		if cm.Image != "" {
-			images[cm.Image] = struct{}{}
+		if image != "" {
+			images[image] = struct{}{}
 		}
 	}
 	if nameW > 20 {
@@ -859,8 +931,14 @@ func renderProjectInfoDialog(det *DetailState, s *Session, width, height int, th
 			healthStr = lipgloss.NewStyle().Foreground(theme.FgDim).Render(fmt.Sprintf("%-11s", "~ no check"))
 		}
 
-		cpuStr := muted.Render(fmt.Sprintf("%5s", fmt.Sprintf("%.1f%%", r.cpu)))
-		memStr := muted.Render(fmt.Sprintf("%6s", formatBytes(r.mem)))
+		var cpuStr, memStr string
+		if r.stub {
+			cpuStr = muted.Render(fmt.Sprintf("%5s", "—"))
+			memStr = muted.Render(fmt.Sprintf("%6s", "—"))
+		} else {
+			cpuStr = muted.Render(fmt.Sprintf("%5s", fmt.Sprintf("%.1f%%", r.cpu)))
+			memStr = muted.Render(fmt.Sprintf("%6s", formatBytes(r.mem)))
+		}
 
 		var uptimeStr string
 		if r.uptime > 0 {
@@ -876,7 +954,12 @@ func renderProjectInfoDialog(det *DetailState, s *Session, width, height int, th
 
 	// Summary line.
 	lines = append(lines, "")
-	summary := muted.Render(fmt.Sprintf("cpu: %.1f%%  mem: %s  images: %d", totalCPU, formatBytes(totalMem), len(images)))
+	var summary string
+	if anyMetrics {
+		summary = muted.Render(fmt.Sprintf("cpu: %.1f%%  mem: %s  images: %d", totalCPU, formatBytes(totalMem), len(images)))
+	} else {
+		summary = muted.Render(fmt.Sprintf("cpu: —  mem: —  images: %d", len(images)))
+	}
 	lines = append(lines, summary)
 
 	return (dialogLayout{

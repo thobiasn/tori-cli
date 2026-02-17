@@ -1225,6 +1225,15 @@ func findContainer(id string, containers []protocol.ContainerMetrics) *protocol.
 	return nil
 }
 
+func findContInfo(id string, contInfo []protocol.ContainerInfo) *protocol.ContainerInfo {
+	for i := range contInfo {
+		if contInfo[i].ID == id {
+			return &contInfo[i]
+		}
+	}
+	return nil
+}
+
 // serviceNameByID looks up the service name for a container ID from ContainerInfo.
 // Falls back to container name, then empty string.
 func serviceNameByID(id string, contInfo []protocol.ContainerInfo) string {

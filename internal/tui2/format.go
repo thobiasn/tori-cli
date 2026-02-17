@@ -122,6 +122,42 @@ func Overlay(bg, fg string, width, height int) string {
 	return strings.Join(bgLines, "\n")
 }
 
+// LoadingSparkline generates an animated 2-row braille sine wave for loading states.
+// Driven by the spinner frame counter; produces a gentle scrolling wave.
+func LoadingSparkline(frame, width int, color lipgloss.Color) (string, string) {
+	if width < 1 {
+		return "", ""
+	}
+
+	totalSamples := width * 2
+	topChars := make([]rune, width)
+	botChars := make([]rune, width)
+
+	for i := 0; i < width; i++ {
+		li := i * 2
+		ri := li + 1
+
+		lh := waveHeight(li, totalSamples, frame)
+		rh := waveHeight(ri, totalSamples, frame)
+
+		botChars[i] = rune(0x2800 | leftColBits(min(lh, 4)) | rightColBits(min(rh, 4)))
+		topChars[i] = rune(0x2800 | leftColBits(max(lh-4, 0)) | rightColBits(max(rh-4, 0)))
+	}
+
+	style := lipgloss.NewStyle().Foreground(color)
+	return style.Render(string(topChars)), style.Render(string(botChars))
+}
+
+// waveHeight returns a braille dot height (1–5) for a sine wave at the given sample index.
+// The wave scrolls left as frame advances, with ~2 cycles across the width.
+func waveHeight(idx, totalSamples, frame int) int {
+	phase := 2 * math.Pi * float64(idx) / float64(totalSamples) * 2
+	scroll := 2 * math.Pi * float64(frame) / 20
+	v := math.Sin(phase - scroll)
+	// Map [-1, 1] to [1, 5].
+	return int(math.Round((v+1)/2*4)) + 1
+}
+
 // ceilingSteps are the discrete scaling ceilings for braille sparklines.
 // The sparkline picks the first step where peak < step * 0.85, giving ~15% headroom.
 var ceilingSteps = [...]float64{10, 15, 25, 50, 75, 100}
