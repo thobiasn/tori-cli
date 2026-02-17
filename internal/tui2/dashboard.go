@@ -164,8 +164,8 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 	sections = append(sections, renderDivider(contentW, theme))
 
 	// 6. Container list (fills remaining space)
-	// Fixed sections: header(2) + time divider(2) + host graphs(4) + divider(1) + divider(1) + status(1) + help(1) = 12
-	fixedH := 12 + summaryLine
+	// Fixed sections: header(3) + time divider(2) + host graphs(4) + divider(1) + divider(1) + status(1) + help(1) = 13
+	fixedH := 13 + summaryLine
 	if s.Host == nil {
 		fixedH -= 4 // no host graphs
 	}
@@ -244,7 +244,7 @@ func renderHeader(a *App, s *Session, w int, theme *Theme) string {
 		infoLine += sep + alertStr
 	}
 
-	return centerText(logo, w) + "\n" + centerText(infoLine, w)
+	return centerText(logo, w) + "\n\n" + centerText(infoLine, w)
 }
 
 // renderHostGraphs renders CPU and memory as 2-row braille sparklines.

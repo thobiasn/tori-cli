@@ -31,6 +31,7 @@ func renderDetail(a *App, s *Session, width, height int) string {
 		bird = "—(-)>"
 	}
 	sections = append(sections, centerText(lipgloss.NewStyle().Foreground(theme.Accent).Render(bird), contentW))
+	sections = append(sections, "")
 
 	// 1. Top bar.
 	sections = append(sections, renderDetailTopBar(a, s, contentW))
@@ -54,8 +55,8 @@ func renderDetail(a *App, s *Session, width, height int) string {
 	sections = append(sections, renderDivider(contentW, theme))
 
 	// Fixed layout:
-	// bird(1) + top bar(1) + time div(2) + graphs(4) + divider(1) + footer(2) = 11
-	fixedH := 11 + alertLines
+	// bird(1) + blank(1) + top bar(1) + time div(2) + graphs(4) + divider(1) + footer(2) = 12
+	fixedH := 12 + alertLines
 	logH := height - fixedH
 	if logH < 3 {
 		logH = 3
@@ -93,7 +94,7 @@ func renderDetail(a *App, s *Session, width, height int) string {
 
 	// Overlay modals.
 	if det.expandModal != nil {
-		modal := renderExpandModal(det.expandModal, width, height, theme, a.tsFormat())
+		modal := renderExpandModal(det.expandModal, width, height, theme, a.display)
 		result = Overlay(result, modal, width, height)
 	} else if det.filterModal != nil {
 		modal := renderFilterModal(det.filterModal, width, height, theme, a.display)
@@ -567,8 +568,8 @@ func logAreaHeight(a *App, det *DetailState, s *Session) int {
 		contentW = maxContentW
 	}
 
-	// Fixed: bird(1) + top bar(1) + time div(2) + graphs(4) + divider(1) + footer(2) = 11
-	fixedH := 11
+	// Fixed: bird(1) + blank(1) + top bar(1) + time div(2) + graphs(4) + divider(1) + footer(2) = 12
+	fixedH := 12
 
 	// Alerts.
 	alerts := collectDetailAlerts(det, s.Alerts)
@@ -594,11 +595,6 @@ func renderInfoOverlay(det *DetailState, s *Session, width, height int, theme *T
 	}
 
 	modalW := 56
-	if modalW > width-4 {
-		modalW = width - 4
-	}
-
-	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
 
 	// Look up container info.
 	var image string
@@ -615,7 +611,7 @@ func renderInfoOverlay(det *DetailState, s *Session, width, height int, theme *T
 	valW := modalW - 14
 
 	var lines []string
-	lines = append(lines, fmt.Sprintf(" %-10s %s", "Image", Truncate(image, valW)))
+	lines = append(lines, fmt.Sprintf("%-10s %s", "Image", Truncate(image, valW)))
 
 	// State + uptime.
 	status := cm.State
@@ -624,7 +620,7 @@ func renderInfoOverlay(det *DetailState, s *Session, width, height int, theme *T
 		status += " · up " + formatCompactUptime(secs)
 	}
 	dot := lipgloss.NewStyle().Foreground(theme.StatusDotColor(cm.State, cm.Health)).Render("●")
-	lines = append(lines, fmt.Sprintf(" %-10s %s %s", "State", dot, status))
+	lines = append(lines, fmt.Sprintf("%-10s %s %s", "State", dot, status))
 
 	// Health.
 	if hasHealthcheck(cm.Health) {
@@ -632,21 +628,21 @@ func renderInfoOverlay(det *DetailState, s *Session, width, height int, theme *T
 		if cm.Health != "healthy" {
 			hColor = theme.Warning
 		}
-		lines = append(lines, fmt.Sprintf(" %-10s %s", "Health", lipgloss.NewStyle().Foreground(hColor).Render(cm.Health)))
+		lines = append(lines, fmt.Sprintf("%-10s %s", "Health", lipgloss.NewStyle().Foreground(hColor).Render(cm.Health)))
 	}
 
-	lines = append(lines, fmt.Sprintf(" %-10s %d", "PIDs", cm.PIDs))
-	lines = append(lines, fmt.Sprintf(" %-10s %d", "Restarts", cm.RestartCount))
+	lines = append(lines, fmt.Sprintf("%-10s %d", "PIDs", cm.PIDs))
+	lines = append(lines, fmt.Sprintf("%-10s %d", "Restarts", cm.RestartCount))
 	lines = append(lines, "")
 
 	// Rates.
 	rates := s.Rates.ContainerRates[det.containerID]
 	rxStyle := lipgloss.NewStyle().Foreground(theme.Healthy)
 	txStyle := lipgloss.NewStyle().Foreground(theme.Accent)
-	lines = append(lines, fmt.Sprintf(" Net  %s %-12s  %s %s",
+	lines = append(lines, fmt.Sprintf("Net  %s %-12s  %s %s",
 		rxStyle.Render("▼"), formatBytesRate(rates.NetRxRate),
 		txStyle.Render("▲"), formatBytesRate(rates.NetTxRate)))
-	lines = append(lines, fmt.Sprintf(" Blk  %s %-12s  %s %s",
+	lines = append(lines, fmt.Sprintf("Blk  %s %-12s  %s %s",
 		rxStyle.Render("R"), formatBytesRate(rates.BlockReadRate),
 		txStyle.Render("W"), formatBytesRate(rates.BlockWriteRate)))
 
@@ -654,27 +650,23 @@ func renderInfoOverlay(det *DetailState, s *Session, width, height int, theme *T
 	if cm.CPULimit > 0 || cm.MemLimit > 0 {
 		lines = append(lines, "")
 		if cm.CPULimit > 0 {
-			lines = append(lines, fmt.Sprintf(" %-10s %.2f cores", "CPU Limit", cm.CPULimit))
+			lines = append(lines, fmt.Sprintf("%-10s %.2f cores", "CPU Limit", cm.CPULimit))
 		}
 		if cm.MemLimit > 0 {
-			lines = append(lines, fmt.Sprintf(" %-10s %s", "Mem Limit", formatBytes(cm.MemLimit)))
+			lines = append(lines, fmt.Sprintf("%-10s %s", "Mem Limit", formatBytes(cm.MemLimit)))
 		}
-	}
-
-	lines = append(lines, "")
-	lines = append(lines, " "+muted.Render("i or Esc to close"))
-
-	content := strings.Join(lines, "\n")
-	modalH := len(lines) + 2
-	if modalH > height-2 {
-		modalH = height - 2
 	}
 
 	name := serviceNameByID(det.containerID, s.ContInfo)
 	if name == "" {
 		name = cm.Name
 	}
-	return renderBox(name, content, modalW, modalH, theme)
+	return (dialogLayout{
+		title: name,
+		width: modalW,
+		lines: lines,
+		tips:  dialogTips(theme, "esc", "close"),
+	}).render(width, height, theme)
 }
 
 func renderFilterModal(m *logFilterModal, width, height int, theme *Theme, cfg DisplayConfig) string {
@@ -687,13 +679,8 @@ func renderFilterModal(m *logFilterModal, width, height int, theme *Theme, cfg D
 	if modalW < 56 {
 		modalW = 56
 	}
-	if modalW > width-4 {
-		modalW = width - 4
-	}
-	innerW := modalW - 2
 
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
-	fg := lipgloss.NewStyle().Foreground(theme.Fg)
 	accent := lipgloss.NewStyle().Foreground(theme.Accent)
 	cursorStyle := lipgloss.NewStyle().Reverse(true)
 
@@ -711,7 +698,6 @@ func renderFilterModal(m *logFilterModal, width, height int, theme *Theme, cfg D
 		return s + strings.Repeat(" ", w-len(s))
 	}
 
-	// Build content lines without left padding.
 	var lines []string
 	lines = append(lines, "")
 
@@ -753,35 +739,10 @@ func renderFilterModal(m *logFilterModal, width, height int, theme *Theme, cfg D
 	lines = append(lines, "From  "+bracket("[", m.focus == 1)+m.fromDate.render(m.focus == 1, theme)+bracket("]", m.focus == 1)+"   "+bracket("[", m.focus == 2)+m.fromTime.render(m.focus == 2, theme)+bracket("]", m.focus == 2))
 	lines = append(lines, "To    "+bracket("[", m.focus == 3)+m.toDate.render(m.focus == 3, theme)+bracket("]", m.focus == 3)+"   "+bracket("[", m.focus == 4)+m.toTime.render(m.focus == 4, theme)+bracket("]", m.focus == 4))
 
-	// Center the content block within the modal.
-	maxW := 0
-	for _, l := range lines {
-		if w := lipgloss.Width(l); w > maxW {
-			maxW = w
-		}
-	}
-	leftPad := (innerW - maxW) / 2
-	if leftPad < 1 {
-		leftPad = 1
-	}
-	padStr := strings.Repeat(" ", leftPad)
-	for i, l := range lines {
-		if l != "" {
-			lines[i] = padStr + l
-		}
-	}
-
-	// Tips (centered independently).
-	tipLine := fg.Render("tab")+" "+muted.Render("switch")+"  "+fg.Render("h/l")+" "+muted.Render("navigate")+"  "+fg.Render("enter")+" "+muted.Render("apply")+"  "+fg.Render("esc")+" "+muted.Render("cancel")
-	tipPad := (innerW - lipgloss.Width(tipLine)) / 2
-	if tipPad < 1 {
-		tipPad = 1
-	}
-	lines = append(lines, "")
-	lines = append(lines, "")
-	lines = append(lines, strings.Repeat(" ", tipPad)+tipLine)
-
-	content := strings.Join(lines, "\n")
-	modalH := len(lines) + 2
-	return renderBox("Filter", content, modalW, modalH, theme)
+	return (dialogLayout{
+		title: "Filter",
+		width: modalW,
+		lines: lines,
+		tips:  dialogTips(theme, "tab", "switch", "h/l", "navigate", "enter", "apply", "esc", "cancel"),
+	}).render(width, height, theme)
 }

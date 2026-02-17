@@ -409,7 +409,7 @@ func formatCompactUptime(seconds int64) string {
 }
 
 // renderHelpModal renders the help overlay for the current view.
-func renderHelpModal(a *App, s *Session, width, height int) string {
+func renderHelpModal(a *App, _ *Session, width, height int) string {
 	theme := &a.theme
 	fg := lipgloss.NewStyle().Foreground(theme.Fg)
 	dim := lipgloss.NewStyle().Foreground(theme.FgDim)
@@ -419,7 +419,6 @@ func renderHelpModal(a *App, s *Session, width, height int) string {
 
 	switch a.view {
 	case viewDetail:
-		det := &s.Detail
 		bindings = []binding{
 			{"esc", "back to dashboard"},
 			{"j/k", "scroll logs"},
@@ -429,11 +428,8 @@ func renderHelpModal(a *App, s *Session, width, height int) string {
 			{"s", "cycle stream filter"},
 			{"f", "open filter dialog"},
 			{"+/-", "zoom time range"},
+			{"i", "toggle info overlay"},
 		}
-		if !det.isGroupMode() {
-			bindings = append(bindings, binding{"i", "toggle info overlay"})
-		}
-		bindings = append(bindings, binding{"? / esc", "close help"})
 
 	case viewAlerts:
 		bindings = []binding{
@@ -446,7 +442,6 @@ func renderHelpModal(a *App, s *Session, width, height int) string {
 			{"r", "show/hide resolved"},
 			{"g", "go to container"},
 			{"1", "dashboard view"},
-			{"? / esc", "close help"},
 			{"q", "quit"},
 		}
 
@@ -459,34 +454,94 @@ func renderHelpModal(a *App, s *Session, width, height int) string {
 			{"+/-", "zoom time range"},
 			{"S", "switch server"},
 			{"2", "alerts view"},
-			{"? / esc", "close help"},
 			{"q", "quit"},
 		}
 	}
 
 	const keyW = 12
 	var lines []string
-	lines = append(lines, "")
 	for _, b := range bindings {
 		keyStr := b.key
 		for len(keyStr) < keyW {
 			keyStr += " "
 		}
-		lines = append(lines, "  "+fg.Render(keyStr)+dim.Render(b.desc))
-	}
-	lines = append(lines, "")
-
-	content := strings.Join(lines, "\n")
-	modalW := 40
-	if modalW > width-4 {
-		modalW = width - 4
-	}
-	modalH := len(lines) + 2
-	if modalH > height-2 {
-		modalH = height - 2
+		lines = append(lines, fg.Render(keyStr)+dim.Render(b.desc))
 	}
 
-	return renderBox("help", content, modalW, modalH, theme)
+	return (dialogLayout{
+		title: "help",
+		width: 40,
+		lines: lines,
+		tips:  dialogTips(theme, "esc", "close"),
+	}).render(width, height, theme)
+}
+
+// dialogTips builds a footer tip string from alternating key-label pairs.
+// Arguments: "a", "ack", "s", "silence", "esc", "close", ...
+func dialogTips(theme *Theme, bindings ...string) string {
+	fg := lipgloss.NewStyle().Foreground(theme.Fg)
+	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
+	var parts []string
+	for i := 0; i+1 < len(bindings); i += 2 {
+		parts = append(parts, fg.Render(bindings[i])+" "+muted.Render(bindings[i+1]))
+	}
+	return strings.Join(parts, "  ")
+}
+
+// dialogLayout describes a centered modal dialog.
+type dialogLayout struct {
+	title string
+	width int      // desired modal width (clamped to terminal - 4)
+	lines []string // content lines (unpadded, centered as a block)
+	tips  string   // footer tip line (centered independently)
+}
+
+func (d dialogLayout) render(termW, termH int, theme *Theme) string {
+	modalW := d.width
+	if modalW > termW-4 {
+		modalW = termW - 4
+	}
+	innerW := modalW - 2
+
+	// Find max content width.
+	maxW := 0
+	for _, l := range d.lines {
+		if w := lipgloss.Width(l); w > maxW {
+			maxW = w
+		}
+	}
+	leftPad := (innerW - maxW) / 2
+	if leftPad < 2 {
+		leftPad = 2
+	}
+	padStr := strings.Repeat(" ", leftPad)
+
+	var padded []string
+	padded = append(padded, "") // top blank line
+	for _, l := range d.lines {
+		if l == "" {
+			padded = append(padded, "")
+		} else {
+			padded = append(padded, padStr+l)
+		}
+	}
+
+	// Footer: 2 blank lines + centered tip line.
+	tipPad := (innerW - lipgloss.Width(d.tips)) / 2
+	if tipPad < 2 {
+		tipPad = 2
+	}
+	padded = append(padded, "")
+	padded = append(padded, "")
+	padded = append(padded, strings.Repeat(" ", tipPad)+d.tips)
+
+	content := strings.Join(padded, "\n")
+	modalH := len(padded) + 2
+	if modalH > termH-2 {
+		modalH = termH - 2
+	}
+
+	return renderBox(d.title, content, modalW, modalH, theme)
 }
 
 // wrapText wraps a string into lines of the given width, breaking on rune boundaries.

@@ -25,10 +25,10 @@ type AlertsState struct {
 	focus         alertsSection
 	alertCursor   int
 	ruleCursor    int
-	showResolved  bool
-	expandedAlert int64  // alert ID, 0 = none
-	expandedRule  string // rule name, "" = none
-	silenceModal  *silenceModalState
+	showResolved bool
+	alertDialog  bool // true when alert detail dialog is open
+	ruleDialog   bool // true when rule detail dialog is open
+	silenceModal *silenceModalState
 	loaded        bool
 }
 
@@ -161,8 +161,8 @@ func (a *App) enterAlerts() tea.Cmd {
 	av := &s.AlertsView
 	av.alertCursor = 0
 	av.ruleCursor = 0
-	av.expandedAlert = 0
-	av.expandedRule = ""
+	av.alertDialog = false
+	av.ruleDialog = false
 	av.silenceModal = nil
 	av.focus = sectionAlerts
 	return queryAlertsData(s.Client, s.Name)
@@ -182,9 +182,17 @@ func (a *App) handleAlertsKey(msg tea.KeyMsg) (App, tea.Cmd) {
 	av := &s.AlertsView
 	key := msg.String()
 
-	// Silence dialog captures keys.
+	// Silence dialog captures keys first.
 	if av.silenceModal != nil {
 		return a.handleSilenceDialogKey(key)
+	}
+
+	// Alert/rule dialog captures keys.
+	if av.alertDialog {
+		return a.handleAlertDialogKey(key)
+	}
+	if av.ruleDialog {
+		return a.handleRuleDialogKey(key)
 	}
 
 	// Zoom (shared with dashboard/detail).
@@ -197,14 +205,6 @@ func (a *App) handleAlertsKey(msg tea.KeyMsg) (App, tea.Cmd) {
 
 	switch key {
 	case "esc":
-		if av.expandedAlert != 0 {
-			av.expandedAlert = 0
-			return *a, nil
-		}
-		if av.expandedRule != "" {
-			av.expandedRule = ""
-			return *a, nil
-		}
 		a.leaveAlerts()
 		return *a, nil
 
@@ -234,7 +234,7 @@ func (a *App) handleAlertsKey(msg tea.KeyMsg) (App, tea.Cmd) {
 	case "r":
 		av.showResolved = !av.showResolved
 		if !av.showResolved {
-			av.expandedAlert = 0
+			av.alertDialog = false
 		}
 		a.clampAlertsCursor()
 		return *a, nil
@@ -243,21 +243,11 @@ func (a *App) handleAlertsKey(msg tea.KeyMsg) (App, tea.Cmd) {
 		if av.focus == sectionAlerts {
 			items := buildAlertList(s.Alerts, av.resolved, av.showResolved)
 			if av.alertCursor >= 0 && av.alertCursor < len(items) {
-				id := items[av.alertCursor].id
-				if av.expandedAlert == id {
-					av.expandedAlert = 0
-				} else {
-					av.expandedAlert = id
-				}
+				av.alertDialog = true
 			}
 		} else {
 			if av.ruleCursor >= 0 && av.ruleCursor < len(av.rules) {
-				name := av.rules[av.ruleCursor].Name
-				if av.expandedRule == name {
-					av.expandedRule = ""
-				} else {
-					av.expandedRule = name
-				}
+				av.ruleDialog = true
 			}
 		}
 		return *a, nil
@@ -266,44 +256,110 @@ func (a *App) handleAlertsKey(msg tea.KeyMsg) (App, tea.Cmd) {
 		if av.focus != sectionAlerts {
 			return *a, nil
 		}
-		items := buildAlertList(s.Alerts, av.resolved, av.showResolved)
-		if av.alertCursor < 0 || av.alertCursor >= len(items) {
-			return *a, nil
-		}
-		item := items[av.alertCursor]
-		if item.resolved {
-			return *a, nil // can only ack firing alerts
-		}
-		client := s.Client
-		server := s.Name
-		alertID := item.id
-		return *a, func() tea.Msg {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			client.AckAlert(ctx, alertID)
-			return alertAckDoneMsg{server: server}
-		}
+		return a.ackCurrentAlert()
 
 	case "s":
 		return a.handleAlertsSilence()
 
 	case "g":
-		if av.focus != sectionAlerts {
-			return *a, nil
-		}
-		items := buildAlertList(s.Alerts, av.resolved, av.showResolved)
-		if av.alertCursor < 0 || av.alertCursor >= len(items) {
-			return *a, nil
-		}
-		item := items[av.alertCursor]
-		containerID := instanceKeyContainerID(item.instanceKey)
-		if containerID == "" {
-			return *a, nil
-		}
-		return a.enterDetailByContainerID(containerID)
+		return a.goToAlertContainer()
 	}
 
 	return *a, nil
+}
+
+// handleAlertDialogKey handles keys within the alert detail dialog.
+func (a *App) handleAlertDialogKey(key string) (App, tea.Cmd) {
+	s := a.session()
+	if s == nil {
+		return *a, nil
+	}
+	av := &s.AlertsView
+
+	switch key {
+	case "esc", "enter":
+		av.alertDialog = false
+	case "j", "down":
+		a.alertsNavigate(1)
+	case "k", "up":
+		a.alertsNavigate(-1)
+	case "a":
+		return a.ackCurrentAlert()
+	case "s":
+		return a.handleAlertsSilence()
+	case "g":
+		return a.goToAlertContainer()
+	}
+	return *a, nil
+}
+
+// handleRuleDialogKey handles keys within the rule detail dialog.
+func (a *App) handleRuleDialogKey(key string) (App, tea.Cmd) {
+	s := a.session()
+	if s == nil {
+		return *a, nil
+	}
+	av := &s.AlertsView
+
+	switch key {
+	case "esc", "enter":
+		av.ruleDialog = false
+	case "j", "down":
+		a.alertsNavigate(1)
+	case "k", "up":
+		a.alertsNavigate(-1)
+	case "s":
+		return a.handleAlertsSilence()
+	}
+	return *a, nil
+}
+
+// ackCurrentAlert sends an ack for the alert at the current cursor.
+func (a *App) ackCurrentAlert() (App, tea.Cmd) {
+	s := a.session()
+	if s == nil || s.Client == nil {
+		return *a, nil
+	}
+	av := &s.AlertsView
+	items := buildAlertList(s.Alerts, av.resolved, av.showResolved)
+	if av.alertCursor < 0 || av.alertCursor >= len(items) {
+		return *a, nil
+	}
+	item := items[av.alertCursor]
+	if item.resolved {
+		return *a, nil
+	}
+	client := s.Client
+	server := s.Name
+	alertID := item.id
+	return *a, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		client.AckAlert(ctx, alertID)
+		return alertAckDoneMsg{server: server}
+	}
+}
+
+// goToAlertContainer navigates to the detail view for the alert's container.
+func (a *App) goToAlertContainer() (App, tea.Cmd) {
+	s := a.session()
+	if s == nil {
+		return *a, nil
+	}
+	av := &s.AlertsView
+	if av.focus != sectionAlerts {
+		return *a, nil
+	}
+	items := buildAlertList(s.Alerts, av.resolved, av.showResolved)
+	if av.alertCursor < 0 || av.alertCursor >= len(items) {
+		return *a, nil
+	}
+	item := items[av.alertCursor]
+	containerID := instanceKeyContainerID(item.instanceKey)
+	if containerID == "" {
+		return *a, nil
+	}
+	return a.enterDetailByContainerID(containerID)
 }
 
 // handleAlertsSilence handles the "s" key: toggle silence or open dialog.

@@ -11,13 +11,14 @@ func renderSwitcher(a *App, width, height int) string {
 	theme := &a.theme
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
 
-	modalW := 40
+	modalW := 46
 	if modalW > width-4 {
 		modalW = width - 4
 	}
 	innerW := modalW - 2
 
 	var lines []string
+	lines = append(lines, "")
 	for i, name := range a.sessionOrder {
 		sess := a.sessions[name]
 
@@ -41,18 +42,24 @@ func renderSwitcher(a *App, width, height int) string {
 			suffix = muted.Render(" (active)")
 		}
 
-		row := " " + dot + " " + name + suffix
+		row := "  " + dot + " " + name + suffix
 
 		if i == a.switcherCursor {
-			row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW))
+			row = "  " + lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(dot+" "+name+suffix), innerW-2))
 		}
 
 		lines = append(lines, TruncateStyled(row, innerW))
 	}
 
 	// Help line.
+	tipLine := dialogTips(theme, "j/k", "navigate", "enter", "select", "esc", "close")
+	tipPad := (innerW - lipgloss.Width(tipLine)) / 2
+	if tipPad < 1 {
+		tipPad = 1
+	}
 	lines = append(lines, "")
-	lines = append(lines, muted.Render(" j/k navigate  Enter select  Esc close"))
+	lines = append(lines, "")
+	lines = append(lines, strings.Repeat(" ", tipPad)+tipLine)
 
 	content := strings.Join(lines, "\n")
 	modalH := len(lines) + 2

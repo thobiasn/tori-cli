@@ -28,6 +28,7 @@ func renderAlerts(a *App, s *Session, width, height int) string {
 		bird = "—(-)>"
 	}
 	sections = append(sections, centerText(lipgloss.NewStyle().Foreground(theme.Accent).Render(bird), contentW))
+	sections = append(sections, "")
 
 	// 2. Header line.
 	sections = append(sections, renderAlertsHeader(s, contentW, theme))
@@ -45,8 +46,8 @@ func renderAlerts(a *App, s *Session, width, height int) string {
 	}
 	sections = append(sections, alertsLabel)
 
-	// Calculate space: fixed overhead = bird(1) + header(1) + divider(2) + alerts label(1) + divider(1) + rules label(1) + divider(1) + help(1) = 9
-	fixedH := 9
+	// Calculate space: fixed overhead = bird(1) + blank(1) + header(1) + divider(2) + alerts label(1) + divider(1) + rules label(1) + divider(1) + help(1) = 10
+	fixedH := 10
 	remaining := height - fixedH
 	if remaining < 4 {
 		remaining = 4
@@ -55,7 +56,7 @@ func renderAlerts(a *App, s *Session, width, height int) string {
 	rulesH := remaining - alertsH
 
 	// 5. Alert rows.
-	sections = append(sections, renderAlertRows(a, s, contentW, alertsH, theme))
+	sections = append(sections, renderAlertRows(s, contentW, alertsH, theme))
 
 	// 6. Divider.
 	sections = append(sections, renderDivider(contentW, theme))
@@ -102,7 +103,17 @@ func renderAlerts(a *App, s *Session, width, height int) string {
 
 	result := strings.Join(lines, "\n")
 
-	// Overlay silence dialog.
+	// Overlay alert/rule detail dialog.
+	if av.alertDialog {
+		modal := renderAlertDialog(a, s, width, height)
+		result = Overlay(result, modal, width, height)
+	}
+	if av.ruleDialog {
+		modal := renderRuleDialog(a, s, width, height)
+		result = Overlay(result, modal, width, height)
+	}
+
+	// Overlay silence dialog (layers on top of detail dialog).
 	if av.silenceModal != nil {
 		modal := renderSilenceDialog(av.silenceModal, width, height, theme)
 		result = Overlay(result, modal, width, height)
@@ -132,7 +143,7 @@ func renderAlertsHeader(s *Session, w int, theme *Theme) string {
 }
 
 // renderAlertRows renders the alert list section.
-func renderAlertRows(a *App, s *Session, w, maxH int, theme *Theme) string {
+func renderAlertRows(s *Session, w, maxH int, theme *Theme) string {
 	av := &s.AlertsView
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
 
@@ -153,11 +164,6 @@ func renderAlertRows(a *App, s *Session, w, maxH int, theme *Theme) string {
 			row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), w))
 		}
 		lines = append(lines, TruncateStyled(row, w))
-
-		// Inline expansion.
-		if av.expandedAlert == item.id && item.id != 0 {
-			lines = append(lines, renderAlertExpansion(item, w, a, s, theme)...)
-		}
 	}
 
 	// Collapsed resolved summary.
@@ -168,7 +174,7 @@ func renderAlertRows(a *App, s *Session, w, maxH int, theme *Theme) string {
 		}
 	}
 
-	return scrollAndPad(lines, alertScrollStart(av, items), maxH)
+	return scrollAndPad(lines, av.alertCursor, maxH)
 }
 
 // renderAlertRow renders a single alert row.
@@ -215,46 +221,6 @@ func renderAlertRow(item alertItem, w int, now time.Time, contInfo []protocol.Co
 	return padBetween(left, right, w)
 }
 
-// renderAlertExpansion renders inline details below a selected alert.
-func renderAlertExpansion(item alertItem, w int, a *App, s *Session, theme *Theme) []string {
-	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
-	indent := "          "
-	var lines []string
-
-	lines = append(lines, indent+muted.Render("condition:  ")+lipgloss.NewStyle().Foreground(theme.Fg).Render(item.condition))
-	if item.message != "" {
-		msgW := w - len(indent) - 12
-		if msgW < 10 {
-			msgW = 10
-		}
-		lines = append(lines, indent+muted.Render("message:    ")+lipgloss.NewStyle().Foreground(theme.Fg).Render(Truncate(item.message, msgW)))
-	}
-
-	firedStr := time.Unix(item.firedAt, 0).Format(a.tsFormat())
-	lines = append(lines, indent+muted.Render("fired:      ")+lipgloss.NewStyle().Foreground(theme.Fg).Render(firedStr))
-
-	if item.resolved {
-		resolvedStr := time.Unix(item.resolvedAt, 0).Format(a.tsFormat())
-		lines = append(lines, indent+muted.Render("resolved:   ")+lipgloss.NewStyle().Foreground(theme.Fg).Render(resolvedStr))
-	}
-
-	ackStr := "no"
-	if item.acked {
-		ackStr = "yes"
-	}
-	lines = append(lines, indent+muted.Render("acked:      ")+lipgloss.NewStyle().Foreground(theme.Fg).Render(ackStr))
-
-	// Instance display name with container lookup.
-	if item.instanceKey != "" {
-		displayName := instanceDisplayName(item.instanceKey, s.ContInfo)
-		if displayName != item.instanceKey {
-			lines = append(lines, indent+muted.Render("instance:   ")+lipgloss.NewStyle().Foreground(theme.Fg).Render(displayName))
-		}
-	}
-
-	return lines
-}
-
 // renderRuleRows renders the rules section.
 func renderRuleRows(av *AlertsState, w, maxH int, theme *Theme) string {
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
@@ -274,14 +240,9 @@ func renderRuleRows(av *AlertsState, w, maxH int, theme *Theme) string {
 			row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), w))
 		}
 		lines = append(lines, TruncateStyled(row, w))
-
-		// Inline expansion.
-		if av.expandedRule == rule.Name {
-			lines = append(lines, renderRuleExpansion(rule, now, theme)...)
-		}
 	}
 
-	return scrollAndPad(lines, ruleScrollStart(av, len(av.rules)), maxH)
+	return scrollAndPad(lines, av.ruleCursor, maxH)
 }
 
 // renderRuleRow renders a single line for a rule with fixed-width columns.
@@ -354,41 +315,162 @@ func renderRuleRow(rule protocol.AlertRuleInfo, w int, now time.Time, theme *The
 	return "  " + icon + " " + label + "  " + nameStyled + "  " + condStyled + actionStyled + statusStyled
 }
 
-// renderRuleExpansion renders inline details below a selected rule.
-func renderRuleExpansion(rule protocol.AlertRuleInfo, now time.Time, theme *Theme) []string {
+// renderAlertDialog renders a centered overlay with alert details.
+func renderAlertDialog(a *App, s *Session, width, height int) string {
+	theme := &a.theme
+	av := &s.AlertsView
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
 	fg := lipgloss.NewStyle().Foreground(theme.Fg)
-	indent := "          "
+
+	items := buildAlertList(s.Alerts, av.resolved, av.showResolved)
+	if av.alertCursor < 0 || av.alertCursor >= len(items) {
+		return ""
+	}
+	item := items[av.alertCursor]
+
+	modalW := width * 60 / 100
+	if modalW < 50 {
+		modalW = 50
+	}
+	if modalW > 80 {
+		modalW = 80
+	}
+	innerW := modalW - 2
+
+	sevColor := severityColor(item.severity, theme)
+	const labelW = 12
 
 	var lines []string
 
-	forStr := "0s"
-	if rule.For != "" {
-		forStr = rule.For
+	header := lipgloss.NewStyle().Foreground(sevColor).Render("▲") + " " +
+		lipgloss.NewStyle().Foreground(sevColor).Render(fmt.Sprintf("%-4s", severityLabel(item.severity))) + "  " +
+		lipgloss.NewStyle().Bold(true).Foreground(theme.FgBright).Render(item.ruleName)
+	lines = append(lines, header)
+	lines = append(lines, "")
+
+	if item.instanceKey != "" {
+		lines = append(lines, muted.Render("instance:   ")+fg.Render(instanceDisplayName(item.instanceKey, s.ContInfo)))
 	}
-	lines = append(lines, indent+muted.Render("for:        ")+fg.Render(forStr))
+	lines = append(lines, muted.Render("condition:  ")+fg.Render(item.condition))
+
+	if item.message != "" {
+		valueW := innerW - 4 - labelW
+		if valueW < 10 {
+			valueW = 10
+		}
+		wrapped := wrapText(item.message, valueW)
+		for i, wl := range wrapped {
+			if i == 0 {
+				lines = append(lines, muted.Render("message:    ")+fg.Render(wl))
+			} else {
+				lines = append(lines, strings.Repeat(" ", labelW)+fg.Render(wl))
+			}
+		}
+	}
+
+	firedStr := time.Unix(item.firedAt, 0).Format(a.tsFormat())
+	lines = append(lines, muted.Render("fired:      ")+fg.Render(firedStr))
+
+	if item.resolved {
+		resolvedStr := time.Unix(item.resolvedAt, 0).Format(a.tsFormat())
+		lines = append(lines, muted.Render("resolved:   ")+fg.Render(resolvedStr))
+	}
+
+	ackStr := "no"
+	if item.acked {
+		ackStr = "yes"
+	}
+	lines = append(lines, muted.Render("acked:      ")+fg.Render(ackStr))
+
+	// Build tips.
+	var tipBindings []string
+	if !item.resolved {
+		tipBindings = append(tipBindings, "a", "ack")
+	}
+	tipBindings = append(tipBindings, "s", "silence")
+	if instanceKeyContainerID(item.instanceKey) != "" {
+		tipBindings = append(tipBindings, "g", "container")
+	}
+	tipBindings = append(tipBindings, "j/k", "navigate", "esc", "close")
+
+	return (dialogLayout{
+		title: "alert",
+		width: modalW,
+		lines: lines,
+		tips:  dialogTips(theme, tipBindings...),
+	}).render(width, height, theme)
+}
+
+// renderRuleDialog renders a centered overlay with rule details.
+func renderRuleDialog(a *App, s *Session, width, height int) string {
+	theme := &a.theme
+	av := &s.AlertsView
+	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
+	fg := lipgloss.NewStyle().Foreground(theme.Fg)
+
+	if av.ruleCursor < 0 || av.ruleCursor >= len(av.rules) {
+		return ""
+	}
+	rule := av.rules[av.ruleCursor]
+
+	modalW := width * 60 / 100
+	if modalW < 50 {
+		modalW = 50
+	}
+	if modalW > 80 {
+		modalW = 80
+	}
+
+	sevColor := severityColor(rule.Severity, theme)
+	now := time.Now()
+
+	var lines []string
+
+	header := lipgloss.NewStyle().Foreground(sevColor).Render("▲") + " " +
+		lipgloss.NewStyle().Foreground(sevColor).Render(fmt.Sprintf("%-4s", severityLabel(rule.Severity))) + "  " +
+		lipgloss.NewStyle().Bold(true).Foreground(theme.FgBright).Render(rule.Name)
+	lines = append(lines, header)
+	lines = append(lines, "")
+
+	lines = append(lines, muted.Render("condition:  ")+fg.Render(rule.Condition))
+
+	if rule.For != "" && rule.For != "0s" {
+		lines = append(lines, muted.Render("for:        ")+fg.Render(rule.For))
+	}
 
 	actionsStr := "none"
 	if len(rule.Actions) > 0 {
 		actionsStr = strings.Join(rule.Actions, ", ")
 	}
-	lines = append(lines, indent+muted.Render("actions:    ")+fg.Render(actionsStr))
+	lines = append(lines, muted.Render("actions:    ")+fg.Render(actionsStr))
 
 	silencedStr := "no"
 	if rule.SilencedUntil > 0 && time.Unix(rule.SilencedUntil, 0).After(now) {
 		remaining := formatCompactDuration(time.Until(time.Unix(rule.SilencedUntil, 0)))
 		silencedStr = remaining + " remaining"
 	}
-	lines = append(lines, indent+muted.Render("silenced:   ")+fg.Render(silencedStr))
+	lines = append(lines, muted.Render("silenced:   ")+fg.Render(silencedStr))
 
-	return lines
+	if rule.FiringCount > 0 {
+		firingStr := fmt.Sprintf("%d instances", rule.FiringCount)
+		if rule.FiringCount == 1 {
+			firingStr = "1 instance"
+		}
+		lines = append(lines, muted.Render("firing:     ")+lipgloss.NewStyle().Foreground(sevColor).Render(firingStr))
+	}
+
+	return (dialogLayout{
+		title: "rule",
+		width: modalW,
+		lines: lines,
+		tips:  dialogTips(theme, "s", "silence", "j/k", "navigate", "esc", "close"),
+	}).render(width, height, theme)
 }
 
 // renderSilenceDialog renders the silence duration picker modal.
 func renderSilenceDialog(m *silenceModalState, width, height int, theme *Theme) string {
 	accent := lipgloss.NewStyle().Foreground(theme.Accent)
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
-	fg := lipgloss.NewStyle().Foreground(theme.Fg)
 
 	var parts []string
 	for i, d := range silenceDurations {
@@ -399,51 +481,14 @@ func renderSilenceDialog(m *silenceModalState, width, height int, theme *Theme) 
 		}
 	}
 
-	// Build content lines without left padding.
-	var lines []string
-	lines = append(lines, "")
-	lines = append(lines, strings.Join(parts, "   "))
+	lines := []string{"", strings.Join(parts, "   ")}
 
-	// Center the content block within the modal.
-	modalW := 43
-	if modalW > width-4 {
-		modalW = width - 4
-	}
-	innerW := modalW - 2
-	maxW := 0
-	for _, l := range lines {
-		if w := lipgloss.Width(l); w > maxW {
-			maxW = w
-		}
-	}
-	leftPad := (innerW - maxW) / 2
-	if leftPad < 1 {
-		leftPad = 1
-	}
-	padStr := strings.Repeat(" ", leftPad)
-	for i, l := range lines {
-		if l != "" {
-			lines[i] = padStr + l
-		}
-	}
-
-	// Tips (centered independently).
-	tipLine := fg.Render("h/l") + " " + muted.Render("navigate") + "  " + fg.Render("enter") + " " + muted.Render("apply") + "  " + fg.Render("esc") + " " + muted.Render("cancel")
-	tipPad := (innerW - lipgloss.Width(tipLine)) / 2
-	if tipPad < 1 {
-		tipPad = 1
-	}
-	lines = append(lines, "")
-	lines = append(lines, "")
-	lines = append(lines, strings.Repeat(" ", tipPad)+tipLine)
-
-	content := strings.Join(lines, "\n")
-	modalH := len(lines) + 2
-	if modalH > height-2 {
-		modalH = height - 2
-	}
-
-	return renderBox("Silence", content, modalW, modalH, theme)
+	return (dialogLayout{
+		title: "Silence",
+		width: 43,
+		lines: lines,
+		tips:  dialogTips(theme, "h/l", "navigate", "enter", "apply", "esc", "cancel"),
+	}).render(width, height, theme)
 }
 
 // renderAlertsHelp renders the footer help bar for the alerts view.
@@ -455,7 +500,7 @@ func renderAlertsHelp(w int, theme *Theme) string {
 	bindings := []binding{
 		{"tab", "focus"},
 		{"j/k", "navigate"},
-		{"enter", "expand"},
+		{"enter", "details"},
 		{"1", "dashboard"},
 		{"?", "help"},
 		{"q", "quit"},
@@ -489,37 +534,6 @@ func severityLabel(severity string) string {
 	default:
 		return "WARN"
 	}
-}
-
-// alertScrollStart returns the scroll start position for alert rows.
-func alertScrollStart(av *AlertsState, items []alertItem) int {
-	if av.focus != sectionAlerts {
-		return 0
-	}
-	// Rough line index — each item is 1 line, expansions add more.
-	lineIdx := 0
-	for i := 0; i < av.alertCursor && i < len(items); i++ {
-		lineIdx++
-		if av.expandedAlert == items[i].id && items[i].id != 0 {
-			lineIdx += 6 // expansion lines
-		}
-	}
-	return lineIdx
-}
-
-// ruleScrollStart returns the scroll start position for rule rows.
-func ruleScrollStart(av *AlertsState, ruleCount int) int {
-	if av.focus != sectionRules {
-		return 0
-	}
-	lineIdx := 0
-	for i := 0; i < av.ruleCursor && i < ruleCount; i++ {
-		lineIdx++
-		if av.expandedRule == av.rules[i].Name {
-			lineIdx += 3 // expansion lines
-		}
-	}
-	return lineIdx
 }
 
 // scrollAndPad scrolls a list to center the cursor, then pads to maxH.

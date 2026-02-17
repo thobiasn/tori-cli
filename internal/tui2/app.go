@@ -886,7 +886,7 @@ func (a *App) handleSwitcherKey(key string) (App, tea.Cmd) {
 		if s := a.sessions[name]; s != nil && s.ConnState == ConnNone {
 			return *a, func() tea.Msg { return connectServerMsg{name: name} }
 		}
-	case "esc":
+	case "esc", "S":
 		a.switcher = false
 	}
 	return *a, nil

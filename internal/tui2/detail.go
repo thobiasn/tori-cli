@@ -572,9 +572,9 @@ func (a *App) handleDetailKey(msg tea.KeyMsg) (App, tea.Cmd) {
 		return *a, updateFilterModal(det, s, key, a.display)
 	}
 
-	// Info overlay: dismiss with i or Esc.
+	// Info overlay: dismiss with Esc or i.
 	if det.infoOverlay {
-		if key == "i" || key == "esc" {
+		if key == "esc" || key == "i" {
 			det.infoOverlay = false
 		}
 		return *a, nil
@@ -720,6 +720,10 @@ func updateFilterModal(det *DetailState, s *Session, key string, cfg DisplayConf
 		return refetchLogs(det, s.Client, s.RetentionDays)
 	case "esc":
 		det.filterModal = nil
+	case "f":
+		if m.focus != 0 {
+			det.filterModal = nil
+		}
 	case "backspace":
 		switch m.focus {
 		case 0:
@@ -1280,7 +1284,7 @@ func visibleLogWindow(det *DetailState, data []protocol.LogEntryMsg, rawH int, d
 }
 
 // renderExpandModal renders a centered overlay showing the full log message.
-func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, tsFormat string) string {
+func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, cfg DisplayConfig) string {
 	modalW := width * 3 / 4
 	if modalW < 40 {
 		modalW = 40
@@ -1298,27 +1302,49 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, tsFor
 		innerH = 1
 	}
 
+	const pad = 2
+	contentW := innerW - pad*2
+	if contentW < 10 {
+		contentW = 10
+	}
+	padStr := strings.Repeat(" ", pad)
+
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
+	fg := lipgloss.NewStyle().Foreground(theme.Fg)
 
-	footerLine := " " + muted.Render("j/k Next/Prev  n/p Scroll  Esc Close")
+	// Metadata line: time  [container]  LEVEL  stream · full datetime
+	t := time.Unix(m.entry.Timestamp, 0)
+	timeStr := muted.Render(t.Format(cfg.TimeFormat))
+	fullDT := muted.Render(t.Format(cfg.DateFormat + " " + cfg.TimeFormat))
 
-	var header []string
-	header = append(header, muted.Render(" server:    ")+m.server)
+	parsed := parseLogMessage(m.entry.Message)
+	var levelStr string
+	if parsed.level != "" {
+		levelStr = levelColor(parsed.level, theme).Render(parsed.level)
+	}
+
+	parts := []string{timeStr}
 	if m.project != "" {
-		header = append(header, muted.Render(" project:   ")+m.project)
+		parts = append(parts, fg.Render(m.entry.ContainerName))
 	}
-	header = append(header, muted.Render(" container: ")+m.entry.ContainerName)
-	header = append(header, "")
-	header = append(header, muted.Render(" timestamp: ")+formatTimestamp(m.entry.Timestamp, tsFormat))
-	header = append(header, muted.Render(" stream:    ")+m.entry.Stream)
-	header = append(header, " "+muted.Render(strings.Repeat("─", innerW-2)))
+	if levelStr != "" {
+		parts = append(parts, levelStr)
+	}
+	parts = append(parts, muted.Render(m.entry.Stream)+" "+muted.Render("·")+" "+fullDT)
+	metaLine := padStr + strings.Join(parts, "  ")
 
-	contentH := innerH - len(header) - 1
-	if contentH < 1 {
-		contentH = 1
+	// Header: blank + meta + blank.
+	// Footer: blank + blank + tips.
+	// Fixed lines = 5 (top blank, meta, blank after meta, 2x blank before tips, tips).
+	fixedLines := 6
+
+	bodyH := innerH - fixedLines
+	if bodyH < 1 {
+		bodyH = 1
 	}
 
-	msg := sanitizeLogMsg(m.entry.Message)
+	// Message body.
+	msg := sanitizeLogMsg(parsed.message)
 	if json.Valid([]byte(msg)) {
 		var buf bytes.Buffer
 		if json.Indent(&buf, []byte(msg), "", "  ") == nil {
@@ -1326,12 +1352,12 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, tsFor
 		}
 	}
 
-	wrapped := wrapText(msg, innerW-2)
+	wrapped := wrapText(msg, contentW)
 	if len(wrapped) == 0 {
 		wrapped = []string{""}
 	}
 
-	maxScroll := len(wrapped) - contentH
+	maxScroll := len(wrapped) - bodyH
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
@@ -1340,22 +1366,35 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, tsFor
 	}
 
 	start := m.scroll
-	end := start + contentH
+	end := start + bodyH
 	if end > len(wrapped) {
 		end = len(wrapped)
 	}
 
 	var lines []string
-	lines = append(lines, header...)
+	lines = append(lines, "")
+	lines = append(lines, metaLine)
+	lines = append(lines, "")
 	for _, l := range wrapped[start:end] {
-		lines = append(lines, " "+l)
+		lines = append(lines, padStr+fg.Render(l))
 	}
-	used := len(lines) + 1
+
+	// Pad to fill available space.
+	used := len(lines) + 3 // 2 blank + tips
 	for i := used; i < innerH; i++ {
 		lines = append(lines, "")
 	}
-	lines = append(lines, footerLine)
+
+	// Footer tips (centered).
+	tipLine := dialogTips(theme, "j/k", "next/prev", "esc", "close")
+	tipPad := (innerW - lipgloss.Width(tipLine)) / 2
+	if tipPad < 1 {
+		tipPad = 1
+	}
+	lines = append(lines, "")
+	lines = append(lines, "")
+	lines = append(lines, strings.Repeat(" ", tipPad)+tipLine)
 
 	content := strings.Join(lines, "\n")
-	return renderBox("Log", content, modalW, modalH, theme)
+	return renderBox("log", content, modalW, modalH, theme)
 }
