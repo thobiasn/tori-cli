@@ -568,7 +568,7 @@ func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsStr st
 	tsW := len([]rune(tsStr))
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
 
-	const levelColW = 5
+	const levelColW = 4
 	leftW := tsW
 	if nameW > 0 {
 		leftW += 1 + nameW
@@ -588,25 +588,27 @@ func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsStr st
 
 	// Parse log message for clean text and level.
 	parsed := parseLogMessage(entry.Message)
-	ts := muted.Render(tsStr)
 
-	var left string
+	// Left column: "ts [name] [level]" with natural spacing, padded to fixed width.
+	leftUsed := tsW
+	left := muted.Render(tsStr)
 	if nameW > 0 {
 		displayed := displayName
 		if nameRunes := []rune(displayed); len(nameRunes) > nameW {
 			displayed = string(nameRunes[:nameW])
 		}
-		pad := nameW - len([]rune(displayed))
-		left = ts + " " + muted.Render(displayed) + strings.Repeat(" ", pad)
-	} else {
-		left = ts
+		left += " " + muted.Render(displayed)
+		leftUsed += 1 + len([]rune(displayed))
 	}
-
-	// Level column.
 	if parsed.level != "" {
-		left += " " + levelColor(parsed.level, theme).Render(fmt.Sprintf("%-5s", parsed.level))
+		left += " " + levelColor(parsed.level, theme).Render(parsed.level)
+		leftUsed += 1 + len(parsed.level)
 	} else {
-		left += " " + muted.Render("─────")
+		left += "  " + muted.Render("──") + " "
+		leftUsed += 2 + 2 + 1
+	}
+	if leftUsed < leftW {
+		left += strings.Repeat(" ", leftW-leftUsed)
 	}
 
 	overhead := leftW + 1
@@ -623,13 +625,13 @@ func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsStr st
 // levelColor returns the style for a log level string.
 func levelColor(level string, theme *Theme) lipgloss.Style {
 	switch level {
-	case "DEBUG":
+	case "DBUG":
 		return lipgloss.NewStyle().Foreground(theme.DebugLevel)
 	case "INFO":
 		return lipgloss.NewStyle().Foreground(theme.InfoLevel)
 	case "WARN":
 		return lipgloss.NewStyle().Foreground(theme.Warning)
-	case "ERROR":
+	case "ERR":
 		return lipgloss.NewStyle().Foreground(theme.Critical)
 	default:
 		return lipgloss.NewStyle().Foreground(theme.FgDim)

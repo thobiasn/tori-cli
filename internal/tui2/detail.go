@@ -1115,11 +1115,11 @@ func normalizeLevel(s string) string {
 	case "WARN", "WARNING":
 		return "WARN"
 	case "ERR", "ERROR":
-		return "ERROR"
+		return "ERR"
 	case "DEBUG", "DBG", "TRACE":
-		return "DEBUG"
+		return "DBUG"
 	case "FATAL", "PANIC":
-		return "ERROR"
+		return "ERR"
 	default:
 		return ""
 	}
@@ -1357,7 +1357,7 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, cfg D
 	}
 
 	// Message body.
-	msg := sanitizeLogMsg(parsed.message)
+	msg := sanitizeLogMsg(m.entry.Message)
 	if json.Valid([]byte(msg)) {
 		var buf bytes.Buffer
 		if json.Indent(&buf, []byte(msg), "", "  ") == nil {
