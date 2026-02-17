@@ -100,7 +100,12 @@ func renderDetail(a *App, s *Session, width, height int) string {
 		modal := renderFilterModal(det.filterModal, width, height, theme, a.display)
 		result = Overlay(result, modal, width, height)
 	} else if det.infoOverlay {
-		modal := renderInfoOverlay(det, s, width, height, theme)
+		var modal string
+		if det.isGroupMode() {
+			modal = renderProjectInfoDialog(det, s, width, height, theme)
+		} else {
+			modal = renderInfoOverlay(det, s, width, height, theme)
+		}
 		result = Overlay(result, modal, width, height)
 	}
 
@@ -114,7 +119,7 @@ func renderDetailTopBar(a *App, s *Session, w int) string {
 	sep := " " + muted.Render("·") + " "
 
 	// Left side: navigation breadcrumb.
-	escHint := lipgloss.NewStyle().Foreground(theme.Fg).Render("Esc") + " " + muted.Render("←")
+	escHint := lipgloss.NewStyle().Foreground(theme.Fg).Render("esc") + " " + muted.Render("←")
 
 	var right string
 
@@ -133,14 +138,43 @@ func renderDetailTopBar(a *App, s *Session, w int) string {
 			parts = append(parts, lipgloss.NewStyle().Foreground(theme.Warning).Render(label))
 		}
 
-		// Running count.
+		// Health summary.
+		hasCheck := false
+		worstHealth := "healthy"
 		total := len(det.projectIDs)
 		running := 0
 		for _, id := range det.projectIDs {
-			if cm := findContainer(id, s.Containers); cm != nil && cm.State == "running" {
+			cm := findContainer(id, s.Containers)
+			if cm == nil {
+				continue
+			}
+			if cm.State == "running" {
 				running++
 			}
+			if hasHealthcheck(cm.Health) {
+				hasCheck = true
+				if cm.Health == "unhealthy" {
+					worstHealth = "unhealthy"
+				} else if cm.Health != "healthy" && worstHealth != "unhealthy" {
+					worstHealth = cm.Health
+				}
+			}
 		}
+		if hasCheck {
+			h := worstHealth
+			hColor := theme.Healthy
+			if h != "healthy" {
+				hColor = theme.Critical
+				if h == "starting" {
+					hColor = theme.Warning
+				}
+			}
+			parts = append(parts, healthIcon(h, theme)+" "+lipgloss.NewStyle().Foreground(hColor).Render(h))
+		} else {
+			parts = append(parts, lipgloss.NewStyle().Foreground(theme.FgDim).Render("~ no checks"))
+		}
+
+		// Running count.
 		runColor := theme.Healthy
 		if running < total {
 			runColor = theme.Warning
@@ -163,7 +197,8 @@ func renderDetailTopBar(a *App, s *Session, w int) string {
 
 	var breadcrumb string
 	if det.svcProject != "" {
-		breadcrumb = escHint + " " + muted.Render(det.svcProject+" /") + " " + lipgloss.NewStyle().Bold(true).Render(containerName)
+		proj := Truncate(det.svcProject, 20)
+		breadcrumb = escHint + " " + muted.Render(proj+" /") + " " + lipgloss.NewStyle().Bold(true).Render(containerName)
 	} else {
 		breadcrumb = escHint + " " + lipgloss.NewStyle().Bold(true).Render(containerName)
 	}
@@ -188,13 +223,18 @@ func renderDetailTopBar(a *App, s *Session, w int) string {
 	dot := lipgloss.NewStyle().Foreground(theme.StatusDotColor(cm.State, cm.Health)).Render("●")
 	parts = append(parts, dot+" "+cm.State)
 
-	// Health label (only if healthcheck exists).
+	// Health label.
 	if hasHealthcheck(cm.Health) {
 		hColor := theme.Healthy
 		if cm.Health != "healthy" {
-			hColor = theme.Warning
+			hColor = theme.Critical
+			if cm.Health == "starting" {
+				hColor = theme.Warning
+			}
 		}
-		parts = append(parts, lipgloss.NewStyle().Foreground(hColor).Render(cm.Health))
+		parts = append(parts, healthIcon(cm.Health, theme)+" "+lipgloss.NewStyle().Foreground(hColor).Render(cm.Health))
+	} else {
+		parts = append(parts, lipgloss.NewStyle().Foreground(theme.FgDim).Render("~ no check"))
 	}
 
 	// Uptime.
@@ -386,6 +426,15 @@ func renderDetailLogs(det *DetailState, s *Session, w, maxH int, cfg DisplayConf
 	innerH := maxH - 2 // reserve blank line + status line
 	if innerH < 1 {
 		innerH = 1
+	}
+
+	if len(data) == 0 {
+		muted := lipgloss.NewStyle().Foreground(theme.FgDim)
+		lines := make([]string, innerH+2)
+		if innerH > 1 {
+			lines[innerH/2] = centerText(muted.Render("no logs yet"), w)
+		}
+		return strings.Join(lines, "\n")
 	}
 
 	start, end := visibleLogWindow(det, data, innerH, cfg.DateFormat)
@@ -626,9 +675,14 @@ func renderInfoOverlay(det *DetailState, s *Session, width, height int, theme *T
 	if hasHealthcheck(cm.Health) {
 		hColor := theme.Healthy
 		if cm.Health != "healthy" {
-			hColor = theme.Warning
+			hColor = theme.Critical
+			if cm.Health == "starting" {
+				hColor = theme.Warning
+			}
 		}
-		lines = append(lines, fmt.Sprintf("%-10s %s", "Health", lipgloss.NewStyle().Foreground(hColor).Render(cm.Health)))
+		lines = append(lines, fmt.Sprintf("%-10s %s %s", "Health", healthIcon(cm.Health, theme), lipgloss.NewStyle().Foreground(hColor).Render(cm.Health)))
+	} else {
+		lines = append(lines, fmt.Sprintf("%-10s %s", "Health", lipgloss.NewStyle().Foreground(theme.FgDim).Render("~ no check")))
 	}
 
 	lines = append(lines, fmt.Sprintf("%-10s %d", "PIDs", cm.PIDs))
@@ -663,6 +717,170 @@ func renderInfoOverlay(det *DetailState, s *Session, width, height int, theme *T
 	}
 	return (dialogLayout{
 		title: name,
+		width: modalW,
+		lines: lines,
+		tips:  dialogTips(theme, "esc", "close"),
+	}).render(width, height, theme)
+}
+
+func renderProjectInfoDialog(det *DetailState, s *Session, width, height int, theme *Theme) string {
+	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
+
+	// Collect container data for this project.
+	type row struct {
+		name     string
+		state    string
+		health   string
+		cpu      float64
+		mem      uint64
+		uptime   int64 // seconds, 0 if not running
+		dotColor lipgloss.Color
+	}
+	var rows []row
+	nameW := 0
+	var totalCPU float64
+	var totalMem uint64
+	images := make(map[string]struct{})
+	running := 0
+	allHealthy := true
+
+	now := time.Now().Unix()
+	for _, id := range det.projectIDs {
+		cm := findContainer(id, s.Containers)
+		if cm == nil {
+			continue
+		}
+		name := serviceNameByID(id, s.ContInfo)
+		if name == "" {
+			name = cm.Name
+		}
+		if n := len([]rune(name)); n > nameW {
+			nameW = n
+		}
+
+		var up int64
+		if cm.State == "running" && cm.StartedAt > 0 {
+			up = now - cm.StartedAt
+		}
+		if cm.State == "running" {
+			running++
+		}
+		if hasHealthcheck(cm.Health) && cm.Health != "healthy" {
+			allHealthy = false
+		}
+
+		rows = append(rows, row{
+			name:     name,
+			state:    cm.State,
+			health:   cm.Health,
+			cpu:      cm.CPUPercent,
+			mem:      cm.MemUsage,
+			uptime:   up,
+			dotColor: theme.StatusDotColor(cm.State, cm.Health),
+		})
+		totalCPU += cm.CPUPercent
+		totalMem += cm.MemUsage
+		if cm.Image != "" {
+			images[cm.Image] = struct{}{}
+		}
+	}
+	if nameW > 20 {
+		nameW = 20
+	}
+
+	// Header line: project name + running count.
+	total := len(det.projectIDs)
+	var runColor lipgloss.Color
+	switch {
+	case running == 0:
+		runColor = theme.Critical
+	case running < total || !allHealthy:
+		runColor = theme.Warning
+	default:
+		runColor = theme.Healthy
+	}
+	header := lipgloss.NewStyle().Foreground(theme.FgBright).Render(det.project)
+	runStr := lipgloss.NewStyle().Foreground(runColor).Render(fmt.Sprintf("%d/%d running", running, total))
+
+	// Compute modal width from content.
+	// Row: name + 2 + dot(1) + 1 + state(7) + 2 + health(11) + 2 + cpu(5) + 1 + mem(6) + 2 + uptime(4) = nameW + 44
+	rowW := nameW + 44
+	headerW := lipgloss.Width(header) + 2 + lipgloss.Width(runStr)
+	contentW := rowW
+	if headerW > contentW {
+		contentW = headerW
+	}
+
+	modalW := width * 60 / 100
+	if modalW < 50 {
+		modalW = 50
+	}
+	if modalW > 80 {
+		modalW = 80
+	}
+	// Ensure modal fits content + centering padding.
+	if minW := contentW + 6; modalW < minW && minW <= 80 {
+		modalW = minW
+	}
+
+	var lines []string
+
+	// Header.
+	gap := contentW - lipgloss.Width(header) - lipgloss.Width(runStr)
+	if gap < 2 {
+		gap = 2
+	}
+	lines = append(lines, header+strings.Repeat(" ", gap)+runStr)
+	lines = append(lines, "")
+
+	// Container rows.
+	for _, r := range rows {
+		nameStr := r.name
+		if nameRunes := []rune(nameStr); len(nameRunes) > nameW {
+			nameStr = string(nameRunes[:nameW])
+		}
+		namePad := nameW - len([]rune(nameStr))
+
+		dot := lipgloss.NewStyle().Foreground(r.dotColor).Render("●")
+
+		stateStr := fmt.Sprintf("%-7s", r.state)
+
+		var healthStr string
+		if hasHealthcheck(r.health) {
+			hColor := theme.Healthy
+			if r.health != "healthy" {
+				hColor = theme.Critical
+				if r.health == "starting" {
+					hColor = theme.Warning
+				}
+			}
+			healthStr = healthIcon(r.health, theme) + " " + lipgloss.NewStyle().Foreground(hColor).Render(fmt.Sprintf("%-9s", r.health))
+		} else {
+			healthStr = lipgloss.NewStyle().Foreground(theme.FgDim).Render(fmt.Sprintf("%-11s", "~ no check"))
+		}
+
+		cpuStr := muted.Render(fmt.Sprintf("%5s", fmt.Sprintf("%.1f%%", r.cpu)))
+		memStr := muted.Render(fmt.Sprintf("%6s", formatBytes(r.mem)))
+
+		var uptimeStr string
+		if r.uptime > 0 {
+			uptimeStr = muted.Render(fmt.Sprintf("%4s", formatCompactUptime(r.uptime)))
+		} else {
+			uptimeStr = strings.Repeat(" ", 4)
+		}
+
+		line := nameStr + strings.Repeat(" ", namePad) + "  " +
+			dot + " " + stateStr + "  " + healthStr + "  " + cpuStr + " " + memStr + "  " + uptimeStr
+		lines = append(lines, line)
+	}
+
+	// Summary line.
+	lines = append(lines, "")
+	summary := muted.Render(fmt.Sprintf("cpu: %.1f%%  mem: %s  images: %d", totalCPU, formatBytes(totalMem), len(images)))
+	lines = append(lines, summary)
+
+	return (dialogLayout{
+		title: "info",
 		width: modalW,
 		lines: lines,
 		tips:  dialogTips(theme, "esc", "close"),

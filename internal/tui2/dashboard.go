@@ -102,7 +102,14 @@ func buildGroups(containers []protocol.ContainerMetrics, contInfo []protocol.Con
 			}
 		}
 		sort.Slice(conts, func(i, j int) bool {
-			return conts[i].Name < conts[j].Name
+			ni, nj := conts[i].Service, conts[j].Service
+			if ni == "" {
+				ni = conts[i].Name
+			}
+			if nj == "" {
+				nj = conts[j].Name
+			}
+			return ni < nj
 		})
 		groups = append(groups, containerGroup{name: name, containers: conts, running: running})
 	}
@@ -327,8 +334,9 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 	// Column widths (right-aligned, fixed).
 	const cpuW = 6  // " 0.6%" or "13.0%"
 	const memW = 8  // "  30.9M" or " 710.1M"
+	const hchkW = 3 // "  ✓" or "  ~" or "  ✗"
 	const statW = 5 // "  1/1" or "   5d"
-	const colsW = cpuW + memW + statW
+	const colsW = cpuW + memW + hchkW + statW
 	const minGap = 4 // minimum gap between name and columns
 
 	// Max name widths: total - prefix - columns - gap.
@@ -369,7 +377,18 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 			allTracked := true
 			worstCPUColor := theme.FgDim
 			worstMemColor := theme.FgDim
+			hasCheck := false
+			worstHealth := "healthy"
 			for _, c := range g.containers {
+				// Health tracking includes all containers.
+				if hasHealthcheck(c.Health) {
+					hasCheck = true
+					if c.Health == "unhealthy" {
+						worstHealth = "unhealthy"
+					} else if c.Health != "healthy" && worstHealth != "unhealthy" {
+						worstHealth = c.Health
+					}
+				}
 				tracked := true
 				if t, ok := trackedState[c.ID]; ok {
 					tracked = t
@@ -399,7 +418,7 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 			} else {
 				cpuStr = fmt.Sprintf("%.1f%%", cpuSum)
 			}
-			for len(cpuStr) < cpuW {
+			for len([]rune(cpuStr)) < cpuW {
 				cpuStr = " " + cpuStr
 			}
 
@@ -410,9 +429,16 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 			} else {
 				memStr = formatBytes(memSum)
 			}
-			for len(memStr) < memW {
+			for len([]rune(memStr)) < memW {
 				memStr = " " + memStr
 			}
+
+			// Health column (worst across children).
+			hchkHealth := worstHealth
+			if !hasCheck {
+				hchkHealth = ""
+			}
+			styledHchk := "  " + healthIcon(hchkHealth, theme)
 
 			// Running count column.
 			statStr := fmt.Sprintf("%d/%d", g.running, len(g.containers))
@@ -439,7 +465,7 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 				gap = 1
 			}
 
-			row := prefix + strings.Repeat(" ", gap) + styledCPU + styledMem + styledStat
+			row := prefix + strings.Repeat(" ", gap) + styledCPU + styledMem + styledHchk + styledStat
 			if idx == a.cursor {
 				row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), w))
 			}
@@ -468,13 +494,13 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 				cpuStr = "—"
 			} else if c.State != "running" {
 				cpuStr = c.State
-				if len(cpuStr) > cpuW {
-					cpuStr = cpuStr[:cpuW]
+				if len([]rune(cpuStr)) > cpuW {
+					cpuStr = string([]rune(cpuStr)[:cpuW])
 				}
 			} else {
 				cpuStr = fmt.Sprintf("%.1f%%", c.CPUPercent)
 			}
-			for len(cpuStr) < cpuW {
+			for len([]rune(cpuStr)) < cpuW {
 				cpuStr = " " + cpuStr
 			}
 
@@ -485,8 +511,16 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 			} else {
 				memStr = formatBytes(c.MemUsage)
 			}
-			for len(memStr) < memW {
+			for len([]rune(memStr)) < memW {
 				memStr = " " + memStr
+			}
+
+			// Health column.
+			var styledHchk string
+			if !tracked {
+				styledHchk = "  " + muted.Render("—")
+			} else {
+				styledHchk = "  " + healthIcon(c.Health, theme)
 			}
 
 			// Status column (uptime or state).
@@ -498,7 +532,7 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 			} else if c.StartedAt > 0 {
 				statStr = formatCompactUptime(now - c.StartedAt)
 			}
-			for len(statStr) < statW {
+			for len([]rune(statStr)) < statW {
 				statStr = " " + statStr
 			}
 
@@ -516,7 +550,7 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 				styledStat = muted.Render(statStr)
 			}
 
-			// Build container row: "  ● name   cpu  mem  stat"
+			// Build container row: "  ● name   cpu  mem  ✓  stat"
 			prefix := "  " + dot + " " + lipgloss.NewStyle().Foreground(theme.FgBright).Render(name)
 			prefixW := lipgloss.Width(prefix)
 			gap := w - prefixW - colsW
@@ -524,7 +558,7 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 				gap = 1
 			}
 
-			row := prefix + strings.Repeat(" ", gap) + styledCPU + styledMem + styledStat
+			row := prefix + strings.Repeat(" ", gap) + styledCPU + styledMem + styledHchk + styledStat
 			if idx == a.cursor {
 				row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), w))
 			} else if !tracked {

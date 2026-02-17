@@ -117,3 +117,19 @@ func (t Theme) StatusDotColor(state, health string) lipgloss.Color {
 func hasHealthcheck(health string) bool {
 	return health == "healthy" || health == "unhealthy" || health == "starting"
 }
+
+// healthIcon returns a styled single-character healthcheck indicator:
+// ✓ (green) for healthy, ✗ (red/amber) for unhealthy/starting, ~ (dim) for no check.
+func healthIcon(health string, theme *Theme) string {
+	if !hasHealthcheck(health) {
+		return lipgloss.NewStyle().Foreground(theme.FgDim).Render("~")
+	}
+	if health == "healthy" {
+		return lipgloss.NewStyle().Foreground(theme.Healthy).Render("✓")
+	}
+	c := theme.Critical
+	if health == "starting" {
+		c = theme.Warning
+	}
+	return lipgloss.NewStyle().Foreground(c).Render("✗")
+}

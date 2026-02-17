@@ -950,7 +950,7 @@ func (a *App) toggleTracking() tea.Cmd {
 	item := items[a.cursor]
 	group := a.groups[item.groupIdx].name
 
-	if item.isProject || (group != "other") {
+	if item.isProject {
 		// Toggle entire project.
 		tracked := isProjectTracked(group, s.ContInfo)
 		client := s.Client
@@ -962,7 +962,7 @@ func (a *App) toggleTracking() tea.Cmd {
 		}
 	}
 
-	// Single container in "other" group.
+	// Single container.
 	c := containerAtCursor(a.groups, items, a.cursor)
 	if c == nil {
 		return nil

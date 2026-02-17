@@ -150,8 +150,11 @@ func renderAlertRows(s *Session, w, maxH int, theme *Theme) string {
 	items := buildAlertList(s.Alerts, av.resolved, av.showResolved)
 
 	if len(items) == 0 {
-		line := muted.Render("  no alerts")
-		return padLines(line, maxH)
+		lines := make([]string, maxH)
+		if maxH > 1 {
+			lines[maxH/2] = centerText(muted.Render("✓ no alerts"), w)
+		}
+		return strings.Join(lines, "\n")
 	}
 
 	var lines []string

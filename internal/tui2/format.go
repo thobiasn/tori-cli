@@ -33,7 +33,7 @@ func TruncateStyled(s string, maxLen int) string {
 	if lipgloss.Width(s) <= maxLen {
 		return s
 	}
-	return Truncate(stripANSI(s), maxLen)
+	return ansi.Truncate(s, maxLen, "")
 }
 
 // stripANSI removes ANSI escape sequences from a string.

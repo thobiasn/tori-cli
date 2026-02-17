@@ -64,10 +64,11 @@ type logFilterModal struct {
 }
 
 type logExpandModal struct {
-	entry   protocol.LogEntryMsg
-	server  string
-	project string
-	scroll  int
+	entry       protocol.LogEntryMsg
+	server      string
+	project     string
+	serviceName string
+	scroll      int
 }
 
 type detailLogQueryMsg struct {
@@ -638,9 +639,7 @@ func (a *App) handleDetailKey(msg tea.KeyMsg) (App, tea.Cmd) {
 		return *a, nil
 
 	case "i":
-		if !det.isGroupMode() {
-			det.infoOverlay = true
-		}
+		det.infoOverlay = true
 		return *a, nil
 
 	case "G":
@@ -683,10 +682,15 @@ func (a *App) handleDetailKey(msg tea.KeyMsg) (App, tea.Cmd) {
 				if project == "" {
 					project = det.svcProject
 				}
+				svcName := serviceNameByID(data[idx].ContainerID, s.ContInfo)
+				if svcName == "" {
+					svcName = data[idx].ContainerName
+				}
 				det.expandModal = &logExpandModal{
-					entry:   data[idx],
-					server:  s.Name,
-					project: project,
+					entry:       data[idx],
+					server:      s.Name,
+					project:     project,
+					serviceName: svcName,
 				}
 			}
 		}
@@ -1325,7 +1329,7 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, cfg D
 
 	parts := []string{timeStr}
 	if m.project != "" {
-		parts = append(parts, fg.Render(m.entry.ContainerName))
+		parts = append(parts, fg.Render(m.serviceName))
 	}
 	if levelStr != "" {
 		parts = append(parts, levelStr)
