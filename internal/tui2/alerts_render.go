@@ -388,6 +388,7 @@ func renderRuleExpansion(rule protocol.AlertRuleInfo, now time.Time, theme *Them
 func renderSilenceDialog(m *silenceModalState, width, height int, theme *Theme) string {
 	accent := lipgloss.NewStyle().Foreground(theme.Accent)
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
+	fg := lipgloss.NewStyle().Foreground(theme.Fg)
 
 	var parts []string
 	for i, d := range silenceDurations {
@@ -398,17 +399,45 @@ func renderSilenceDialog(m *silenceModalState, width, height int, theme *Theme) 
 		}
 	}
 
+	// Build content lines without left padding.
 	var lines []string
 	lines = append(lines, "")
-	lines = append(lines, "  "+strings.Join(parts, "   "))
-	lines = append(lines, "")
-	lines = append(lines, "  "+muted.Render("Esc cancel"))
+	lines = append(lines, strings.Join(parts, "   "))
 
-	content := strings.Join(lines, "\n")
-	modalW := 30
+	// Center the content block within the modal.
+	modalW := 43
 	if modalW > width-4 {
 		modalW = width - 4
 	}
+	innerW := modalW - 2
+	maxW := 0
+	for _, l := range lines {
+		if w := lipgloss.Width(l); w > maxW {
+			maxW = w
+		}
+	}
+	leftPad := (innerW - maxW) / 2
+	if leftPad < 1 {
+		leftPad = 1
+	}
+	padStr := strings.Repeat(" ", leftPad)
+	for i, l := range lines {
+		if l != "" {
+			lines[i] = padStr + l
+		}
+	}
+
+	// Tips (centered independently).
+	tipLine := fg.Render("h/l") + " " + muted.Render("navigate") + "  " + fg.Render("enter") + " " + muted.Render("apply") + "  " + fg.Render("esc") + " " + muted.Render("cancel")
+	tipPad := (innerW - lipgloss.Width(tipLine)) / 2
+	if tipPad < 1 {
+		tipPad = 1
+	}
+	lines = append(lines, "")
+	lines = append(lines, "")
+	lines = append(lines, strings.Repeat(" ", tipPad)+tipLine)
+
+	content := strings.Join(lines, "\n")
 	modalH := len(lines) + 2
 	if modalH > height-2 {
 		modalH = height - 2

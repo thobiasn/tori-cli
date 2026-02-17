@@ -699,7 +699,11 @@ func updateFilterModal(det *DetailState, s *Session, key string, cfg DisplayConf
 	m := det.filterModal
 	switch key {
 	case "tab":
-		m.focus = (m.focus + 1) % 5
+		if m.focus == 0 {
+			m.focus = 1
+		} else {
+			m.focus = 0
+		}
 	case "enter":
 		det.searchText = m.text
 		det.filterFrom = parseFilterBound(m.fromDate.resolved(), m.fromTime.resolved(), cfg.DateFormat, cfg.TimeFormat, false)
@@ -732,6 +736,38 @@ func updateFilterModal(det *DetailState, s *Session, key string, cfg DisplayConf
 			m.toTime.backspace()
 		}
 	default:
+		if m.focus > 0 {
+			switch key {
+			case "h", "left":
+				if m.focus == 2 {
+					m.focus = 1
+				} else if m.focus == 4 {
+					m.focus = 3
+				}
+				return nil
+			case "l", "right":
+				if m.focus == 1 {
+					m.focus = 2
+				} else if m.focus == 3 {
+					m.focus = 4
+				}
+				return nil
+			case "j", "down":
+				if m.focus == 1 {
+					m.focus = 3
+				} else if m.focus == 2 {
+					m.focus = 4
+				}
+				return nil
+			case "k", "up":
+				if m.focus == 3 {
+					m.focus = 1
+				} else if m.focus == 4 {
+					m.focus = 2
+				}
+				return nil
+			}
+		}
 		if len(key) == 1 {
 			switch m.focus {
 			case 0:

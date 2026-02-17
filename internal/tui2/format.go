@@ -423,6 +423,7 @@ func renderHelpModal(a *App, s *Session, width, height int) string {
 		bindings = []binding{
 			{"esc", "back to dashboard"},
 			{"j/k", "scroll logs"},
+			{"h/l", "navigate filter fields"},
 			{"G", "jump to latest"},
 			{"enter", "expand log entry"},
 			{"s", "cycle stream filter"},
@@ -438,6 +439,7 @@ func renderHelpModal(a *App, s *Session, width, height int) string {
 		bindings = []binding{
 			{"tab", "switch focus"},
 			{"j/k", "navigate"},
+			{"h/l", "navigate modal"},
 			{"enter", "expand details"},
 			{"a", "acknowledge alert"},
 			{"s", "silence rule/alert"},

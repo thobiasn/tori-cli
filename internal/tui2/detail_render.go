@@ -681,11 +681,11 @@ func renderFilterModal(m *logFilterModal, width, height int, theme *Theme, cfg D
 	dateW := len([]rune(cfg.DateFormat))
 	timeW := len([]rune(cfg.TimeFormat))
 
-	const prefix = 8
-	lineW := prefix + 1 + dateW + 1 + 3 + 1 + timeW + 1
-	modalW := lineW + 6
-	if modalW < 45 {
-		modalW = 45
+	const labelW = 6 // "From  " / "To    "
+	lineW := labelW + 1 + dateW + 1 + 3 + 1 + timeW + 1
+	modalW := lineW + 8
+	if modalW < 56 {
+		modalW = 56
 	}
 	if modalW > width-4 {
 		modalW = width - 4
@@ -693,6 +693,7 @@ func renderFilterModal(m *logFilterModal, width, height int, theme *Theme, cfg D
 	innerW := modalW - 2
 
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
+	fg := lipgloss.NewStyle().Foreground(theme.Fg)
 	accent := lipgloss.NewStyle().Foreground(theme.Accent)
 	cursorStyle := lipgloss.NewStyle().Reverse(true)
 
@@ -703,57 +704,82 @@ func renderFilterModal(m *logFilterModal, width, height int, theme *Theme, cfg D
 		return muted.Render(ch)
 	}
 
-	textFieldLines := func(val string, focused bool) []string {
-		maxW := innerW - 4
-		if focused {
-			maxW--
-		}
-		if maxW < 4 {
-			maxW = 4
-		}
-		var wrapped []string
-		if val == "" {
-			wrapped = []string{""}
-		} else {
-			wrapped = wrapText(val, maxW)
-		}
-		if focused {
-			wrapped[len(wrapped)-1] += cursorStyle.Render(" ")
-		}
-		return wrapped
-	}
-
 	pad := func(s string, w int) string {
 		if len(s) >= w {
 			return s[:w]
 		}
 		return s + strings.Repeat(" ", w-len(s))
 	}
-	hdrDate := pad("date", dateW+5)
 
+	// Build content lines without left padding.
 	var lines []string
 	lines = append(lines, "")
-	lines = append(lines, "  Text")
-	textLines := textFieldLines(m.text, m.focus == 0)
-	for i, tl := range textLines {
+
+	// Text label and field.
+	lines = append(lines, "Text")
+	textMaxW := lineW - 2
+	if m.focus == 0 {
+		textMaxW--
+	}
+	if textMaxW < 4 {
+		textMaxW = 4
+	}
+	var textWrapped []string
+	if m.text == "" {
+		textWrapped = []string{""}
+	} else {
+		textWrapped = wrapText(m.text, textMaxW)
+	}
+	if m.focus == 0 {
+		textWrapped[len(textWrapped)-1] += cursorStyle.Render(" ")
+	}
+	for i, tl := range textWrapped {
 		switch {
-		case len(textLines) == 1:
-			lines = append(lines, "  "+bracket("[", m.focus == 0)+tl+bracket("]", m.focus == 0))
+		case len(textWrapped) == 1:
+			lines = append(lines, bracket("[", m.focus == 0)+tl+bracket("]", m.focus == 0))
 		case i == 0:
-			lines = append(lines, "  "+bracket("[", m.focus == 0)+tl)
-		case i == len(textLines)-1:
-			lines = append(lines, "   "+tl+bracket("]", m.focus == 0))
+			lines = append(lines, bracket("[", m.focus == 0)+tl)
+		case i == len(textWrapped)-1:
+			lines = append(lines, " "+tl+bracket("]", m.focus == 0))
 		default:
-			lines = append(lines, "   "+tl)
+			lines = append(lines, " "+tl)
 		}
 	}
+
+	// Date/time section.
 	lines = append(lines, "")
-	lines = append(lines, strings.Repeat(" ", prefix)+muted.Render(hdrDate+"time"))
-	lines = append(lines, "  From  "+bracket("[", m.focus == 1)+m.fromDate.render(m.focus == 1, theme)+bracket("]", m.focus == 1)+"   "+bracket("[", m.focus == 2)+m.fromTime.render(m.focus == 2, theme)+bracket("]", m.focus == 2))
-	lines = append(lines, "  To    "+bracket("[", m.focus == 3)+m.toDate.render(m.focus == 3, theme)+bracket("]", m.focus == 3)+"   "+bracket("[", m.focus == 4)+m.toTime.render(m.focus == 4, theme)+bracket("]", m.focus == 4))
-	lines = append(lines, strings.Repeat(" ", prefix)+muted.Render(pad(cfg.DateFormat, dateW+5)+cfg.TimeFormat))
+	hdrDate := pad("date", dateW+5)
+	lines = append(lines, strings.Repeat(" ", labelW)+muted.Render(hdrDate+"time"))
+	lines = append(lines, "From  "+bracket("[", m.focus == 1)+m.fromDate.render(m.focus == 1, theme)+bracket("]", m.focus == 1)+"   "+bracket("[", m.focus == 2)+m.fromTime.render(m.focus == 2, theme)+bracket("]", m.focus == 2))
+	lines = append(lines, "To    "+bracket("[", m.focus == 3)+m.toDate.render(m.focus == 3, theme)+bracket("]", m.focus == 3)+"   "+bracket("[", m.focus == 4)+m.toTime.render(m.focus == 4, theme)+bracket("]", m.focus == 4))
+
+	// Center the content block within the modal.
+	maxW := 0
+	for _, l := range lines {
+		if w := lipgloss.Width(l); w > maxW {
+			maxW = w
+		}
+	}
+	leftPad := (innerW - maxW) / 2
+	if leftPad < 1 {
+		leftPad = 1
+	}
+	padStr := strings.Repeat(" ", leftPad)
+	for i, l := range lines {
+		if l != "" {
+			lines[i] = padStr + l
+		}
+	}
+
+	// Tips (centered independently).
+	tipLine := fg.Render("tab")+" "+muted.Render("switch")+"  "+fg.Render("h/l")+" "+muted.Render("navigate")+"  "+fg.Render("enter")+" "+muted.Render("apply")+"  "+fg.Render("esc")+" "+muted.Render("cancel")
+	tipPad := (innerW - lipgloss.Width(tipLine)) / 2
+	if tipPad < 1 {
+		tipPad = 1
+	}
 	lines = append(lines, "")
-	lines = append(lines, "  "+muted.Render("Tab next · Enter apply · Esc cancel"))
+	lines = append(lines, "")
+	lines = append(lines, strings.Repeat(" ", tipPad)+tipLine)
 
 	content := strings.Join(lines, "\n")
 	modalH := len(lines) + 2
