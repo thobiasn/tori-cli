@@ -19,6 +19,8 @@ type Theme struct {
 	Healthy  lipgloss.Color // running, connected, all clear, status dots
 	Warning  lipgloss.Color // high usage, degraded, warn-severity alerts
 	Critical lipgloss.Color // exited, unhealthy, crit-severity alerts
+	DebugLevel lipgloss.Color // log level color for DEBUG — quieter than InfoLevel
+	InfoLevel  lipgloss.Color // log level color for INFO — softer than message text (Fg)
 
 	// Graph-specific
 	GraphCPU  lipgloss.Color // CPU sparkline
@@ -40,7 +42,9 @@ func DefaultTheme() Theme {
 		Healthy:  lipgloss.Color("#9ece6a"),
 		Warning:  lipgloss.Color("#e0af68"),
 		Critical: lipgloss.Color("#f7768e"),
-		GraphCPU: lipgloss.Color("#7dcfff"),
+		DebugLevel: lipgloss.Color("#414769"),
+		InfoLevel:  lipgloss.Color("#505a85"),
+		GraphCPU:   lipgloss.Color("#7dcfff"),
 		GraphMem: lipgloss.Color("#bb9af7"),
 		GraphDisk: lipgloss.Color("#9ece6a"),
 	}
@@ -60,7 +64,9 @@ func TerminalTheme() Theme {
 		Healthy:  lipgloss.Color("2"),
 		Warning:  lipgloss.Color("3"),
 		Critical: lipgloss.Color("1"),
-		GraphCPU: lipgloss.Color("6"),
+		DebugLevel: lipgloss.Color("8"),
+		InfoLevel:  lipgloss.Color("7"),
+		GraphCPU:   lipgloss.Color("6"),
 		GraphMem: lipgloss.Color("5"),
 		GraphDisk: lipgloss.Color("2"),
 	}

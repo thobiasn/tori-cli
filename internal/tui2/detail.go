@@ -85,6 +85,12 @@ type detailMetricsQueryMsg struct {
 }
 
 func (s *DetailState) reset() {
+	s.containerID = ""
+	s.project = ""
+	s.projectIDs = nil
+	s.svcProject = ""
+	s.svcService = ""
+	s.maxSvcNameW = 0
 	s.logs = NewRingBuffer[protocol.LogEntryMsg](logBufCapacity)
 	s.logScroll = 0
 	s.logCursor = 0

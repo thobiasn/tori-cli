@@ -67,6 +67,7 @@ func buildGroups(containers []protocol.ContainerMetrics, contInfo []protocol.Con
 		stub := protocol.ContainerMetrics{
 			ID: ci.ID, Name: ci.Name, Image: ci.Image,
 			State: ci.State, Health: ci.Health,
+			Project: ci.Project, Service: ci.Service,
 			StartedAt: ci.StartedAt, RestartCount: ci.RestartCount,
 			ExitCode: ci.ExitCode,
 		}

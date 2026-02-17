@@ -41,18 +41,7 @@ func renderDetail(a *App, s *Session, width, height int) string {
 	// 3+4. CPU and MEM sparklines (2 rows each).
 	sections = append(sections, renderDetailGraphs(det, s, contentW, theme))
 
-	// 5. Limit gauge bars (container only, 0–2 lines).
-	var limitLines int
-	if !det.isGroupMode() {
-		if cm := findContainer(det.containerID, s.Containers); cm != nil {
-			if gauge := renderLimitGauges(cm, contentW, theme); gauge != "" {
-				sections = append(sections, gauge)
-				limitLines = countLines(gauge)
-			}
-		}
-	}
-
-	// 6. Alert banner.
+	// 5. Alert banner.
 	var alertLines int
 	alerts := collectDetailAlerts(det, s.Alerts)
 	if len(alerts) > 0 {
@@ -61,12 +50,12 @@ func renderDetail(a *App, s *Session, width, height int) string {
 		alertLines = countLines(alertStr)
 	}
 
-	// 7. Divider.
+	// 6. Divider.
 	sections = append(sections, renderDivider(contentW, theme))
 
 	// Fixed layout:
 	// bird(1) + top bar(1) + time div(2) + graphs(4) + divider(1) + footer(2) = 11
-	fixedH := 11 + limitLines + alertLines
+	fixedH := 11 + alertLines
 	logH := height - fixedH
 	if logH < 3 {
 		logH = 3
@@ -242,6 +231,7 @@ func renderDetailGraphs(det *DetailState, s *Session, w int, theme *Theme) strin
 
 	// CPU value.
 	var cpuVal float64
+	var cpuLimit float64
 	if det.isGroupMode() {
 		for _, id := range det.projectIDs {
 			if cm := findContainer(id, s.Containers); cm != nil {
@@ -251,15 +241,17 @@ func renderDetailGraphs(det *DetailState, s *Session, w int, theme *Theme) strin
 	} else {
 		if cm := findContainer(det.containerID, s.Containers); cm != nil {
 			cpuVal = cm.CPUPercent
+			cpuLimit = cm.CPULimit
 		}
 	}
-	cpuPct := fmt.Sprintf(" %.1f%%", cpuVal)
-	for len(cpuPct) < pctW {
-		cpuPct = " " + cpuPct
+	cpuStr := fmt.Sprintf(" %.1f%%", cpuVal)
+	for len(cpuStr) < pctW {
+		cpuStr = " " + cpuStr
 	}
 
 	// MEM value.
 	var memVal uint64
+	var memLimit uint64
 	if det.isGroupMode() {
 		for _, id := range det.projectIDs {
 			if cm := findContainer(id, s.Containers); cm != nil {
@@ -269,84 +261,79 @@ func renderDetailGraphs(det *DetailState, s *Session, w int, theme *Theme) strin
 	} else {
 		if cm := findContainer(det.containerID, s.Containers); cm != nil {
 			memVal = cm.MemUsage
+			memLimit = cm.MemLimit
 		}
 	}
-	memPct := fmt.Sprintf(" %s", formatBytes(memVal))
-	for len(memPct) < pctW {
-		memPct = " " + memPct
+	memStr := fmt.Sprintf(" %s", formatBytes(memVal))
+	for len(memStr) < pctW {
+		memStr = " " + memStr
 	}
 
 	cpuTop, cpuBot := Sparkline(det.cpuHist.Data(), graphW, theme.GraphCPU)
 	memTop, memBot := Sparkline(det.memHist.Data(), graphW, theme.GraphMem)
 
-	return indent + cpuTop + pctPad + "\n" +
-		muted.Render("cpu ") + cpuBot + muted.Render(cpuPct) + "\n" +
-		indent + memTop + pctPad + "\n" +
-		muted.Render("mem ") + memBot + muted.Render(memPct)
+	// Severity-colored values with FgBright as calm baseline.
+	var memPct float64
+	if !det.isGroupMode() {
+		if cm := findContainer(det.containerID, s.Containers); cm != nil {
+			memPct = cm.MemPercent
+		}
+	}
+	cpuColor := detailCPUColor(cpuVal, cpuLimit, theme)
+	memColor := detailMemColor(memPct, memLimit, theme)
+	cpuValStyled := lipgloss.NewStyle().Foreground(cpuColor).Render(cpuStr)
+	memValStyled := lipgloss.NewStyle().Foreground(memColor).Render(memStr)
+
+	rightAlign := func(s string) string {
+		w := lipgloss.Width(s)
+		if w < pctW {
+			return strings.Repeat(" ", pctW-w) + s
+		}
+		return s
+	}
+
+	// When a limit exists: value on top row (label row), limit on bottom row.
+	// When no limit: value on bottom row (same as dashboard).
+	var cpuTopRight, cpuBotRight, memTopRight, memBotRight string
+	if cpuLimit > 0 {
+		cpuTopRight = rightAlign(cpuValStyled)
+		cpuBotRight = rightAlign(muted.Render(fmt.Sprintf("/ %.2f", cpuLimit)))
+	} else {
+		cpuTopRight = pctPad
+		cpuBotRight = cpuValStyled
+	}
+	if memLimit > 0 {
+		memTopRight = rightAlign(memValStyled)
+		memBotRight = rightAlign(muted.Render("/ " + formatBytes(memLimit)))
+	} else {
+		memTopRight = pctPad
+		memBotRight = memValStyled
+	}
+
+	return indent + cpuTop + cpuTopRight + "\n" +
+		muted.Render("cpu ") + cpuBot + cpuBotRight + "\n" +
+		indent + memTop + memTopRight + "\n" +
+		muted.Render("mem ") + memBot + memBotRight
 }
 
-func renderLimitGauges(cm *protocol.ContainerMetrics, w int, theme *Theme) string {
-	var lines []string
-
-	// CPU limit gauge.
-	if cm.CPULimit > 0 {
-		pctOfLimit := cm.CPUPercent / cm.CPULimit
-		color := theme.FgDim
-		switch {
-		case pctOfLimit >= 90:
-			color = theme.Critical
-		case pctOfLimit >= 70:
-			color = theme.Warning
-		}
-		label := fmt.Sprintf("of %.2f CPU", cm.CPULimit)
-		lines = append(lines, renderGaugeLine("cpu", pctOfLimit, label, w, color, theme))
+// detailCPUColor returns a color for CPU on the detail page.
+// Same severity thresholds as the dashboard, but FgBright replaces FgDim/Fg as the calm baseline.
+func detailCPUColor(cpuPct, cpuLimit float64, theme *Theme) lipgloss.Color {
+	c := containerCPUColor(cpuPct, cpuLimit, theme)
+	if c == theme.FgDim || c == theme.Fg {
+		return theme.FgBright
 	}
-
-	// MEM limit gauge.
-	if cm.MemLimit > 0 {
-		pct := cm.MemPercent
-		color := theme.FgDim
-		switch {
-		case pct >= 90:
-			color = theme.Critical
-		case pct >= 70:
-			color = theme.Warning
-		}
-		label := fmt.Sprintf("of %s", formatBytes(cm.MemLimit))
-		lines = append(lines, renderGaugeLine("mem", pct, label, w, color, theme))
-	}
-
-	if len(lines) == 0 {
-		return ""
-	}
-	return strings.Join(lines, "\n")
+	return c
 }
 
-func renderGaugeLine(name string, pct float64, suffix string, w int, color lipgloss.Color, theme *Theme) string {
-	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
-	style := lipgloss.NewStyle().Foreground(color)
-
-	// Layout: "cpu   ██████████░░░░░░░░░░  48%   of 0.50 CPU"
-	prefix := fmt.Sprintf("%-6s", name)
-	pctStr := fmt.Sprintf("%3.0f%%", pct)
-	// gauge width = total - prefix(6) - pct(6) - suffix - spacing(6)
-	suffixW := len(suffix)
-	gaugeW := w - 6 - 6 - suffixW - 6
-	if gaugeW < 10 {
-		gaugeW = 10
+// detailMemColor returns a color for memory on the detail page.
+// Same severity thresholds as the dashboard, but FgBright replaces FgDim as the calm baseline.
+func detailMemColor(memPct float64, memLimit uint64, theme *Theme) lipgloss.Color {
+	c := containerMemColor(memPct, memLimit, theme)
+	if c == theme.FgDim {
+		return theme.FgBright
 	}
-
-	filled := int(pct / 100 * float64(gaugeW))
-	if filled > gaugeW {
-		filled = gaugeW
-	}
-	if filled < 0 {
-		filled = 0
-	}
-	empty := gaugeW - filled
-
-	bar := style.Render(strings.Repeat("█", filled)) + muted.Render(strings.Repeat("░", empty))
-	return muted.Render(prefix) + bar + "  " + style.Render(pctStr) + "   " + muted.Render(suffix)
+	return c
 }
 
 func collectDetailAlerts(det *DetailState, alerts map[int64]*protocol.AlertEvent) []*protocol.AlertEvent {
@@ -395,7 +382,7 @@ func renderDetailLogs(det *DetailState, s *Session, w, maxH int, cfg DisplayConf
 	data := det.filteredData()
 
 	// Visible window (accounts for date header lines).
-	innerH := maxH - 1 // reserve 1 line for status
+	innerH := maxH - 2 // reserve blank line + status line
 	if innerH < 1 {
 		innerH = 1
 	}
@@ -456,20 +443,24 @@ func renderDetailLogs(det *DetailState, s *Session, w, maxH int, cfg DisplayConf
 		lines = lines[len(lines)-innerH:]
 	}
 
-	// Status line (count only data entries, not headers).
-	var statusParts []string
-	statusParts = append(statusParts, formatNumber(len(data))+" lines")
+	// Blank line + status line.
+	lines = append(lines, "")
+	sep := muted.Render(" · ")
+	countStr := formatNumber(len(data))
+	if det.totalLogCount > len(data) {
+		countStr += " of " + formatNumber(det.totalLogCount)
+	}
+	status := muted.Render(countStr + " lines")
 	if det.filterStream != "" {
-		statusParts = append(statusParts, det.filterStream)
+		status += sep + muted.Render(det.filterStream)
 	}
 	if det.isSearchActive() {
-		statusParts = append(statusParts, "SEARCH")
+		status += sep + muted.Render("SEARCH")
 	} else if det.logScroll > 0 {
-		statusParts = append(statusParts, "PAUSED")
+		status += sep + muted.Render("PAUSED")
 	} else {
-		statusParts = append(statusParts, "LIVE")
+		status += sep + lipgloss.NewStyle().Foreground(theme.Healthy).Render("LIVE")
 	}
-	status := muted.Render(strings.Join(statusParts, " · "))
 	lines = append(lines, centerText(status, w))
 
 	return strings.Join(lines, "\n")
@@ -517,7 +508,7 @@ func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsStr st
 	if parsed.level != "" {
 		left += " " + levelColor(parsed.level, theme).Render(fmt.Sprintf("%-5s", parsed.level))
 	} else {
-		left += " " + strings.Repeat(" ", levelColW)
+		left += " " + muted.Render("─────")
 	}
 
 	overhead := leftW + 1
@@ -525,7 +516,8 @@ func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsStr st
 	if msgW < 10 {
 		msgW = 10
 	}
-	msg := Truncate(sanitizeLogMsg(parsed.message), msgW)
+	msgStyle := lipgloss.NewStyle().Foreground(theme.Fg)
+	msg := msgStyle.Render(Truncate(sanitizeLogMsg(parsed.message), msgW))
 
 	return left + " " + msg
 }
@@ -533,11 +525,15 @@ func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsStr st
 // levelColor returns the style for a log level string.
 func levelColor(level string, theme *Theme) lipgloss.Style {
 	switch level {
+	case "DEBUG":
+		return lipgloss.NewStyle().Foreground(theme.DebugLevel)
+	case "INFO":
+		return lipgloss.NewStyle().Foreground(theme.InfoLevel)
 	case "WARN":
 		return lipgloss.NewStyle().Foreground(theme.Warning)
 	case "ERROR":
 		return lipgloss.NewStyle().Foreground(theme.Critical)
-	default: // INFO, DEBUG
+	default:
 		return lipgloss.NewStyle().Foreground(theme.FgDim)
 	}
 }
@@ -579,18 +575,6 @@ func logAreaHeight(a *App, det *DetailState, s *Session) int {
 	// Fixed: bird(1) + top bar(1) + time div(2) + graphs(4) + divider(1) + footer(2) = 11
 	fixedH := 11
 
-	// Limit gauges.
-	if !det.isGroupMode() {
-		if cm := findContainer(det.containerID, s.Containers); cm != nil {
-			if cm.CPULimit > 0 {
-				fixedH++
-			}
-			if cm.MemLimit > 0 {
-				fixedH++
-			}
-		}
-	}
-
 	// Alerts.
 	alerts := collectDetailAlerts(det, s.Alerts)
 	if len(alerts) > 0 {
@@ -601,7 +585,7 @@ func logAreaHeight(a *App, det *DetailState, s *Session) int {
 	if logH < 3 {
 		logH = 3
 	}
-	innerH := logH - 1 // status line
+	innerH := logH - 2 // blank line + status line
 	if innerH < 1 {
 		innerH = 1
 	}
