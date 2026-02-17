@@ -55,8 +55,8 @@ func renderDetail(a *App, s *Session, width, height int) string {
 	sections = append(sections, renderDivider(contentW, theme))
 
 	// Fixed layout:
-	// bird(1) + blank(1) + top bar(1) + time div(2) + graphs(4) + divider(1) + footer(2) = 12
-	fixedH := 12 + alertLines
+	// bird(1) + blank(1) + top bar(1) + time div(2) + graphs(4) + divider(1) + divider(1) + status(1) + help(1) = 13
+	fixedH := 13 + alertLines
 	logH := height - fixedH
 	if logH < 3 {
 		logH = 3
@@ -65,7 +65,13 @@ func renderDetail(a *App, s *Session, width, height int) string {
 	// 8. Logs.
 	sections = append(sections, renderDetailLogs(det, s, contentW, logH, a.display, theme))
 
-	// 9. Footer: help bar.
+	// 9. Divider.
+	sections = append(sections, renderDivider(contentW, theme))
+
+	// 10. Log status line.
+	sections = append(sections, renderLogStatus(det, contentW, theme))
+
+	// 11. Footer: help bar.
 	sections = append(sections, renderDetailHelp(contentW, theme))
 
 	content := strings.Join(sections, "\n")
@@ -461,15 +467,15 @@ func formatCompactDuration(d time.Duration) string {
 func renderDetailLogs(det *DetailState, s *Session, w, maxH int, cfg DisplayConfig, theme *Theme) string {
 	data := det.filteredData()
 
-	// Visible window (accounts for date header lines).
-	innerH := maxH - 2 // reserve blank line + status line
+	// Visible window.
+	innerH := maxH
 	if innerH < 1 {
 		innerH = 1
 	}
 
 	if len(data) == 0 {
 		muted := lipgloss.NewStyle().Foreground(theme.FgDim)
-		lines := make([]string, innerH+2)
+		lines := make([]string, innerH)
 		if innerH > 1 {
 			lines[innerH/2] = centerText(muted.Render("no logs yet"), w)
 		}
@@ -532,9 +538,14 @@ func renderDetailLogs(det *DetailState, s *Session, w, maxH int, cfg DisplayConf
 		lines = lines[len(lines)-innerH:]
 	}
 
-	// Blank line + status line.
-	lines = append(lines, "")
+	return strings.Join(lines, "\n")
+}
+
+func renderLogStatus(det *DetailState, w int, theme *Theme) string {
+	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
 	sep := muted.Render(" · ")
+
+	data := det.filteredData()
 	countStr := formatNumber(len(data))
 	if det.totalLogCount > len(data) {
 		countStr += " of " + formatNumber(det.totalLogCount)
@@ -550,9 +561,7 @@ func renderDetailLogs(det *DetailState, s *Session, w, maxH int, cfg DisplayConf
 	} else {
 		status += sep + lipgloss.NewStyle().Foreground(theme.Healthy).Render("LIVE")
 	}
-	lines = append(lines, centerText(status, w))
-
-	return strings.Join(lines, "\n")
+	return centerText(status, w)
 }
 
 func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsStr string, nameW int, displayName string) string {
@@ -656,8 +665,8 @@ func logAreaHeight(a *App, det *DetailState, s *Session) int {
 		contentW = maxContentW
 	}
 
-	// Fixed: bird(1) + blank(1) + top bar(1) + time div(2) + graphs(4) + divider(1) + footer(2) = 12
-	fixedH := 12
+	// Fixed: bird(1) + blank(1) + top bar(1) + time div(2) + graphs(4) + divider(1) + divider(1) + status(1) + help(1) = 13
+	fixedH := 13
 
 	// Alerts.
 	alerts := collectDetailAlerts(det, s.Alerts)
@@ -666,14 +675,10 @@ func logAreaHeight(a *App, det *DetailState, s *Session) int {
 	}
 
 	logH := a.height - fixedH
-	if logH < 3 {
-		logH = 3
+	if logH < 1 {
+		logH = 1
 	}
-	innerH := logH - 2 // blank line + status line
-	if innerH < 1 {
-		innerH = 1
-	}
-	return innerH
+	return logH
 }
 
 func renderInfoOverlay(det *DetailState, s *Session, width, height int, theme *Theme) string {

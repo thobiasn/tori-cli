@@ -329,7 +329,11 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 
 	items := buildSelectableItems(a.groups, a.collapsed)
 	if len(items) == 0 {
-		return muted.Render("  no containers")
+		lines := []string{muted.Render("  no containers")}
+		for len(lines) < maxH {
+			lines = append(lines, "")
+		}
+		return strings.Join(lines, "\n")
 	}
 
 	// Build tracked state lookup.
