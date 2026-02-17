@@ -2,7 +2,7 @@
 
 Lightweight server monitoring for Docker environments. A single binary that replaces the Grafana+Prometheus+Loki stack when all you need is a terminal.
 
-![Tori demo](https://github.com/user-attachments/assets/35df5fe1-e61a-4ccc-be34-a31c7a0ea6aa)
+![tori demo](https://github.com/user-attachments/assets/869f8dad-3f3b-4910-a5a1-069c5e482da0)
 
 ## Disclaimer
 
