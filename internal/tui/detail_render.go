@@ -250,20 +250,43 @@ func renderDetailGraphs(a *App, det *DetailState, s *Session, w int, theme *Them
 		hasMetrics = findContainer(det.containerID, s.Containers) != nil
 	}
 
-	// Loading state: no metrics data yet — show animated sparklines with dashes.
-	if !hasMetrics {
+	// Loading state: no metrics data yet or backfill in-flight — show animated sparklines.
+	if !hasMetrics || det.metricsBackfillPending {
 		cpuTop, cpuBot := LoadingSparkline(a.spinnerFrame, graphW, theme.FgDim)
 		memTop, memBot := LoadingSparkline(a.spinnerFrame+3, graphW, theme.FgDim)
-		dashVal := muted.Render("—")
-		rightAlign := func(s string) string {
-			w := lipgloss.Width(s)
-			if w < pctW {
-				return strings.Repeat(" ", pctW-w) + s
+		cpuRight := pctPad
+		memRight := pctPad
+		if hasMetrics {
+			// Show current live values while graphs are loading.
+			var cpuVal float64
+			var memVal uint64
+			if det.isGroupMode() {
+				for _, id := range det.projectIDs {
+					if cm := findContainer(id, s.Containers); cm != nil {
+						cpuVal += cm.CPUPercent
+						memVal += cm.MemUsage
+					}
+				}
+			} else {
+				if cm := findContainer(det.containerID, s.Containers); cm != nil {
+					cpuVal = cm.CPUPercent
+					memVal = cm.MemUsage
+				}
 			}
-			return s
+			cpuRight = muted.Render(rightAlign(fmt.Sprintf(" %.1f%%", cpuVal), pctW))
+			memRight = muted.Render(rightAlign(fmt.Sprintf(" %s", formatBytes(memVal)), pctW))
+		} else {
+			dashVal := muted.Render("—")
+			ra := func(s string) string {
+				w := lipgloss.Width(s)
+				if w < pctW {
+					return strings.Repeat(" ", pctW-w) + s
+				}
+				return s
+			}
+			cpuRight = ra(dashVal)
+			memRight = ra(dashVal)
 		}
-		cpuRight := rightAlign(dashVal)
-		memRight := rightAlign(dashVal)
 		return indent + cpuTop + pctPad + "\n" +
 			muted.Render("cpu ") + cpuBot + cpuRight + "\n" +
 			indent + memTop + pctPad + "\n" +

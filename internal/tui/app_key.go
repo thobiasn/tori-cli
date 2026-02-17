@@ -192,6 +192,8 @@ func (a *App) handleZoom(key string) tea.Cmd {
 
 	// Re-backfill detail metrics when in detail view.
 	if a.view == viewDetail {
+		s.Detail.cpuHist = NewRingBuffer[float64](histBufSize)
+		s.Detail.memHist = NewRingBuffer[float64](histBufSize)
 		s.Detail.metricsBackfilled = false
 		s.Detail.metricsBackfillPending = false
 		if cmd := s.Detail.onSwitch(s.Client, a.windowSeconds(), s.RetentionDays); cmd != nil {
