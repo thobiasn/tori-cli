@@ -519,8 +519,8 @@ func (a *App) enterDetail() (App, tea.Cmd) {
 				det.maxSvcNameW = n
 			}
 		}
-		if det.maxSvcNameW > 20 {
-			det.maxSvcNameW = 20
+		if det.maxSvcNameW > 12 {
+			det.maxSvcNameW = 12
 		}
 	} else {
 		c := a.groups[item.groupIdx].containers[item.contIdx]

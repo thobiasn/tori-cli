@@ -568,30 +568,18 @@ func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsStr st
 	tsW := len([]rune(tsStr))
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
 
-	const levelColW = 4
-	leftW := tsW
-	if nameW > 0 {
-		leftW += 1 + nameW
-	}
-	leftW += 1 + levelColW // space + level column
-
-	// Synthetic lifecycle events.
-	if entry.Stream == "event" {
-		style := lipgloss.NewStyle().Foreground(theme.FgDim)
-		overhead := leftW + 1
-		msgW := width - overhead
-		if msgW < 10 {
-			msgW = 10
-		}
-		return strings.Repeat(" ", leftW) + " " + style.Render(Truncate(sanitizeLogMsg(entry.Message), msgW))
-	}
-
 	// Parse log message for clean text and level.
 	parsed := parseLogMessage(entry.Message)
 
-	// Left column: "ts [name] [level]" with natural spacing, padded to fixed width.
-	leftUsed := tsW
+	// Synthetic lifecycle events — centered like date separators.
+	if entry.Stream == "event" {
+		style := lipgloss.NewStyle().Foreground(theme.FgDim)
+		return centerText(style.Render("— "+sanitizeLogMsg(entry.Message)+" —"), width)
+	}
+
+	// Left side: "ts [name] [level]" with natural single-space separation.
 	left := muted.Render(tsStr)
+	leftUsed := tsW
 	if nameW > 0 {
 		displayed := displayName
 		if nameRunes := []rune(displayed); len(nameRunes) > nameW {
@@ -603,15 +591,9 @@ func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsStr st
 	if parsed.level != "" {
 		left += " " + levelColor(parsed.level, theme).Render(parsed.level)
 		leftUsed += 1 + len(parsed.level)
-	} else {
-		left += "  " + muted.Render("──") + " "
-		leftUsed += 2 + 2 + 1
-	}
-	if leftUsed < leftW {
-		left += strings.Repeat(" ", leftW-leftUsed)
 	}
 
-	overhead := leftW + 1
+	overhead := leftUsed + 1
 	msgW := width - overhead
 	if msgW < 10 {
 		msgW = 10
