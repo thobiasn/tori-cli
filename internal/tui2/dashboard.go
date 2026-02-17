@@ -227,6 +227,11 @@ func renderHeader(a *App, s *Session, w int, theme *Theme) string {
 	}
 	logo := accent.Render(bird)
 
+	// No connection attempted yet — bird + status only, no server name.
+	if s.ConnState == ConnNone {
+		return centerText(logo, w) + "\n\n" + centerText(muted.Render("not connected"), w)
+	}
+
 	// Server name + health status + alert summary.
 	var statusStr, alertStr string
 	switch s.ConnState {
@@ -238,7 +243,7 @@ func renderHeader(a *App, s *Session, w int, theme *Theme) string {
 			alertStr = lipgloss.NewStyle().Foreground(theme.Healthy).Render("✓ all clear")
 		}
 	case ConnConnecting, ConnSSH:
-		statusStr = SpinnerView(a.spinnerFrame, "connecting", theme)
+		statusStr = muted.Render("connecting…")
 	case ConnError:
 		statusStr = lipgloss.NewStyle().Foreground(theme.Critical).Render("error")
 	default:
@@ -329,9 +334,9 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 
 	items := buildSelectableItems(a.groups, a.collapsed)
 	if len(items) == 0 {
-		lines := []string{muted.Render("  no containers")}
-		for len(lines) < maxH {
-			lines = append(lines, "")
+		lines := make([]string, maxH)
+		if maxH > 0 {
+			lines[maxH/2] = centerText(muted.Render("no containers"), w)
 		}
 		return strings.Join(lines, "\n")
 	}

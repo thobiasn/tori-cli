@@ -11,14 +11,49 @@ func renderSwitcher(a *App, width, height int) string {
 	theme := &a.theme
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
 
-	modalW := 46
+	modalW := 56
 	if modalW > width-4 {
 		modalW = width - 4
 	}
 	innerW := modalW - 2
 
 	var lines []string
+
+	// Welcome header — centered independently.
+	accent := lipgloss.NewStyle().Foreground(theme.Accent)
 	lines = append(lines, "")
+	lines = append(lines, centerText(accent.Render("—(•)>"), innerW))
+	lines = append(lines, "")
+	lines = append(lines, centerText(muted.Render("Welcome back! Where should we go?"), innerW))
+	lines = append(lines, "")
+
+	if len(a.sessionOrder) == 0 {
+		// No servers configured — show setup hint.
+		lines = append(lines, centerText(muted.Render("No servers configured."), innerW))
+		lines = append(lines, "")
+		fg := lipgloss.NewStyle().Foreground(theme.Fg)
+		lines = append(lines, centerText(muted.Render("Add a server to"), innerW))
+		lines = append(lines, centerText(fg.Render("~/.config/tori/config.toml"), innerW))
+
+		tipLine := dialogTips(theme, "esc", "quit")
+		tipPad := (innerW - lipgloss.Width(tipLine)) / 2
+		if tipPad < 1 {
+			tipPad = 1
+		}
+		lines = append(lines, "")
+		lines = append(lines, "")
+		lines = append(lines, strings.Repeat(" ", tipPad)+tipLine)
+
+		content := strings.Join(lines, "\n")
+		modalH := len(lines) + 2
+		if modalH > height-2 {
+			modalH = height - 2
+		}
+		return renderBox("", content, modalW, modalH, theme)
+	}
+
+	// Build server rows, then block-center them.
+	var rows []string
 	for i, name := range a.sessionOrder {
 		sess := a.sessions[name]
 
@@ -38,21 +73,37 @@ func renderSwitcher(a *App, width, height int) string {
 
 		// Active marker.
 		suffix := ""
-		if name == a.activeSession {
+		if name == a.activeSession && sess.ConnState == ConnReady {
 			suffix = muted.Render(" (active)")
 		}
 
-		row := "  " + dot + " " + name + suffix
+		row := dot + " " + name + suffix
 
 		if i == a.switcherCursor {
-			row = "  " + lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(dot+" "+name+suffix), innerW-2))
+			row = lipgloss.NewStyle().Reverse(true).Render(Truncate(stripANSI(row), innerW-4))
 		}
 
-		lines = append(lines, TruncateStyled(row, innerW))
+		rows = append(rows, row)
+	}
+
+	// Find widest row for block centering.
+	maxW := 0
+	for _, r := range rows {
+		if w := lipgloss.Width(r); w > maxW {
+			maxW = w
+		}
+	}
+	pad := (innerW - maxW) / 2
+	if pad < 2 {
+		pad = 2
+	}
+	padStr := strings.Repeat(" ", pad)
+	for _, r := range rows {
+		lines = append(lines, TruncateStyled(padStr+r, innerW))
 	}
 
 	// Help line.
-	tipLine := dialogTips(theme, "j/k", "navigate", "enter", "select", "esc", "close")
+	tipLine := dialogTips(theme, "j/k", "navigate", "enter", "connect", "esc", "close")
 	tipPad := (innerW - lipgloss.Width(tipLine)) / 2
 	if tipPad < 1 {
 		tipPad = 1
@@ -67,5 +118,5 @@ func renderSwitcher(a *App, width, height int) string {
 		modalH = height - 2
 	}
 
-	return renderBox("Servers", content, modalW, modalH, theme)
+	return renderBox("", content, modalW, modalH, theme)
 }

@@ -321,7 +321,7 @@ func resample(data []float64, n int) []float64 {
 }
 
 // renderBox renders a bordered box for modal overlays.
-func renderBox(title, content string, width, height int, theme *Theme) string {
+func renderBox(title, content string, width, height int, theme *Theme, titleStyleOverride ...*lipgloss.Style) string {
 	if width < 4 {
 		width = 4
 	}
@@ -332,6 +332,9 @@ func renderBox(title, content string, width, height int, theme *Theme) string {
 	innerW := width - 2
 	borderStyle := lipgloss.NewStyle().Foreground(theme.Border)
 	titleStyle := lipgloss.NewStyle().Foreground(theme.Accent).Bold(true)
+	if len(titleStyleOverride) > 0 && titleStyleOverride[0] != nil {
+		titleStyle = *titleStyleOverride[0]
+	}
 
 	// Top border with embedded title.
 	var top string
@@ -526,10 +529,11 @@ func dialogTips(theme *Theme, bindings ...string) string {
 
 // dialogLayout describes a centered modal dialog.
 type dialogLayout struct {
-	title string
-	width int      // desired modal width (clamped to terminal - 4)
-	lines []string // content lines (unpadded, centered as a block)
-	tips  string   // footer tip line (centered independently)
+	title      string
+	titleStyle *lipgloss.Style // optional override for title color (default: theme.Accent)
+	width      int             // desired modal width (clamped to terminal - 4)
+	lines      []string        // content lines (unpadded, centered as a block)
+	tips       string          // footer tip line (centered independently)
 }
 
 func (d dialogLayout) render(termW, termH int, theme *Theme) string {
@@ -577,7 +581,7 @@ func (d dialogLayout) render(termW, termH int, theme *Theme) string {
 		modalH = termH - 2
 	}
 
-	return renderBox(d.title, content, modalW, modalH, theme)
+	return renderBox(d.title, content, modalW, modalH, theme, d.titleStyle)
 }
 
 // wrapText wraps a string into lines of the given width, breaking on rune boundaries.

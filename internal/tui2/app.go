@@ -124,6 +124,7 @@ type App struct {
 	// Connection lifecycle.
 	ctx              *appCtx
 	sshPrompt        *sshPromptState
+	connError        string // non-empty = show error dialog over switcher
 	autoConnectQueue []string
 	connecting       string
 }
@@ -136,15 +137,26 @@ func NewApp(sessions map[string]*Session, display DisplayConfig) App {
 	}
 	sort.Strings(order)
 
+	// Default to first auto-connect server, or first server overall.
 	active := ""
-	if len(order) > 0 {
-		active = order[0]
+	showSwitcher := true
+	for _, name := range order {
+		if active == "" {
+			active = name
+		}
+		if sessions[name].Config.AutoConnect {
+			if showSwitcher {
+				active = name // first auto-connect becomes active
+			}
+			showSwitcher = false
+		}
 	}
 
 	return App{
 		sessions:      sessions,
 		sessionOrder:  order,
 		activeSession: active,
+		switcher:      showSwitcher,
 		theme:         DefaultTheme(),
 		display:       display,
 		collapsed:     make(map[string]bool),
@@ -627,6 +639,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.sshPrompt != nil {
 			return a.handleSSHPromptInput(msg)
 		}
+		if a.connError != "" {
+			a.connError = ""
+			return a, nil
+		}
 		return a.handleKey(msg)
 	}
 	return a, nil
@@ -648,9 +664,10 @@ func (a *App) handleConnectDone(msg connectDoneMsg) (App, tea.Cmd) {
 	}
 
 	if msg.err != nil {
-		s.Err = msg.err
-		s.ConnState = ConnError
-		s.ConnMsg = msg.err.Error()
+		s.ConnState = ConnNone
+		s.ConnMsg = ""
+		a.connError = msg.err.Error()
+		a.switcher = true
 		return *a, a.processAutoConnectQueue()
 	}
 
@@ -659,6 +676,9 @@ func (a *App) handleConnectDone(msg connectDoneMsg) (App, tea.Cmd) {
 	s.ConnState = ConnReady
 	s.ConnMsg = "connected"
 	s.Err = nil
+	if a.switcher && a.activeSession == msg.server {
+		a.switcher = false
+	}
 
 	if a.ctx.prog != nil {
 		s.Client.SetProgram(a.ctx.prog)
@@ -876,15 +896,24 @@ func (a *App) handleSwitcherKey(key string) (App, tea.Cmd) {
 	case "enter":
 		name := a.sessionOrder[a.switcherCursor]
 		a.activeSession = name
-		a.switcher = false
 		// Rebuild groups for newly selected session.
 		if s := a.session(); s != nil {
 			a.groups = buildGroups(s.Containers, s.ContInfo)
 			a.cursor = 0
 		}
-		// If not connected, try connecting.
-		if s := a.sessions[name]; s != nil && s.ConnState == ConnNone {
+		s := a.sessions[name]
+		if s == nil {
+			break
+		}
+		switch s.ConnState {
+		case ConnNone:
+			// Start connection, keep switcher open.
 			return *a, func() tea.Msg { return connectServerMsg{name: name} }
+		case ConnConnecting, ConnSSH:
+			// Connection in progress — ignore.
+		default:
+			// Already connected — close switcher.
+			a.switcher = false
 		}
 	case "esc", "S":
 		a.switcher = false
@@ -1005,50 +1034,75 @@ func containerNameByID(id string, contInfo []protocol.ContainerInfo) string {
 	return ""
 }
 
+func renderConnErrorModal(a *App, width, height int) string {
+	theme := &a.theme
+	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
+	titleStyle := lipgloss.NewStyle().Foreground(theme.Critical).Bold(true)
+
+	modalW := 60
+	innerW := modalW - 6
+
+	// Sanitize: strip carriage returns and tabs from SSH stderr output.
+	errText := strings.NewReplacer("\r", "", "\t", "  ").Replace(a.connError)
+
+	var lines []string
+	for _, chunk := range wrapText(errText, innerW) {
+		lines = append(lines, muted.Render(Truncate(chunk, innerW)))
+	}
+
+	return (dialogLayout{
+		title:      "Connection Error",
+		titleStyle: &titleStyle,
+		width:      modalW,
+		lines:      lines,
+		tips:       dialogTips(theme, "any key", "dismiss"),
+	}).render(width, height, theme)
+}
+
 func (a *App) renderSSHPromptModal(width, height int) string {
 	p := a.sshPrompt
 	theme := &a.theme
 	muted := lipgloss.NewStyle().Foreground(theme.FgDim)
 
 	modalW := 72
-	if modalW > width-4 {
-		modalW = width - 4
-	}
 	innerW := modalW - 2
 
 	var lines []string
-	lines = append(lines, muted.Render(" "+Truncate(p.server, innerW-1)))
+	lines = append(lines, muted.Render(Truncate(p.server, innerW-4)))
 	lines = append(lines, "")
 
-	for _, chunk := range wrapText(p.prompt, innerW-2) {
-		lines = append(lines, " "+chunk)
+	for _, chunk := range wrapText(p.prompt, innerW-4) {
+		lines = append(lines, chunk)
 	}
-	lines = append(lines, "")
 
+	var tips string
 	if p.hostKey {
-		lines = append(lines, " "+lipgloss.NewStyle().Foreground(theme.Warning).Render("y")+" Accept   "+lipgloss.NewStyle().Foreground(theme.Critical).Render("n")+" Reject")
+		tips = dialogTips(theme, "y", "accept", "n", "reject")
 	} else {
+		lines = append(lines, "")
+
 		display := string(p.input)
 		if p.masked {
 			display = strings.Repeat("*", len(p.input))
 		}
 		cursor := lipgloss.NewStyle().Foreground(theme.Accent).Render("█")
-		prompt := muted.Render(" > ")
+		prompt := muted.Render("> ")
 		promptW := lipgloss.Width(prompt)
-		fieldW := innerW - promptW - 2
+		fieldW := innerW - promptW - 4
 		if len(display) > fieldW {
 			display = display[len(display)-fieldW:]
 		}
 		lines = append(lines, prompt+display+cursor)
+
+		tips = dialogTips(theme, "enter", "submit", "esc", "cancel")
 	}
 
-	content := strings.Join(lines, "\n")
-	modalH := len(lines) + 2
-	if modalH > height-2 {
-		modalH = height - 2
-	}
-
-	return renderBox("SSH", content, modalW, modalH, theme)
+	return (dialogLayout{
+		title: "SSH",
+		width: modalW,
+		lines: lines,
+		tips:  tips,
+	}).render(width, height, theme)
 }
 
 func (a App) View() string {
@@ -1077,17 +1131,21 @@ func (a App) View() string {
 		content = renderDashboard(&a, s, a.width, a.height)
 	}
 
-	// Composite modals via Overlay.
-	var modal string
-	switch {
-	case a.sshPrompt != nil:
-		modal = a.renderSSHPromptModal(a.width, a.height)
-	case a.switcher:
-		modal = renderSwitcher(&a, a.width, a.height)
-	case a.helpModal:
-		modal = renderHelpModal(&a, s, a.width, a.height)
+	// Layer modals independently so SSH prompt renders on top.
+	if a.switcher {
+		modal := renderSwitcher(&a, a.width, a.height)
+		content = Overlay(content, modal, a.width, a.height)
 	}
-	if modal != "" {
+	if a.helpModal {
+		modal := renderHelpModal(&a, s, a.width, a.height)
+		content = Overlay(content, modal, a.width, a.height)
+	}
+	if a.connError != "" {
+		modal := renderConnErrorModal(&a, a.width, a.height)
+		content = Overlay(content, modal, a.width, a.height)
+	}
+	if a.sshPrompt != nil {
+		modal := a.renderSSHPromptModal(a.width, a.height)
 		content = Overlay(content, modal, a.width, a.height)
 	}
 
