@@ -1,4 +1,4 @@
-# Tori ─(•)>
+# tori ─(•)>
 
 Lightweight server monitoring for Docker environments. A single binary that replaces the Grafana+Prometheus+Loki stack when all you need is a terminal.
 
@@ -445,15 +445,15 @@ When connected to multiple servers, use `Tab` to focus the servers panel, then `
 
 ## Security
 
-**Docker socket access:** Tori requires read-only access to the Docker socket (`/var/run/docker.sock`) for container monitoring. This is the same trust model as lazydocker, ctop, and other Docker monitoring tools. The socket is always mounted `:ro` — Tori never writes to Docker.
+**Docker socket access:** tori requires read-only access to the Docker socket (`/var/run/docker.sock`) for container monitoring. This is the same trust model as lazydocker, ctop, and other Docker monitoring tools. The socket is always mounted `:ro` — tori never writes to Docker.
 
-**Unix socket permissions:** The Tori socket at `/run/tori/tori.sock` is the only way to interact with the agent. The default file mode is `0666` because SSH is the real auth gate — anyone who can reach the socket already has shell access to the server. Tori doesn't expand the attack surface.
+**Unix socket permissions:** The tori socket at `/run/tori/tori.sock` is the only way to interact with the agent. The default file mode is `0666` because SSH is the real auth gate — anyone who can reach the socket already has shell access to the server. tori doesn't expand the attack surface.
 
 **Config file:** The agent config contains SMTP credentials and webhook URLs. Permissions should be `0600` owned by the user running the agent.
 
-**No exposed ports:** Tori does not listen on any network port. All client communication goes through SSH to the Unix socket. There is no HTTP server, no API endpoint, nothing to expose or firewall. SSH compression is enabled by default on all tunnels to reduce bandwidth for metrics and log traffic.
+**No exposed ports:** tori does not listen on any network port. All client communication goes through SSH to the Unix socket. There is no HTTP server, no API endpoint, nothing to expose or firewall. SSH compression is enabled by default on all tunnels to reduce bandwidth for metrics and log traffic.
 
-**Log contents:** Tori stores container logs in SQLite. These may contain sensitive application data (tokens, user info, errors with PII). The database file at `/var/lib/tori/tori.db` should have restrictive permissions and the retention policy should be set appropriately.
+**Log contents:** tori stores container logs in SQLite. These may contain sensitive application data (tokens, user info, errors with PII). The database file at `/var/lib/tori/tori.db` should have restrictive permissions and the retention policy should be set appropriately.
 
 ## Requirements
 
