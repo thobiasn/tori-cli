@@ -44,6 +44,9 @@ type Session struct {
 	BackfillPending bool // true while a backfill query is in-flight
 	RetentionDays   int  // reported by agent, limits zoom range
 
+	// Detail view state.
+	Detail DetailState
+
 	Err error
 }
 

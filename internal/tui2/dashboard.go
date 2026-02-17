@@ -423,15 +423,7 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 			styledCPU := lipgloss.NewStyle().Foreground(worstCPUColor).Render(cpuStr)
 			styledMem := lipgloss.NewStyle().Foreground(worstMemColor).Render(memStr)
 
-			var statColor lipgloss.Color
-			switch {
-			case g.running == len(g.containers):
-				statColor = theme.Healthy
-			case g.running > 0:
-				statColor = theme.Warning
-			default:
-				statColor = theme.Critical
-			}
+			statColor := projectStatColor(g, theme)
 			styledStat := lipgloss.NewStyle().Foreground(statColor).Render(statStr)
 
 			// Build project header row.
@@ -459,13 +451,8 @@ func renderContainerList(a *App, s *Session, w, maxH int, theme *Theme) string {
 				tracked = t
 			}
 
-			// State dot.
-			var dot string
-			if c.State == "running" {
-				dot = lipgloss.NewStyle().Foreground(theme.Healthy).Render("●")
-			} else {
-				dot = lipgloss.NewStyle().Foreground(theme.StateColor(c.State)).Render("●")
-			}
+			// State dot (healthcheck-aware).
+			dot := lipgloss.NewStyle().Foreground(theme.StatusDotColor(c.State, c.Health)).Render("●")
 
 			// Prefer compose service name over full container name.
 			name := c.Service
@@ -676,6 +663,26 @@ func colorRank(c lipgloss.Color, theme *Theme) int {
 	default:
 		return 0
 	}
+}
+
+// projectStatColor returns the color for a project's running-count column.
+// All running + all healthy (or no healthcheck) → Healthy.
+// All running + any unhealthy/starting → Warning.
+// Some not running → Warning.
+// None running → Critical.
+func projectStatColor(g containerGroup, theme *Theme) lipgloss.Color {
+	if g.running == 0 {
+		return theme.Critical
+	}
+	if g.running < len(g.containers) {
+		return theme.Warning
+	}
+	for _, c := range g.containers {
+		if hasHealthcheck(c.Health) && c.Health != "healthy" {
+			return theme.Warning
+		}
+	}
+	return theme.Healthy
 }
 
 func renderStatusLine(s *Session, w int, theme *Theme) string {

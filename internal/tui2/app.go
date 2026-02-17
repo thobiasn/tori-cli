@@ -84,6 +84,14 @@ var timeWindows = []timeWindow{
 	{"7d", 7 * 86400},
 }
 
+// view selects which screen the app is showing.
+type view int
+
+const (
+	viewDashboard view = iota
+	viewDetail
+)
+
 // App is the root Bubbletea model.
 type App struct {
 	sessions      map[string]*Session
@@ -92,7 +100,11 @@ type App struct {
 	width         int
 	height        int
 	theme         Theme
+	display       DisplayConfig
 	err           error
+
+	// Active view.
+	view view
 
 	// Dashboard state.
 	cursor    int
@@ -132,6 +144,7 @@ func NewApp(sessions map[string]*Session, display DisplayConfig) App {
 		sessionOrder:  order,
 		activeSession: active,
 		theme:         DefaultTheme(),
+		display:       display,
 		collapsed:     make(map[string]bool),
 		ctx:           &appCtx{},
 	}
@@ -254,6 +267,11 @@ func (a *App) windowSeconds() int64 {
 // windowLabel returns the display label for the current time window.
 func (a *App) windowLabel() string {
 	return timeWindows[a.windowIdx].label
+}
+
+// tsFormat returns the combined date+time format string for timestamps.
+func (a *App) tsFormat() string {
+	return a.display.DateFormat + " " + a.display.TimeFormat
 }
 
 // backfillMetrics fetches historical host metrics to populate graphs.
@@ -464,6 +482,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if msg.Server == a.activeSession {
 				a.groups = buildGroups(msg.Containers, s.ContInfo)
+				// Push live metrics to detail view ring buffers.
+				if a.view == viewDetail && a.windowSeconds() == 0 {
+					s.Detail.pushLiveMetrics(msg.Containers)
+				}
 			}
 		}
 		if !a.birdBlink {
@@ -471,6 +493,26 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Tick(150*time.Millisecond, func(time.Time) tea.Msg {
 				return birdBlinkResetMsg{}
 			})
+		}
+		return a, nil
+
+	case LogMsg:
+		if s := a.sessions[msg.Server]; s != nil {
+			if a.view == viewDetail && msg.Server == a.activeSession {
+				s.Detail.onStreamEntry(msg.LogEntryMsg)
+			}
+		}
+		return a, nil
+
+	case detailLogQueryMsg:
+		if s := a.session(); s != nil {
+			s.Detail.handleBackfill(msg)
+		}
+		return a, nil
+
+	case detailMetricsQueryMsg:
+		if s := a.session(); s != nil {
+			s.Detail.handleMetricsBackfill(msg)
 		}
 		return a, nil
 
@@ -676,6 +718,11 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, tea.Quit
 	}
 
+	// Detail view captures its own keys.
+	if a.view == viewDetail {
+		return a.handleDetailKey(msg)
+	}
+
 	// Server switcher.
 	if a.switcher {
 		return a.handleSwitcherKey(key)
@@ -740,8 +787,7 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, a.toggleTracking()
 
 	case "enter":
-		// No-op for now (detail view not yet built).
-		return a, nil
+		return a.enterDetail()
 
 	case "1":
 		// Already on dashboard.
@@ -813,7 +859,19 @@ func (a *App) handleZoom(key string) tea.Cmd {
 	s.HostCPUHist = NewRingBuffer[float64](histBufSize)
 	s.HostMemHist = NewRingBuffer[float64](histBufSize)
 	s.BackfillPending = true
-	return backfillMetrics(s.Client, a.windowSeconds())
+
+	cmds := []tea.Cmd{backfillMetrics(s.Client, a.windowSeconds())}
+
+	// Re-backfill detail metrics when in detail view.
+	if a.view == viewDetail {
+		s.Detail.metricsBackfilled = false
+		s.Detail.metricsBackfillPending = false
+		if cmd := s.Detail.onSwitch(s.Client, a.windowSeconds(), s.RetentionDays); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+
+	return tea.Batch(cmds...)
 }
 
 func (a *App) toggleTracking() tea.Cmd {
@@ -947,7 +1005,13 @@ func (a App) View() string {
 		return fmt.Sprintf("Error [%s]: %v\n", s.Name, s.Err)
 	}
 
-	content := renderDashboard(&a, s, a.width, a.height)
+	var content string
+	switch a.view {
+	case viewDetail:
+		content = renderDetail(&a, s, a.width, a.height)
+	default:
+		content = renderDashboard(&a, s, a.width, a.height)
+	}
 
 	// Composite modals via Overlay.
 	var modal string

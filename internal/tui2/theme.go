@@ -91,3 +91,23 @@ func (t Theme) StateColor(state string) lipgloss.Color {
 		return t.FgDim
 	}
 }
+
+// StatusDotColor returns the color for a container status dot.
+// Running containers with an unhealthy/starting healthcheck show Warning;
+// running containers without a healthcheck (or healthy) show Healthy.
+func (t Theme) StatusDotColor(state, health string) lipgloss.Color {
+	if state != "running" {
+		return t.StateColor(state)
+	}
+	if hasHealthcheck(health) && health != "healthy" {
+		return t.Warning
+	}
+	return t.Healthy
+}
+
+// hasHealthcheck returns true when the health string indicates a Docker
+// healthcheck is configured. Only "healthy", "unhealthy", and "starting"
+// are meaningful values.
+func hasHealthcheck(health string) bool {
+	return health == "healthy" || health == "unhealthy" || health == "starting"
+}
