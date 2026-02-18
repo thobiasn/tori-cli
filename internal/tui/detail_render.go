@@ -105,14 +105,14 @@ func renderDetailTopBar(a *App, s *Session, w int) string {
 	var right string
 
 	if det.isGroupMode() {
-		// "Esc ← project                ⚠ 1 alert · 4/4 running"
+		// "Esc ← project                ▲ 1 alert · 4/4 running"
 		left := escHint + " " + lipgloss.NewStyle().Bold(true).Render(det.project)
 
 		// Alert count.
 		alerts := collectDetailAlerts(det, s.Alerts)
 		var parts []string
 		if len(alerts) > 0 {
-			label := fmt.Sprintf("⚠ %d alert", len(alerts))
+			label := fmt.Sprintf("▲ %d alert", len(alerts))
 			if len(alerts) > 1 {
 				label += "s"
 			}
@@ -165,7 +165,7 @@ func renderDetailTopBar(a *App, s *Session, w int) string {
 		return padBetween(left, right, w)
 	}
 
-	// Container view: "Esc ← project / service    ⚠ 1 alert · ● running · healthy · up 13h"
+	// Container view: "Esc ← project / service    ▲ 1 alert · ● running · healthy · up 13h"
 	cm := findContainer(det.containerID, s.Containers)
 	containerName := serviceNameByID(det.containerID, s.ContInfo)
 	if containerName == "" && cm != nil {
@@ -191,7 +191,7 @@ func renderDetailTopBar(a *App, s *Session, w int) string {
 	// Alert count.
 	alerts := containerAlerts(s.Alerts, det.containerID)
 	if len(alerts) > 0 {
-		label := fmt.Sprintf("⚠ %d alert", len(alerts))
+		label := fmt.Sprintf("▲ %d alert", len(alerts))
 		if len(alerts) > 1 {
 			label += "s"
 		}
@@ -200,7 +200,8 @@ func renderDetailTopBar(a *App, s *Session, w int) string {
 
 	// State dot + state.
 	dot := lipgloss.NewStyle().Foreground(theme.StatusDotColor(cm.State, cm.Health)).Render("●")
-	parts = append(parts, dot+" "+cm.State)
+	stateStyled := lipgloss.NewStyle().Foreground(theme.StatusDotColor(cm.State, cm.Health)).Render(cm.State)
+	parts = append(parts, dot+" "+stateStyled)
 
 	// Health label.
 	parts = append(parts, healthLabel(cm.Health, false, theme))
@@ -240,19 +241,26 @@ func renderDetailGraphs(a *App, det *DetailState, s *Session, w int, theme *Them
 
 	// Check if we have any metrics data for this container/group.
 	hasMetrics := false
+	anyRunning := false
 	if det.isGroupMode() {
 		for _, id := range det.projectIDs {
-			if findContainer(id, s.Containers) != nil {
+			if cm := findContainer(id, s.Containers); cm != nil {
 				hasMetrics = true
-				break
+				if cm.State == "running" {
+					anyRunning = true
+					break
+				}
 			}
 		}
 	} else {
-		hasMetrics = findContainer(det.containerID, s.Containers) != nil
+		if cm := findContainer(det.containerID, s.Containers); cm != nil {
+			hasMetrics = true
+			anyRunning = cm.State == "running"
+		}
 	}
 
-	// Loading state: no metrics data yet or backfill in-flight — show animated sparklines.
-	if !hasMetrics || det.metricsBackfillPending {
+	// Loading state: no metrics, no running containers, or backfill in-flight.
+	if !hasMetrics || !anyRunning || det.metricsBackfillPending {
 		cpuTop, cpuBot := LoadingSparkline(a.spinnerFrame, graphW, theme.FgDim)
 		memTop, memBot := LoadingSparkline(a.spinnerFrame+3, graphW, theme.FgDim)
 		cpuRight := pctPad
@@ -399,7 +407,7 @@ func renderDetailAlerts(alerts []*protocol.AlertEvent, w int, theme *Theme) stri
 			sevColor = theme.Critical
 		}
 		icon := lipgloss.NewStyle().Foreground(sevColor).Render("▲")
-		name := lipgloss.NewStyle().Foreground(theme.FgBright).Render(Truncate(a.RuleName, 20))
+		name := lipgloss.NewStyle().Foreground(sevColor).Render(Truncate(a.RuleName, 20))
 		cond := lipgloss.NewStyle().Foreground(theme.FgDim).Render(Truncate(a.Condition, w-40))
 		state := lipgloss.NewStyle().Foreground(sevColor).Render(a.State)
 		line := fmt.Sprintf("%s %s — %s — %s %s", icon, name, cond, state, since)
@@ -502,12 +510,13 @@ func renderLogStatus(det *DetailState, w int, theme *Theme) string {
 	muted := mutedStyle(theme)
 	sep := muted.Render(" · ")
 
+	fg := lipgloss.NewStyle().Foreground(theme.Fg)
 	data := det.filteredData()
-	countStr := formatNumber(len(data))
+	countStr := fg.Render(formatNumber(len(data)))
 	if det.totalLogCount > len(data) {
-		countStr += " of " + formatNumber(det.totalLogCount)
+		countStr += muted.Render(" of ") + fg.Render(formatNumber(det.totalLogCount))
 	}
-	status := muted.Render(countStr + " lines")
+	status := countStr + muted.Render(" lines")
 	if det.filterStream != "" {
 		status += sep + muted.Render(det.filterStream)
 	}
@@ -555,7 +564,7 @@ func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsStr st
 	if msgW < 10 {
 		msgW = 10
 	}
-	msgStyle := lipgloss.NewStyle().Foreground(theme.Fg)
+	msgStyle := lipgloss.NewStyle().Foreground(theme.FgBright)
 	msg := msgStyle.Render(Truncate(sanitizeLogMsg(parsed.message), msgW))
 
 	return left + " " + msg

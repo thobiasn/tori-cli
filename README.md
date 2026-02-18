@@ -391,8 +391,8 @@ The `[theme]` section overrides individual TUI colors. By default all colors use
 | `critical` | `1` | Exited, unhealthy |
 | `debug_level` | `8` | Log level: DEBUG |
 | `info_level` | `7` | Log level: INFO |
-| `graph_cpu` | `6` | CPU sparkline |
-| `graph_mem` | `5` | Memory sparkline |
+| `graph_cpu` | `12` | CPU sparkline |
+| `graph_mem` | `13` | Memory sparkline |
 
 ## Keybindings
 

@@ -37,8 +37,21 @@ func TerminalTheme() Theme {
 		Critical:   lipgloss.Color("1"),
 		DebugLevel: lipgloss.Color("8"),
 		InfoLevel:  lipgloss.Color("7"),
-		GraphCPU:   lipgloss.Color("6"),
-		GraphMem:   lipgloss.Color("5"),
+		GraphCPU:   lipgloss.Color("12"),
+		GraphMem:   lipgloss.Color("13"),
+	}
+}
+
+// hostUsageColor returns a severity color for host CPU/memory percentage
+// with FgBright as the calm baseline (used on the dashboard sparklines).
+func hostUsageColor(percent float64, theme *Theme) lipgloss.Color {
+	switch {
+	case percent >= 80:
+		return theme.Critical
+	case percent >= 60:
+		return theme.Warning
+	default:
+		return theme.Fg
 	}
 }
 
@@ -115,21 +128,21 @@ func containerMemColor(memPct float64, memLimit uint64, theme *Theme) lipgloss.C
 }
 
 // detailCPUColor returns a color for CPU on the detail page.
-// Same severity thresholds as the dashboard, but FgBright replaces FgDim/Fg as the calm baseline.
+// Same severity thresholds as the dashboard, but Fg replaces FgDim as the calm baseline.
 func detailCPUColor(cpuPct, cpuLimit float64, theme *Theme) lipgloss.Color {
 	c := containerCPUColor(cpuPct, cpuLimit, theme)
-	if c == theme.FgDim || c == theme.Fg {
-		return theme.FgBright
+	if c == theme.FgDim {
+		return theme.Fg
 	}
 	return c
 }
 
 // detailMemColor returns a color for memory on the detail page.
-// Same severity thresholds as the dashboard, but FgBright replaces FgDim as the calm baseline.
+// Same severity thresholds as the dashboard, but Fg replaces FgDim as the calm baseline.
 func detailMemColor(memPct float64, memLimit uint64, theme *Theme) lipgloss.Color {
 	c := containerMemColor(memPct, memLimit, theme)
 	if c == theme.FgDim {
-		return theme.FgBright
+		return theme.Fg
 	}
 	return c
 }
@@ -142,7 +155,7 @@ func diskSeverityColor(pct float64, theme *Theme) lipgloss.Color {
 	case pct >= 70:
 		return theme.Warning
 	default:
-		return theme.FgDim
+		return theme.Fg
 	}
 }
 
@@ -158,7 +171,7 @@ func loadSeverityColor(load1 float64, cpus int, theme *Theme) lipgloss.Color {
 	case ratio >= 0.7:
 		return theme.Warning
 	default:
-		return theme.FgDim
+		return theme.Fg
 	}
 }
 

@@ -24,7 +24,7 @@ func renderSwitcher(a *App, width, height int) string {
 	lines = append(lines, "")
 	lines = append(lines, centerText(accent.Render("—(•)>"), innerW))
 	lines = append(lines, "")
-	lines = append(lines, centerText(muted.Render("Welcome back! Where should we go?"), innerW))
+	lines = append(lines, centerText(lipgloss.NewStyle().Foreground(theme.Fg).Render("Welcome back! Where should we go?"), innerW))
 	lines = append(lines, "")
 
 	if len(a.sessionOrder) == 0 {

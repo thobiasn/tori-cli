@@ -92,8 +92,8 @@ const defaultConfigContent = `# Tori client configuration.
 # critical = "1"         # red
 # debug_level = "8"      # bright black
 # info_level = "7"       # normal white
-# graph_cpu = "6"        # cyan
-# graph_mem = "5"        # magenta
+# graph_cpu = "12"       # bright blue
+# graph_mem = "13"       # bright magenta
 #
 # Example: Tokyo Night (hex overrides)
 # fg = "#a9b1d6"

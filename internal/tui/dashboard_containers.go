@@ -97,17 +97,8 @@ func renderProjectRow(a *App, g containerGroup, idx, w int, alerts map[int64]*pr
 	anyMetrics := false
 	worstCPUColor := theme.FgDim
 	worstMemColor := theme.FgDim
-	hasCheck := false
-	worstHealth := "healthy"
+	collapsed := a.collapsed[g.name]
 	for _, c := range g.containers {
-		if hasHealthcheck(c.Health) {
-			hasCheck = true
-			if c.Health == "unhealthy" {
-				worstHealth = "unhealthy"
-			} else if c.Health != "healthy" && worstHealth != "unhealthy" {
-				worstHealth = c.Health
-			}
-		}
 		tracked := true
 		if t, ok := trackedState[c.ID]; ok {
 			tracked = t
@@ -123,19 +114,24 @@ func renderProjectRow(a *App, g containerGroup, idx, w int, alerts map[int64]*pr
 			anyMetrics = true
 			cpuSum += c.CPUPercent
 			memSum += c.MemUsage
-			cc := containerCPUColor(c.CPUPercent, c.CPULimit, theme)
-			if colorRank(cc, theme) > colorRank(worstCPUColor, theme) {
-				worstCPUColor = cc
-			}
-			mc := containerMemColor(c.MemPercent, c.MemLimit, theme)
-			if colorRank(mc, theme) > colorRank(worstMemColor, theme) {
-				worstMemColor = mc
+			if collapsed {
+				cc := containerCPUColor(c.CPUPercent, c.CPULimit, theme)
+				if colorRank(cc, theme) > colorRank(worstCPUColor, theme) {
+					worstCPUColor = cc
+				}
+				mc := containerMemColor(c.MemPercent, c.MemLimit, theme)
+				if colorRank(mc, theme) > colorRank(worstMemColor, theme) {
+					worstMemColor = mc
+				}
 			}
 		}
 	}
 
-	// Alert indicator: worst severity across all children.
-	alertInd := projectAlertIndicator(g, alerts, theme)
+	// Alert indicator: only shown when project is collapsed (children not visible).
+	var alertInd string
+	if collapsed {
+		alertInd = projectAlertIndicator(g, alerts, theme)
+	}
 
 	// CPU column.
 	var cpuStr string
@@ -155,12 +151,7 @@ func renderProjectRow(a *App, g containerGroup, idx, w int, alerts map[int64]*pr
 	}
 	memStr = rightAlign(memStr, memW)
 
-	// Health column (worst across children).
-	hchkHealth := worstHealth
-	if !hasCheck {
-		hchkHealth = ""
-	}
-	styledHchk := "  " + healthIcon(hchkHealth, theme)
+	styledHchk := "   "
 
 	// Running count column.
 	statStr := rightAlign(fmt.Sprintf("%d/%d", g.running, len(g.containers)), statW)
@@ -173,7 +164,15 @@ func renderProjectRow(a *App, g containerGroup, idx, w int, alerts map[int64]*pr
 	// Build project header row.
 	chevronStyled := muted.Render(chevron)
 	name := Truncate(g.name, projNameMax)
-	nameStyled := lipgloss.NewStyle().Foreground(theme.Fg).Bold(true).Render(name)
+	nameColor := theme.Fg
+	if collapsed {
+		if severity := projectAlertSeverity(g, alerts); severity == "critical" {
+			nameColor = theme.Critical
+		} else if severity == "warning" {
+			nameColor = theme.Warning
+		}
+	}
+	nameStyled := lipgloss.NewStyle().Foreground(nameColor).Bold(true).Render(name)
 
 	prefix := chevronStyled + " " + nameStyled + alertInd
 	prefixW := lipgloss.Width(prefix)
@@ -255,21 +254,42 @@ func renderContainerRow(c protocol.ContainerMetrics, idx, cursor, w int, now int
 
 	// Color the columns.
 	var styledCPU, styledMem, styledStat string
-	if !tracked || stub || c.State != "running" {
+	if !tracked || stub {
 		styledCPU = muted.Render(cpuStr)
 		styledMem = muted.Render(memStr)
 		styledStat = muted.Render(statStr)
+	} else if c.State != "running" {
+		styledCPU = lipgloss.NewStyle().Foreground(theme.StateColor(c.State)).Render(cpuStr)
+		styledMem = muted.Render(memStr)
+		styledStat = muted.Render(statStr)
 	} else {
+		fg := lipgloss.NewStyle().Foreground(theme.Fg)
 		cpuColor := containerCPUColor(c.CPUPercent, c.CPULimit, theme)
-		styledCPU = lipgloss.NewStyle().Foreground(cpuColor).Render(cpuStr)
+		if cpuColor == theme.FgDim {
+			styledCPU = fg.Render(cpuStr)
+		} else {
+			styledCPU = lipgloss.NewStyle().Foreground(cpuColor).Render(cpuStr)
+		}
 		memColor := containerMemColor(c.MemPercent, c.MemLimit, theme)
-		styledMem = lipgloss.NewStyle().Foreground(memColor).Render(memStr)
+		if memColor == theme.FgDim {
+			styledMem = fg.Render(memStr)
+		} else {
+			styledMem = lipgloss.NewStyle().Foreground(memColor).Render(memStr)
+		}
 		styledStat = muted.Render(statStr)
 	}
 
 	alertInd := containerAlertIndicator(alerts, c.ID, theme)
 
-	prefix := "  " + dot + " " + lipgloss.NewStyle().Foreground(theme.FgBright).Render(name) + alertInd
+	nameColor := theme.FgBright
+	if severity := containerAlertSeverity(alerts, c.ID); severity == "critical" {
+		nameColor = theme.Critical
+	} else if severity == "warning" {
+		nameColor = theme.Warning
+	} else if hasHealthcheck(c.Health) && c.Health != "healthy" {
+		nameColor = theme.Warning
+	}
+	prefix := "  " + dot + " " + lipgloss.NewStyle().Foreground(nameColor).Render(name) + alertInd
 	prefixW := lipgloss.Width(prefix)
 	gap := w - prefixW - colsW
 	if gap < 1 {
@@ -283,6 +303,22 @@ func renderContainerRow(c protocol.ContainerMetrics, idx, cursor, w int, now int
 		row = muted.Render(stripANSI(row))
 	}
 	return TruncateStyled(row, w)
+}
+
+// containerAlertSeverity returns the worst firing alert severity for a container ("critical", "warning", or "").
+func containerAlertSeverity(alerts map[int64]*protocol.AlertEvent, containerID string) string {
+	suffix := ":" + containerID
+	worst := ""
+	for _, a := range alerts {
+		if a.State != "firing" || !strings.HasSuffix(a.InstanceKey, suffix) {
+			continue
+		}
+		if a.Severity == "critical" {
+			return "critical"
+		}
+		worst = "warning"
+	}
+	return worst
 }
 
 // containerAlertIndicator returns severity-colored ▲ markers for firing alerts on a container.
@@ -315,29 +351,28 @@ func containerAlertIndicator(alerts map[int64]*protocol.AlertEvent, containerID 
 	return b.String()
 }
 
-// projectAlertIndicator returns a single ▲ colored by worst alert severity across all containers in a group.
-func projectAlertIndicator(g containerGroup, alerts map[int64]*protocol.AlertEvent, theme *Theme) string {
-	worst := 0 // 0=none, 1=warning, 2=critical
+// projectAlertSeverity returns the worst firing alert severity across all containers in a group ("critical", "warning", or "").
+func projectAlertSeverity(g containerGroup, alerts map[int64]*protocol.AlertEvent) string {
+	worst := ""
 	for _, c := range g.containers {
-		suffix := ":" + c.ID
-		for _, a := range alerts {
-			if a.State != "firing" || !strings.HasSuffix(a.InstanceKey, suffix) {
-				continue
-			}
-			if a.Severity == "critical" {
-				worst = 2
-			} else if worst < 1 {
-				worst = 1
-			}
+		s := containerAlertSeverity(alerts, c.ID)
+		if s == "critical" {
+			return "critical"
 		}
-		if worst == 2 {
-			break
+		if s == "warning" {
+			worst = "warning"
 		}
 	}
+	return worst
+}
+
+// projectAlertIndicator returns a single ▲ colored by worst alert severity across all containers in a group.
+func projectAlertIndicator(g containerGroup, alerts map[int64]*protocol.AlertEvent, theme *Theme) string {
+	worst := projectAlertSeverity(g, alerts)
 	switch worst {
-	case 2:
+	case "critical":
 		return " " + lipgloss.NewStyle().Foreground(theme.Critical).Render("▲")
-	case 1:
+	case "warning":
 		return " " + lipgloss.NewStyle().Foreground(theme.Warning).Render("▲")
 	default:
 		return ""

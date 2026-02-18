@@ -262,14 +262,18 @@ func renderHostGraphs(a *App, s *Session, w int, theme *Theme) string {
 
 	cpuTop, cpuBot := Sparkline(s.HostCPUHist.Data(), graphW, theme.GraphCPU)
 	cpuPct := rightAlign(fmt.Sprintf(" %.1f%%", s.Host.CPUPercent), pctW)
+	cpuColor := hostUsageColor(s.Host.CPUPercent, theme)
+	cpuPctStyled := lipgloss.NewStyle().Foreground(cpuColor).Render(cpuPct)
 
 	memTop, memBot := Sparkline(s.HostMemHist.Data(), graphW, theme.GraphMem)
 	memPct := rightAlign(fmt.Sprintf(" %.1f%%", s.Host.MemPercent), pctW)
+	memColor := hostUsageColor(s.Host.MemPercent, theme)
+	memPctStyled := lipgloss.NewStyle().Foreground(memColor).Render(memPct)
 
 	return indent + cpuTop + pctPad + "\n" +
-		muted.Render("cpu ") + cpuBot + muted.Render(cpuPct) + "\n" +
+		muted.Render("cpu ") + cpuBot + cpuPctStyled + "\n" +
 		indent + memTop + pctPad + "\n" +
-		muted.Render("mem ") + memBot + muted.Render(memPct)
+		muted.Render("mem ") + memBot + memPctStyled
 }
 
 func renderStatusLine(s *Session, w int, theme *Theme) string {
