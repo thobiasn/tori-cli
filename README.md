@@ -4,15 +4,18 @@ Lightweight server monitoring for Docker environments. A single binary that repl
 
 ![tori demo](https://github.com/user-attachments/assets/869f8dad-3f3b-4910-a5a1-069c5e482da0)
 
-## Disclaimer
+<details>
+<summary>Disclaimer</summary>
 
 This project is still very much in development and being tested. I was frustrated that I couldn't find the monitoring/alerting solution that was just right for small scale hosting on a single or multiple VPSs so I decided to build the thing that was just right for my needs. What I'm saying is that you should use this at your own risk, don't expect all features to work yet. Feel free to open issues if you encounter something but don't expect a professional team to solve your specific needs.
+
+</details>
 
 ## Features
 
 - Host metrics — CPU, memory, disk, network, swap, load averages
 - Docker container monitoring — status, stats, health checks, restart tracking
-- Container log tailing with filtering by container, compose group, stream, and text search
+- Container log tailing with filtering by container, compose group, text search, date/time and stream
 - Alerting with configurable rules, email (SMTP), and webhook notifications
 - SQLite storage with configurable retention
 - Multi-server support — monitor multiple hosts from one terminal
@@ -21,13 +24,13 @@ This project is still very much in development and being tested. I was frustrate
 
 ## How It Works
 
-The agent runs on your server collecting metrics and evaluating alerts 24/7. The TUI client connects from your local machine through an SSH tunnel to a Unix socket — no HTTP server, no open ports.
+tori has two parts. The **agent** runs on your server collecting metrics, tailing logs, and evaluating alerts 24/7. The **client** runs on your machine and connects through an SSH tunnel to a Unix socket — no HTTP server, no open ports.
 
 ```
 ┌─────────────────────────────────────────────┐
 │  Your Machine                               │
 │  ┌───────────────────────────────────────┐  │
-│  │  tori user@host                       │  │
+│  │  tori                                 │  │
 │  │  TUI Client (Bubbletea)               │  │
 │  └──────────────┬────────────────────────┘  │
 └─────────────────┼───────────────────────────┘
@@ -52,47 +55,194 @@ The agent runs on your server collecting metrics and evaluating alerts 24/7. The
 
 ## Quick Start
 
-**1. Install the agent on your server:**
+### On your server
 
 ```bash
-# Binary install
 curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sudo sh
-# edit /etc/tori/config.toml
 sudo systemctl enable --now tori
-
-# Or with Docker Compose — copy deploy/docker-compose.yml then:
-docker compose up -d
 ```
 
-**2. Install the client on your machine:**
+### On your machine
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client
 ```
 
-**3. Connect:**
+Add a server to `~/.config/tori/config.toml`:
+
+```toml
+[servers.prod]
+host = "user@prod.example.com"
+```
+
+Connect:
 
 ```bash
-tori user@your-server
-
-# or edit ~/.config/tori/config.toml and just
 tori
 ```
 
-## Updating
+That's it — tori connects over SSH, no extra ports or setup needed.
 
-Re-run the same install command to update to the latest version. Existing configs are preserved.
+## Installation
+
+### Step 1 — Agent (server)
+
+The agent runs on Linux only (it reads from `/proc` and `/sys`).
+
+<details>
+<summary><b>Linux (systemd)</b></summary>
+
+The install script downloads the latest release, creates a `tori` system user, sets up directories, and installs a systemd service:
 
 ```bash
-# Agent (then restart the service)
 curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sudo sh
-sudo systemctl restart tori
+```
 
-# Client
+To install a specific version:
+
+```bash
+sudo sh install.sh --version v1.0.0
+```
+
+After installation:
+
+```bash
+# configure alerts, notifications
+sudo vim /etc/tori/config.toml
+
+# start the agent
+sudo systemctl enable --now tori
+
+# check it's running
+systemctl status tori
+
+# follow agent logs
+journalctl -u tori -f
+
+# reload config without restart (SIGHUP)
+sudo systemctl reload tori
+```
+
+</details>
+
+<details>
+<summary><b>Docker Compose</b></summary>
+
+A ready-to-use Docker Compose file is provided at [`deploy/docker-compose.yml`](deploy/docker-compose.yml) with sensible defaults including alert rules:
+
+```bash
+curl -O https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/docker-compose.yml
+# edit the TORI_CONFIG section to configure alerts, notifications
+docker compose up -d
+```
+
+</details>
+
+<details>
+<summary><b>Docker run</b></summary>
+
+```bash
+docker run -d --name tori \
+  --restart unless-stopped \
+  --pid host \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v /proc:/host/proc:ro \
+  -v /sys:/host/sys:ro \
+  -v /run/tori:/run/tori \
+  -v tori-data:/var/lib/tori \
+  -v ./config.toml:/etc/tori/config.toml:ro \
+  ghcr.io/thobiasn/tori-cli:latest
+```
+
+When running via Docker, set the host paths in your config to the mounted locations:
+
+```toml
+[host]
+proc = "/host/proc"
+sys = "/host/sys"
+```
+
+You can also inject the entire config via the `TORI_CONFIG` environment variable instead of mounting a file. This is useful for PaaS platforms like Dokploy or Coolify where you don't have easy access to the host filesystem — see `deploy/docker-compose.yml` for an example.
+
+</details>
+
+<details>
+<summary><b>From source</b></summary>
+
+```bash
+go build -o tori ./cmd/tori
+sudo ./tori agent --config /etc/tori/config.toml
+```
+
+</details>
+
+### Step 2 — Client (your machine)
+
+<details>
+<summary><b>Linux</b></summary>
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client
 ```
 
-## Agent Configuration
+Installs to `~/.local/bin/tori` (or `/usr/local/bin/tori` if run as root).
+
+</details>
+
+<details>
+<summary><b>macOS</b></summary>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client
+```
+
+Installs to `~/.local/bin/tori` (or `/usr/local/bin/tori` if run with sudo).
+
+</details>
+
+<details>
+<summary><b>Windows (WSL)</b></summary>
+
+Install [WSL](https://learn.microsoft.com/en-us/windows/wsl/install), then follow the Linux instructions above.
+
+</details>
+
+<details>
+<summary><b>From source</b></summary>
+
+```bash
+go build -o tori ./cmd/tori
+```
+
+</details>
+
+## Connecting
+
+```bash
+# Connect to all configured servers
+tori
+
+# Connect via SSH (no config needed)
+tori user@myserver.com
+
+# With custom SSH port
+tori user@host --port 2222
+
+# With specific key
+tori user@host --identity ~/.ssh/id_ed25519
+
+# Custom remote socket path
+tori user@host --remote-socket /custom/tori.sock
+
+# Direct local socket (no SSH)
+tori --socket /run/tori/tori.sock
+```
+
+When connected to multiple servers, use `S` to open the servers dialog, then `j`/`k` and `Enter` to switch. Each server has isolated data — switching is instant since all sessions receive data concurrently.
+
+## Configuration
+
+### Agent config
 
 The agent config lives at `/etc/tori/config.toml`. All fields have sensible defaults — an empty config file works out of the box.
 
@@ -124,16 +274,12 @@ interval = "10s"
 [alerts.container_down]
 condition = "container.state == 'exited'"
 for = "30s"
-# cooldown = "5m"
-# notify_cooldown = "5m"
 severity = "critical"
 actions = ["notify"]
 
 [alerts.high_cpu]
 condition = "host.cpu_percent > 90"
 for = "2m"
-# cooldown = "5m"
-# notify_cooldown = "5m"
 severity = "warning"
 actions = ["notify"]
 
@@ -149,42 +295,6 @@ for = "0s"
 severity = "critical"
 actions = ["notify"]
 
-# [alerts.high_load]
-# condition = "host.load1 > 4"     # tune threshold to your CPU count
-# for = "5m"
-# severity = "warning"
-# actions = ["notify"]
-
-[alerts.high_swap]
-condition = "host.swap_percent > 80"
-for = "2m"
-severity = "warning"
-actions = ["notify"]
-
-[alerts.container_memory]
-condition = "container.memory_percent > 90"
-for = "1m"
-severity = "warning"
-actions = ["notify"]
-
-[alerts.unhealthy]
-condition = "container.health == 'unhealthy'"
-for = "30s"
-severity = "critical"
-actions = ["notify"]
-
-[alerts.restart_loop]
-condition = "container.restart_count > 5"
-for = "0s"
-severity = "critical"
-actions = ["notify"]
-
-[alerts.bad_exit]
-condition = "container.exit_code != 0"
-for = "0s"
-severity = "warning"
-actions = ["notify"]
-
 [notify.email]
 enabled = true
 smtp_host = "smtp.example.com"
@@ -198,6 +308,8 @@ url = "https://hooks.slack.com/services/..."
 # headers = { Authorization = "Bearer token" }
 # template = '{"text": "{{.Subject}}\n{{.Body}}"}'
 ```
+
+### Alert reference
 
 Alert conditions use the format `scope.field op value`. Available fields:
 
@@ -230,7 +342,7 @@ Each alert rule supports these optional timing fields:
 
 Set any of these to `"0s"` to disable.
 
-## Client Configuration
+### Client config
 
 ```toml
 # ~/.config/tori/config.toml
@@ -259,108 +371,63 @@ The `[display]` section controls how timestamps appear in logs and alerts. Both 
 | US 12h | `01/02` | `3:04PM` |
 | European short | `02 Jan` | `15:04` |
 
-## Installation
+## Keybindings
 
-### Agent (server)
+### Global
 
-The install script downloads the latest release, creates a `tori` system user, sets up directories, and installs a systemd service:
+| Key | Action |
+|-----|--------|
+| `1` | Dashboard view |
+| `2` | Alerts view |
+| `+`/`-` | Zoom time window |
+| `S` | Switch server |
+| `?` | Help |
+| `q` | Quit |
+
+### Dashboard
+
+| Key | Action |
+|-----|--------|
+| `j`/`k` | Navigate containers |
+| `Enter` | Open detail view |
+| `Space` | Expand/collapse compose group |
+| `t` | Toggle tracking for container/group |
+
+### Alerts
+
+| Key | Action |
+|-----|--------|
+| `Tab` | Switch focus between alerts and rules |
+| `j`/`k` | Navigate up/down |
+| `Enter` | Expand details |
+| `a` | Acknowledge alert |
+| `s` | Silence rule |
+| `r` | Show/hide resolved alerts |
+| `g` | Go to container |
+
+### Detail View (Logs + Metrics)
+
+| Key | Action |
+|-----|--------|
+| `j`/`k` | Scroll logs |
+| `G` | Jump to latest |
+| `Enter` | Expand log entry |
+| `s` | Cycle stream filter (all/stdout/stderr) |
+| `f` | Open filter dialog |
+| `i` | Toggle info overlay |
+| `Esc` | Back to dashboard |
+
+## Updating
+
+Re-run the same install command to update to the latest version. Existing configs are preserved.
 
 ```bash
+# Agent (then restart the service)
 curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sudo sh
-```
+sudo systemctl restart tori
 
-To install a specific version:
-
-```bash
-sudo sh install.sh --version v1.0.0
-```
-
-After installation:
-
-```bash
-sudo vim /etc/tori/config.toml        # configure alerts, notifications
-sudo systemctl enable --now tori       # start the agent
-systemctl status tori                  # check it's running
-journalctl -u tori -f                  # follow agent logs
-sudo systemctl reload tori             # reload config without restart (SIGHUP)
-```
-
-### Client (your machine)
-
-Install just the client binary — no root required, works on Linux and macOS (Windows via WSL):
-
-```bash
+# Client
 curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client
-```
-
-Installs to `~/.local/bin/tori` (or `/usr/local/bin/tori` if run as root).
-
-### Docker
-
-```bash
-docker pull ghcr.io/thobiasn/tori-cli:latest
-```
-
-Run with a config file on the host:
-
-```bash
-docker run -d --name tori \
-  --restart unless-stopped \
-  --pid host \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v /proc:/host/proc:ro \
-  -v /sys:/host/sys:ro \
-  -v /run/tori:/run/tori \
-  -v tori-data:/var/lib/tori \
-  -v ./config.toml:/etc/tori/config.toml:ro \
-  ghcr.io/thobiasn/tori-cli:latest
-```
-
-When running via Docker, set the host paths in your config to the mounted locations:
-
-```toml
-[host]
-proc = "/host/proc"
-sys = "/host/sys"
-```
-
-Or inject the entire config via the `TORI_CONFIG` environment variable (useful for PaaS platforms like Dokploy or Coolify where you don't have easy access to the host filesystem):
-
-```bash
-docker run -d --name tori \
-  --restart unless-stopped \
-  --pid host \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v /proc:/host/proc:ro \
-  -v /sys:/host/sys:ro \
-  -v /run/tori:/run/tori \
-  -v tori-data:/var/lib/tori \
-  -e TORI_CONFIG='[storage]
-path = "/var/lib/tori/tori.db"
-[socket]
-path = "/run/tori/tori.sock"
-[host]
-proc = "/host/proc"
-sys = "/host/sys"
-[docker]
-socket = "/var/run/docker.sock"
-[collect]
-interval = "10s"' \
-  ghcr.io/thobiasn/tori-cli:latest
-```
-
-A ready-to-use Docker Compose file is provided at `deploy/docker-compose.yml` with `TORI_CONFIG` pre-filled with sensible defaults including alert rules.
-
-To build from source as a Docker image instead:
-
-```bash
-docker build -f deploy/Dockerfile -t tori .
-```
-
-### From Source
-
-```bash
-go build -o tori ./cmd/tori
 ```
 
 ## Uninstall
@@ -374,74 +441,6 @@ sudo userdel tori
 ```
 
 For client-only installs, just remove the binary (`~/.local/bin/tori` or `/usr/local/bin/tori`) and config (`~/.config/tori/`).
-
-## Connecting
-
-```bash
-# Connect to all configured servers
-tori
-
-# Connect via SSH
-tori user@myserver.com
-
-# With custom SSH port
-tori user@host --port 2222
-
-# With specific key
-tori user@host --identity ~/.ssh/id_ed25519
-
-# Custom remote socket path
-tori user@host --remote-socket /custom/tori.sock
-
-# Direct local socket (no SSH)
-tori --socket /run/tori/tori.sock
-```
-
-When connected to multiple servers, use `Tab` to focus the servers panel, then `j`/`k` and `Enter` to switch. Each server has isolated data — switching is instant since all sessions receive data concurrently.
-
-## Keybindings
-
-### Global
-
-| Key | Action |
-|-----|--------|
-| `1` | Dashboard view |
-| `2` | Alerts view |
-| `+`/`-` | Zoom time window |
-| `?` | Help |
-| `q` | Quit |
-
-### Dashboard
-
-| Key | Action |
-|-----|--------|
-| `Tab` | Cycle focus between panels |
-| `j`/`k` | Navigate up/down |
-| `Enter` | Select / expand |
-| `Space` | Collapse/expand compose group |
-| `t` | Toggle tracking for container/group |
-
-### Alerts
-
-| Key | Action |
-|-----|--------|
-| `Tab` | Toggle focus between alerts and rules |
-| `j`/`k` | Navigate up/down |
-| `Enter` | Expand alert details |
-| `a` | Acknowledge alert |
-| `s` | Silence alert/rule |
-| `r` | Show/hide resolved alerts |
-| `g` | Go to container |
-
-### Detail View (Logs + Metrics)
-
-| Key | Action |
-|-----|--------|
-| `j`/`k` | Scroll logs |
-| `Enter` | Expand log entry |
-| `s` | Cycle stream filter (all/stdout/stderr) |
-| `f` | Open log filter |
-| `Esc` | Back to dashboard |
 
 ## Security
 
