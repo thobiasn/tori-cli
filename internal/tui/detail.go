@@ -206,6 +206,7 @@ func (s *DetailState) onStreamEntry(entry protocol.LogEntryMsg) {
 		for _, id := range s.projectIDs {
 			if entry.ContainerID == id {
 				s.logs.Push(entry)
+				s.totalLogCount++
 				if s.logPaused {
 					s.logScroll++
 				}
@@ -218,6 +219,7 @@ func (s *DetailState) onStreamEntry(entry protocol.LogEntryMsg) {
 		return
 	}
 	s.logs.Push(entry)
+	s.totalLogCount++
 	if s.logPaused {
 		s.logScroll++
 	}
