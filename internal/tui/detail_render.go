@@ -638,10 +638,10 @@ func logAreaHeight(a *App, det *DetailState, s *Session) int {
 	// Fixed: bird(1) + blank(1) + top bar(1) + time div(2) + graphs(4) + divider(1) + divider(1) + status(1) + help(1) = 13
 	fixedH := 13
 
-	// Alerts.
+	// Alerts: blank line + N alert lines.
 	alerts := collectDetailAlerts(det, s.Alerts)
 	if len(alerts) > 0 {
-		fixedH += len(alerts)
+		fixedH += 1 + len(alerts)
 	}
 
 	// Filter bar.
