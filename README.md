@@ -2,7 +2,7 @@
 
 Server monitoring without the infrastructure. A single binary and an SSH connection — metrics, logs, and alerts for your Docker hosts.
 
-![tori demo](https://github.com/user-attachments/assets/869f8dad-3f3b-4910-a5a1-069c5e482da0)
+![tori demo](https://github.com/user-attachments/assets/8a89ba98-2556-45ff-bcaf-f210101b55f3)
 
 <details>
 <summary>Disclaimer</summary>
