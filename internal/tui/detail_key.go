@@ -185,6 +185,8 @@ func updateFilterModal(det *DetailState, s *Session, key string, cfg DisplayConf
 	case "f":
 		if m.focus != 0 {
 			det.filterModal = nil
+		} else if len(m.text) < 128 {
+			m.text += key
 		}
 	case "backspace":
 		switch m.focus {
