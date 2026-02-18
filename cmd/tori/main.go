@@ -149,6 +149,7 @@ func parseClientArgs(args []string) (*clientAction, error) {
 		return &clientAction{
 			mode:       "socket",
 			socketPath: *socketPath,
+			configPath: *configPath,
 		}, nil
 
 	case positional != "" && strings.Contains(positional, "@"):
@@ -156,6 +157,7 @@ func parseClientArgs(args []string) (*clientAction, error) {
 			mode:       "ssh",
 			host:       positional,
 			remoteSock: *remoteSock,
+			configPath: *configPath,
 			sshOpts: tui.SSHOptions{
 				Port:         *port,
 				IdentityFile: *identity,
@@ -177,6 +179,18 @@ func runClient(args []string) {
 		os.Exit(1)
 	}
 
+	// Load display and theme settings from config when provided.
+	display, theme := defaultDisplayConfig(), defaultTheme()
+	if act.configPath != "" && act.mode != "config" {
+		cfg, err := tui.LoadConfig(act.configPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "load config %s: %v\n", act.configPath, err)
+			os.Exit(1)
+		}
+		display = cfg.Display
+		theme = tui.BuildTheme(cfg.Theme)
+	}
+
 	switch act.mode {
 	case "socket":
 		conn, err := net.Dial("unix", act.socketPath)
@@ -188,7 +202,7 @@ func runClient(args []string) {
 		sess := tui.NewSession("local", client, nil)
 		sess.ConnState = tui.ConnReady
 		sess.ConnMsg = "connected"
-		runSessions(map[string]*tui.Session{"local": sess}, defaultDisplayConfig())
+		runSessions(map[string]*tui.Session{"local": sess}, display, theme)
 
 	case "ssh":
 		sess := tui.NewSession(act.host, nil, nil)
@@ -199,7 +213,7 @@ func runClient(args []string) {
 			IdentityFile: act.sshOpts.IdentityFile,
 			AutoConnect:  true,
 		}
-		runSessions(map[string]*tui.Session{act.host: sess}, defaultDisplayConfig())
+		runSessions(map[string]*tui.Session{act.host: sess}, display, theme)
 
 	case "config":
 		cfgPath, err := tui.EnsureDefaultConfig(act.configPath)
@@ -251,7 +265,7 @@ func runClient(args []string) {
 				sessions[name] = sess
 			}
 		}
-		runSessions(sessions, cfg.Display)
+		runSessions(sessions, cfg.Display, tui.BuildTheme(cfg.Theme))
 	}
 }
 
@@ -261,8 +275,13 @@ func defaultDisplayConfig() tui.DisplayConfig {
 	return tui.DisplayConfig{DateFormat: "2006-01-02", TimeFormat: "15:04:05"}
 }
 
-func runSessions(sessions map[string]*tui.Session, display tui.DisplayConfig) {
-	app := tui.NewApp(sessions, display)
+// defaultTheme returns ANSI defaults for direct connections that bypass the config file.
+func defaultTheme() tui.Theme {
+	return tui.BuildTheme(tui.ThemeConfig{})
+}
+
+func runSessions(sessions map[string]*tui.Session, display tui.DisplayConfig, theme tui.Theme) {
+	app := tui.NewApp(sessions, display, theme)
 
 	p := tea.NewProgram(app, tea.WithAltScreen())
 

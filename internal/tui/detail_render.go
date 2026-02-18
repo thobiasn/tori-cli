@@ -54,6 +54,9 @@ func renderDetail(a *App, s *Session, width, height int) string {
 	// Fixed layout:
 	// bird(1) + blank(1) + top bar(1) + time div(2) + graphs(4) + divider(1) + divider(1) + status(1) + help(1) = 13
 	fixedH := 13 + alertLines
+	if det.isSearchActive() {
+		fixedH += 2 // filter divider(1) + filter line(1)
+	}
 	logH := height - fixedH
 	if logH < 3 {
 		logH = 3
@@ -62,6 +65,12 @@ func renderDetail(a *App, s *Session, width, height int) string {
 	// 8. Logs.
 	sections = append(sections, renderDetailLogs(det, s, contentW, logH, a.display, theme))
 
+	// 8.5. Filter bar (when search/filter is active).
+	if det.isSearchActive() {
+		sections = append(sections, renderDivider(contentW, theme))
+		sections = append(sections, renderFilterBar(det, contentW, a.display, theme))
+	}
+
 	// 9. Divider.
 	sections = append(sections, renderDivider(contentW, theme))
 
@@ -69,7 +78,7 @@ func renderDetail(a *App, s *Session, width, height int) string {
 	sections = append(sections, renderLogStatus(det, contentW, theme))
 
 	// 11. Footer: help bar.
-	sections = append(sections, renderDetailHelp(contentW, theme))
+	sections = append(sections, renderDetailHelp(contentW, det.isSearchActive(), theme))
 
 	result := pageFrame(strings.Join(sections, "\n"), contentW, width, height)
 
@@ -105,14 +114,14 @@ func renderDetailTopBar(a *App, s *Session, w int) string {
 	var right string
 
 	if det.isGroupMode() {
-		// "Esc ← project                ⚠ 1 alert · 4/4 running"
+		// "Esc ← project                ▲ 1 alert · 4/4 running"
 		left := escHint + " " + lipgloss.NewStyle().Bold(true).Render(det.project)
 
 		// Alert count.
 		alerts := collectDetailAlerts(det, s.Alerts)
 		var parts []string
 		if len(alerts) > 0 {
-			label := fmt.Sprintf("⚠ %d alert", len(alerts))
+			label := fmt.Sprintf("▲ %d alert", len(alerts))
 			if len(alerts) > 1 {
 				label += "s"
 			}
@@ -165,7 +174,7 @@ func renderDetailTopBar(a *App, s *Session, w int) string {
 		return padBetween(left, right, w)
 	}
 
-	// Container view: "Esc ← project / service    ⚠ 1 alert · ● running · healthy · up 13h"
+	// Container view: "Esc ← project / service    ▲ 1 alert · ● running · healthy · up 13h"
 	cm := findContainer(det.containerID, s.Containers)
 	containerName := serviceNameByID(det.containerID, s.ContInfo)
 	if containerName == "" && cm != nil {
@@ -191,7 +200,7 @@ func renderDetailTopBar(a *App, s *Session, w int) string {
 	// Alert count.
 	alerts := containerAlerts(s.Alerts, det.containerID)
 	if len(alerts) > 0 {
-		label := fmt.Sprintf("⚠ %d alert", len(alerts))
+		label := fmt.Sprintf("▲ %d alert", len(alerts))
 		if len(alerts) > 1 {
 			label += "s"
 		}
@@ -200,7 +209,8 @@ func renderDetailTopBar(a *App, s *Session, w int) string {
 
 	// State dot + state.
 	dot := lipgloss.NewStyle().Foreground(theme.StatusDotColor(cm.State, cm.Health)).Render("●")
-	parts = append(parts, dot+" "+cm.State)
+	stateStyled := lipgloss.NewStyle().Foreground(theme.StatusDotColor(cm.State, cm.Health)).Render(cm.State)
+	parts = append(parts, dot+" "+stateStyled)
 
 	// Health label.
 	parts = append(parts, healthLabel(cm.Health, false, theme))
@@ -240,19 +250,26 @@ func renderDetailGraphs(a *App, det *DetailState, s *Session, w int, theme *Them
 
 	// Check if we have any metrics data for this container/group.
 	hasMetrics := false
+	anyRunning := false
 	if det.isGroupMode() {
 		for _, id := range det.projectIDs {
-			if findContainer(id, s.Containers) != nil {
+			if cm := findContainer(id, s.Containers); cm != nil {
 				hasMetrics = true
-				break
+				if cm.State == "running" {
+					anyRunning = true
+					break
+				}
 			}
 		}
 	} else {
-		hasMetrics = findContainer(det.containerID, s.Containers) != nil
+		if cm := findContainer(det.containerID, s.Containers); cm != nil {
+			hasMetrics = true
+			anyRunning = cm.State == "running"
+		}
 	}
 
-	// Loading state: no metrics data yet or backfill in-flight — show animated sparklines.
-	if !hasMetrics || det.metricsBackfillPending {
+	// Loading state: no metrics, no running containers, or backfill in-flight.
+	if !hasMetrics || !anyRunning || det.metricsBackfillPending {
 		cpuTop, cpuBot := LoadingSparkline(a.spinnerFrame, graphW, theme.FgDim)
 		memTop, memBot := LoadingSparkline(a.spinnerFrame+3, graphW, theme.FgDim)
 		cpuRight := pctPad
@@ -399,7 +416,7 @@ func renderDetailAlerts(alerts []*protocol.AlertEvent, w int, theme *Theme) stri
 			sevColor = theme.Critical
 		}
 		icon := lipgloss.NewStyle().Foreground(sevColor).Render("▲")
-		name := lipgloss.NewStyle().Foreground(theme.FgBright).Render(Truncate(a.RuleName, 20))
+		name := lipgloss.NewStyle().Foreground(sevColor).Render(Truncate(a.RuleName, 20))
 		cond := lipgloss.NewStyle().Foreground(theme.FgDim).Render(Truncate(a.Condition, w-40))
 		state := lipgloss.NewStyle().Foreground(sevColor).Render(a.State)
 		line := fmt.Sprintf("%s %s — %s — %s %s", icon, name, cond, state, since)
@@ -502,18 +519,17 @@ func renderLogStatus(det *DetailState, w int, theme *Theme) string {
 	muted := mutedStyle(theme)
 	sep := muted.Render(" · ")
 
+	fg := lipgloss.NewStyle().Foreground(theme.Fg)
 	data := det.filteredData()
-	countStr := formatNumber(len(data))
+	countStr := fg.Render(formatNumber(len(data)))
 	if det.totalLogCount > len(data) {
-		countStr += " of " + formatNumber(det.totalLogCount)
+		countStr += muted.Render(" of ") + fg.Render(formatNumber(det.totalLogCount))
 	}
-	status := muted.Render(countStr + " lines")
+	status := countStr + muted.Render(" lines")
 	if det.filterStream != "" {
 		status += sep + muted.Render(det.filterStream)
 	}
-	if det.isSearchActive() {
-		status += sep + muted.Render("SEARCH")
-	} else if det.logPaused {
+	if det.isSearchActive() || det.logPaused {
 		status += sep + muted.Render("PAUSED")
 	} else {
 		status += sep + lipgloss.NewStyle().Foreground(theme.Healthy).Render("LIVE")
@@ -555,7 +571,7 @@ func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsStr st
 	if msgW < 10 {
 		msgW = 10
 	}
-	msgStyle := lipgloss.NewStyle().Foreground(theme.Fg)
+	msgStyle := lipgloss.NewStyle().Foreground(theme.FgBright)
 	msg := msgStyle.Render(Truncate(sanitizeLogMsg(parsed.message), msgW))
 
 	return left + " " + msg
@@ -577,14 +593,39 @@ func levelColor(level string, theme *Theme) lipgloss.Style {
 	}
 }
 
-func renderDetailHelp(w int, theme *Theme) string {
+func renderDetailHelp(w int, searchActive bool, theme *Theme) string {
+	escLabel := "back"
+	if searchActive {
+		escLabel = "clear filter"
+	}
 	return renderHelpBar([]helpBinding{
-		{"esc", "back"},
+		{"esc", escLabel},
 		{"j/k", "scroll"},
 		{"f", "filter"},
 		{"i", "info"},
 		{"?", "help"},
 	}, w, theme)
+}
+
+func renderFilterBar(det *DetailState, w int, cfg DisplayConfig, theme *Theme) string {
+	muted := mutedStyle(theme)
+	fg := lipgloss.NewStyle().Foreground(theme.Fg)
+	sep := muted.Render(" · ")
+
+	var parts []string
+	if det.searchText != "" {
+		parts = append(parts, muted.Render("search ")+fg.Render(Truncate(det.searchText, 20)))
+	}
+	if det.filterFrom != 0 {
+		t := time.Unix(det.filterFrom, 0)
+		parts = append(parts, muted.Render("from ")+fg.Render(t.Format(cfg.DateFormat+" "+cfg.TimeFormat)))
+	}
+	if det.filterTo != 0 {
+		t := time.Unix(det.filterTo, 0)
+		parts = append(parts, muted.Render("to ")+fg.Render(t.Format(cfg.DateFormat+" "+cfg.TimeFormat)))
+	}
+
+	return centerText(strings.Join(parts, sep), w)
 }
 
 // logAreaHeight computes the number of visible log lines.
@@ -597,10 +638,15 @@ func logAreaHeight(a *App, det *DetailState, s *Session) int {
 	// Fixed: bird(1) + blank(1) + top bar(1) + time div(2) + graphs(4) + divider(1) + divider(1) + status(1) + help(1) = 13
 	fixedH := 13
 
-	// Alerts.
+	// Alerts: blank line + N alert lines.
 	alerts := collectDetailAlerts(det, s.Alerts)
 	if len(alerts) > 0 {
-		fixedH += len(alerts)
+		fixedH += 1 + len(alerts)
+	}
+
+	// Filter bar.
+	if det.isSearchActive() {
+		fixedH += 2 // filter divider(1) + filter line(1)
 	}
 
 	logH := a.height - fixedH

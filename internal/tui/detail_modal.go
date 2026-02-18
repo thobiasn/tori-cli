@@ -37,7 +37,7 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, cfg D
 	padStr := strings.Repeat(" ", pad)
 
 	muted := mutedStyle(theme)
-	fg := fgStyle(theme)
+	fg := lipgloss.NewStyle().Foreground(theme.FgBright)
 
 	// Metadata line: time  [container]  LEVEL  stream · full datetime
 	t := time.Unix(m.entry.Timestamp, 0)
@@ -158,7 +158,8 @@ func renderInfoOverlay(det *DetailState, s *Session, width, height int, theme *T
 		status += " · up " + formatCompactUptime(secs)
 	}
 	dot := lipgloss.NewStyle().Foreground(theme.StatusDotColor(cm.State, cm.Health)).Render("●")
-	lines = append(lines, fmt.Sprintf("%-10s %s %s", "State", dot, status))
+	styledStatus := lipgloss.NewStyle().Foreground(theme.StatusDotColor(cm.State, cm.Health)).Render(status)
+	lines = append(lines, fmt.Sprintf("%-10s %s %s", "State", dot, styledStatus))
 
 	// Health.
 	lines = append(lines, fmt.Sprintf("%-10s %s", "Health", healthLabel(cm.Health, false, theme)))
@@ -354,7 +355,7 @@ func renderProjectInfoDialog(det *DetailState, s *Session, width, height int, th
 
 		dot := lipgloss.NewStyle().Foreground(r.dotColor).Render("●")
 
-		stateStr := fmt.Sprintf("%-7s", r.state)
+		stateStr := lipgloss.NewStyle().Foreground(r.dotColor).Render(fmt.Sprintf("%-7s", r.state))
 
 		var healthStr string
 		if hasHealthcheck(r.health) {
@@ -375,8 +376,9 @@ func renderProjectInfoDialog(det *DetailState, s *Session, width, height int, th
 			cpuStr = muted.Render(fmt.Sprintf("%5s", "—"))
 			memStr = muted.Render(fmt.Sprintf("%6s", "—"))
 		} else {
-			cpuStr = muted.Render(fmt.Sprintf("%5s", fmt.Sprintf("%.1f%%", r.cpu)))
-			memStr = muted.Render(fmt.Sprintf("%6s", formatBytes(r.mem)))
+			fg := lipgloss.NewStyle().Foreground(theme.Fg)
+			cpuStr = fg.Render(fmt.Sprintf("%5s", fmt.Sprintf("%.1f%%", r.cpu)))
+			memStr = fg.Render(fmt.Sprintf("%6s", formatBytes(r.mem)))
 		}
 
 		var uptimeStr string
@@ -394,8 +396,11 @@ func renderProjectInfoDialog(det *DetailState, s *Session, width, height int, th
 	// Summary line.
 	lines = append(lines, "")
 	var summary string
+	bright := lipgloss.NewStyle().Foreground(theme.FgBright)
 	if anyMetrics {
-		summary = muted.Render(fmt.Sprintf("cpu: %.1f%%  mem: %s  images: %d", totalCPU, formatBytes(totalMem), len(images)))
+		summary = muted.Render("cpu: ") + bright.Render(fmt.Sprintf("%.1f%%", totalCPU)) +
+			muted.Render("  mem: ") + bright.Render(formatBytes(totalMem)) +
+			muted.Render(fmt.Sprintf("  images: %d", len(images)))
 	} else {
 		summary = muted.Render(fmt.Sprintf("cpu: —  mem: —  images: %d", len(images)))
 	}

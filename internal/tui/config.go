@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // ServerConfig describes how to reach a single tori agent.
@@ -24,17 +25,36 @@ type DisplayConfig struct {
 	TimeFormat string `toml:"time_format"`
 }
 
+// ThemeConfig holds optional color overrides. Empty strings use ANSI defaults.
+// Values can be ANSI numbers ("1"), 256-palette numbers ("196"), or hex ("#ff0000").
+type ThemeConfig struct {
+	Fg         string `toml:"fg"`
+	FgDim      string `toml:"fg_dim"`
+	FgBright   string `toml:"fg_bright"`
+	Border     string `toml:"border"`
+	Accent     string `toml:"accent"`
+	Healthy    string `toml:"healthy"`
+	Warning    string `toml:"warning"`
+	Critical   string `toml:"critical"`
+	DebugLevel string `toml:"debug_level"`
+	InfoLevel  string `toml:"info_level"`
+	GraphCPU   string `toml:"graph_cpu"`
+	GraphMem   string `toml:"graph_mem"`
+}
+
 // Config is the client-side configuration.
 type Config struct {
 	Servers map[string]ServerConfig `toml:"servers"`
 	Display DisplayConfig           `toml:"display"`
+	Theme   ThemeConfig             `toml:"theme"`
 }
 
-// DefaultConfigPath returns ~/.config/tori/config.toml using os.UserConfigDir.
+// DefaultConfigPath returns $XDG_CONFIG_HOME/tori/config.toml,
+// falling back to ~/.config/tori/config.toml if unset.
 func DefaultConfigPath() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return filepath.Join(os.Getenv("HOME"), ".config", "tori", "config.toml")
+	dir := os.Getenv("XDG_CONFIG_HOME")
+	if dir == "" {
+		dir = filepath.Join(os.Getenv("HOME"), ".config")
 	}
 	return filepath.Join(dir, "tori", "config.toml")
 }
@@ -56,6 +76,38 @@ const defaultConfigContent = `# Tori client configuration.
 # [display]
 # date_format = "2006-01-02"   # Go time layout
 # time_format = "15:04:05"     # Go time layout
+#
+# [theme]
+# Colors default to ANSI (0-15) so the TUI inherits your terminal theme.
+# Override with ANSI numbers, 256-palette numbers, or hex values.
+#
+# ANSI defaults:
+# fg = "7"               # normal white
+# fg_dim = "8"           # bright black
+# fg_bright = "15"       # bright white
+# border = "8"           # bright black
+# accent = "4"           # blue
+# healthy = "2"          # green
+# warning = "3"          # yellow
+# critical = "1"         # red
+# debug_level = "8"      # bright black
+# info_level = "7"       # normal white
+# graph_cpu = "12"       # bright blue
+# graph_mem = "13"       # bright magenta
+#
+# Example: Tokyo Night (hex overrides)
+# fg = "#a9b1d6"
+# fg_dim = "#3b4261"
+# fg_bright = "#c0caf5"
+# border = "#292e42"
+# accent = "#7aa2f7"
+# healthy = "#9ece6a"
+# warning = "#e0af68"
+# critical = "#f7768e"
+# debug_level = "#414769"
+# info_level = "#505a85"
+# graph_cpu = "#7dcfff"
+# graph_mem = "#bb9af7"
 `
 
 // EnsureDefaultConfig creates the default config file if it does not exist.
@@ -96,4 +148,28 @@ func LoadConfig(path string) (*Config, error) {
 		}
 	}
 	return &cfg, nil
+}
+
+// BuildTheme returns a Theme starting from ANSI defaults with any
+// non-empty ThemeConfig fields applied as overrides.
+func BuildTheme(tc ThemeConfig) Theme {
+	t := TerminalTheme()
+	override := func(dst *lipgloss.Color, src string) {
+		if src != "" {
+			*dst = lipgloss.Color(src)
+		}
+	}
+	override(&t.Fg, tc.Fg)
+	override(&t.FgDim, tc.FgDim)
+	override(&t.FgBright, tc.FgBright)
+	override(&t.Border, tc.Border)
+	override(&t.Accent, tc.Accent)
+	override(&t.Healthy, tc.Healthy)
+	override(&t.Warning, tc.Warning)
+	override(&t.Critical, tc.Critical)
+	override(&t.DebugLevel, tc.DebugLevel)
+	override(&t.InfoLevel, tc.InfoLevel)
+	override(&t.GraphCPU, tc.GraphCPU)
+	override(&t.GraphMem, tc.GraphMem)
+	return t
 }
