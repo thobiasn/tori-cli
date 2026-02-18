@@ -188,7 +188,7 @@ func runClient(args []string) {
 		sess := tui.NewSession("local", client, nil)
 		sess.ConnState = tui.ConnReady
 		sess.ConnMsg = "connected"
-		runSessions(map[string]*tui.Session{"local": sess}, defaultDisplayConfig())
+		runSessions(map[string]*tui.Session{"local": sess}, defaultDisplayConfig(), defaultTheme())
 
 	case "ssh":
 		sess := tui.NewSession(act.host, nil, nil)
@@ -199,7 +199,7 @@ func runClient(args []string) {
 			IdentityFile: act.sshOpts.IdentityFile,
 			AutoConnect:  true,
 		}
-		runSessions(map[string]*tui.Session{act.host: sess}, defaultDisplayConfig())
+		runSessions(map[string]*tui.Session{act.host: sess}, defaultDisplayConfig(), defaultTheme())
 
 	case "config":
 		cfgPath, err := tui.EnsureDefaultConfig(act.configPath)
@@ -251,7 +251,7 @@ func runClient(args []string) {
 				sessions[name] = sess
 			}
 		}
-		runSessions(sessions, cfg.Display)
+		runSessions(sessions, cfg.Display, tui.BuildTheme(cfg.Theme))
 	}
 }
 
@@ -261,8 +261,13 @@ func defaultDisplayConfig() tui.DisplayConfig {
 	return tui.DisplayConfig{DateFormat: "2006-01-02", TimeFormat: "15:04:05"}
 }
 
-func runSessions(sessions map[string]*tui.Session, display tui.DisplayConfig) {
-	app := tui.NewApp(sessions, display)
+// defaultTheme returns ANSI defaults for direct connections that bypass the config file.
+func defaultTheme() tui.Theme {
+	return tui.BuildTheme(tui.ThemeConfig{})
+}
+
+func runSessions(sessions map[string]*tui.Session, display tui.DisplayConfig, theme tui.Theme) {
+	app := tui.NewApp(sessions, display, theme)
 
 	p := tea.NewProgram(app, tea.WithAltScreen())
 

@@ -361,6 +361,12 @@ socket = "/run/tori/tori.sock"
 [display]
 # date_format = "2006-01-02"           # Go time layout (default: ISO date)
 # time_format = "15:04:05"             # Go time layout (default: 24h clock)
+
+# [theme]
+# Colors default to ANSI (0-15) so the TUI inherits your terminal theme.
+# Override with ANSI numbers, 256-palette numbers, or hex values.
+# accent = "4"                         # ANSI blue
+# critical = "#f7768e"                 # hex override
 ```
 
 The `[display]` section controls how timestamps appear in logs and alerts. Both fields use [Go time layout](https://pkg.go.dev/time#pkg-constants) strings:
@@ -370,6 +376,23 @@ The `[display]` section controls how timestamps appear in logs and alerts. Both 
 | ISO 24h (default) | `2006-01-02` | `15:04:05` |
 | US 12h | `01/02` | `3:04PM` |
 | European short | `02 Jan` | `15:04` |
+
+The `[theme]` section overrides individual TUI colors. By default all colors use ANSI values (0–15) so the interface inherits your terminal's color scheme. Any field left unset keeps its ANSI default. Values can be ANSI numbers (`"1"`–`"15"`), 256-palette numbers (`"16"`–`"255"`), or hex (`"#rrggbb"`).
+
+| Field | Default | Purpose |
+|---|---|---|
+| `fg` | `7` | Default text |
+| `fg_dim` | `8` | De-emphasized text (labels, hints) |
+| `fg_bright` | `15` | Emphasized text (values, names) |
+| `border` | `8` | Dividers, separators |
+| `accent` | `4` | Focus indicators, selection |
+| `healthy` | `2` | Running, all clear |
+| `warning` | `3` | High usage, degraded |
+| `critical` | `1` | Exited, unhealthy |
+| `debug_level` | `8` | Log level: DEBUG |
+| `info_level` | `7` | Log level: INFO |
+| `graph_cpu` | `6` | CPU sparkline |
+| `graph_mem` | `5` | Memory sparkline |
 
 ## Keybindings
 

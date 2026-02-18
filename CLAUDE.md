@@ -68,7 +68,7 @@ The agent is the source of truth. It collects, stores, evaluates, and alerts ind
 - **Protocol:** msgpack over Unix socket. Two patterns: streaming subscriptions (agent pushes) and request-response (client asks).
 - **Storage:** SQLite in WAL mode at `/var/lib/tori/tori.db` with configurable retention. One database file. If you're writing JOINs across more than 2 tables, rethink the data model.
 - **Config:** TOML format. Agent config at `/etc/tori/config.toml`, client config at `~/.config/tori/config.toml`. Paths in config are absolute. Defaults are sane for bare metal (`/proc`, `/sys`). Docker deployment overrides them (`/host/proc`, `/host/sys`). No detection logic.
-- **TUI:** Bubbletea + Lipgloss + Bubbles (Charm ecosystem). See `.claude/tui-design.md` for the complete visual design language (layout, colors, graphs, responsive rules). All colors must be defined in a single `Theme` struct in `internal/tui/theme.go` — views reference theme fields, never raw color values.
+- **TUI:** Bubbletea + Lipgloss + Bubbles (Charm ecosystem). See `.claude/tui-design.md` for the complete visual design language (layout, colors, graphs, responsive rules). All colors must be defined in a single `Theme` struct in `internal/tui/theme.go` — views reference theme fields, never raw color values. Colors default to ANSI (0–15) so the TUI inherits the user's terminal theme. Users can override individual colors in `[theme]` in the client config.
 - **Host metrics:** Read directly from `/proc` and `/sys` (no cgo, no external deps).
 - **Docker:** Monitor via Docker socket (`/var/run/docker.sock`), read-only. Containers are grouped by compose project via `com.docker.compose.project` label. Tracking (metrics, logs, alerts) can be toggled per-container or per-group at runtime.
 
@@ -210,7 +210,7 @@ The alerter receives the same data already collected — no additional I/O.
 ### TUI
 
 - Charm ecosystem: Bubbletea (framework), Lipgloss (styling), Bubbles (components).
-- All colors in a single `Theme` struct in `internal/tui/theme.go`. Views reference `theme.Foo`, never raw color values.
+- All colors in a single `Theme` struct in `internal/tui/theme.go`. ANSI defaults, configurable via `[theme]` in client config. Views reference `theme.Foo`, never raw color values.
 - `internal/tui/` is a flat package. `tui` imports `protocol` but never `agent`.
 - Client has one reader goroutine dispatching streaming msgs via `prog.Send()` and request-response via per-ID channels.
 - Reader goroutine starts in `SetProgram()`, not `NewClient()`, to avoid nil prog race.
@@ -219,7 +219,10 @@ The alerter receives the same data already collected — no additional I/O.
 
 ### TUI theming conventions
 
-- All colors live in a single `Theme` struct (`internal/tui2/theme.go`). Views reference `theme.Foo`, never raw color values.
+- All colors live in a single `Theme` struct (`internal/tui/theme.go`). Views reference `theme.Foo`, never raw color values.
+- Defaults are ANSI colors (0–15) via `TerminalTheme()`, so the TUI inherits the user's terminal color scheme.
+- Users can override individual colors in `[theme]` in the client config (`ThemeConfig` in `config.go`). `BuildTheme(ThemeConfig)` merges overrides onto ANSI defaults.
+- Color values accept ANSI numbers (`"1"`), 256-palette (`"196"`), or hex (`"#ff0000"`).
 - Color helper functions (e.g., `containerCPUColor`, `containerMemColor`, `UsageColor`, `StateColor`) take a `*Theme` and return `lipgloss.Color`.
 - Selected/cursor rows use `Reverse(true)` — no separate selection color needed.
 - Untracked containers render the entire row with `FgDim` (dimmed).

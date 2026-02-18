@@ -6,12 +6,9 @@ import "github.com/charmbracelet/lipgloss"
 // never raw color values.
 type Theme struct {
 	// Core
-	Bg       lipgloss.Color // main background
-	BgAlt    lipgloss.Color // elevated/secondary background
 	Fg       lipgloss.Color // default text
 	FgDim    lipgloss.Color // de-emphasized text (labels, separators, hints)
 	FgBright lipgloss.Color // emphasized text (values, container names)
-	White    lipgloss.Color // maximum emphasis (selected items, bold headings)
 	Border   lipgloss.Color // dividers, separators
 
 	// Semantic
@@ -23,42 +20,16 @@ type Theme struct {
 	InfoLevel  lipgloss.Color // log level color for INFO — softer than message text (Fg)
 
 	// Graph-specific
-	GraphCPU  lipgloss.Color // CPU sparkline
-	GraphMem  lipgloss.Color // memory sparkline
-	GraphDisk lipgloss.Color // disk block bar
-}
-
-// DefaultTheme returns the Tokyo Night hex theme.
-func DefaultTheme() Theme {
-	return Theme{
-		Bg:         lipgloss.Color("#1a1b26"),
-		BgAlt:      lipgloss.Color("#16161e"),
-		Fg:         lipgloss.Color("#a9b1d6"),
-		FgDim:      lipgloss.Color("#3b4261"),
-		FgBright:   lipgloss.Color("#c0caf5"),
-		White:      lipgloss.Color("#e0e4f0"),
-		Border:     lipgloss.Color("#292e42"),
-		Accent:     lipgloss.Color("#7aa2f7"),
-		Healthy:    lipgloss.Color("#9ece6a"),
-		Warning:    lipgloss.Color("#e0af68"),
-		Critical:   lipgloss.Color("#f7768e"),
-		DebugLevel: lipgloss.Color("#414769"),
-		InfoLevel:  lipgloss.Color("#505a85"),
-		GraphCPU:   lipgloss.Color("#7dcfff"),
-		GraphMem:   lipgloss.Color("#bb9af7"),
-		GraphDisk:  lipgloss.Color("#9ece6a"),
-	}
+	GraphCPU lipgloss.Color // CPU sparkline
+	GraphMem lipgloss.Color // memory sparkline
 }
 
 // TerminalTheme returns a theme using ANSI colors that inherits terminal background.
 func TerminalTheme() Theme {
 	return Theme{
-		Bg:         lipgloss.Color(""),
-		BgAlt:      lipgloss.Color(""),
 		Fg:         lipgloss.Color("7"),
 		FgDim:      lipgloss.Color("8"),
 		FgBright:   lipgloss.Color("15"),
-		White:      lipgloss.Color("15"),
 		Border:     lipgloss.Color("8"),
 		Accent:     lipgloss.Color("4"),
 		Healthy:    lipgloss.Color("2"),
@@ -68,7 +39,6 @@ func TerminalTheme() Theme {
 		InfoLevel:  lipgloss.Color("7"),
 		GraphCPU:   lipgloss.Color("6"),
 		GraphMem:   lipgloss.Color("5"),
-		GraphDisk:  lipgloss.Color("2"),
 	}
 }
 

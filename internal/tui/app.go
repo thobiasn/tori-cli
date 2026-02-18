@@ -126,7 +126,7 @@ type App struct {
 }
 
 // NewApp creates the root model with one or more sessions.
-func NewApp(sessions map[string]*Session, display DisplayConfig) App {
+func NewApp(sessions map[string]*Session, display DisplayConfig, theme Theme) App {
 	order := make([]string, 0, len(sessions))
 	for name := range sessions {
 		order = append(order, name)
@@ -156,7 +156,7 @@ func NewApp(sessions map[string]*Session, display DisplayConfig) App {
 		activeSession:    active,
 		switcher:         showSwitcher,
 		autoConnectQueue: autoQueue,
-		theme:            DefaultTheme(),
+		theme:            theme,
 		display:          display,
 		collapsed:        make(map[string]bool),
 		ctx:              &appCtx{},
