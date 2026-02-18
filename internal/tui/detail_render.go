@@ -54,6 +54,9 @@ func renderDetail(a *App, s *Session, width, height int) string {
 	// Fixed layout:
 	// bird(1) + blank(1) + top bar(1) + time div(2) + graphs(4) + divider(1) + divider(1) + status(1) + help(1) = 13
 	fixedH := 13 + alertLines
+	if det.isSearchActive() {
+		fixedH += 2 // filter divider(1) + filter line(1)
+	}
 	logH := height - fixedH
 	if logH < 3 {
 		logH = 3
@@ -62,6 +65,12 @@ func renderDetail(a *App, s *Session, width, height int) string {
 	// 8. Logs.
 	sections = append(sections, renderDetailLogs(det, s, contentW, logH, a.display, theme))
 
+	// 8.5. Filter bar (when search/filter is active).
+	if det.isSearchActive() {
+		sections = append(sections, renderDivider(contentW, theme))
+		sections = append(sections, renderFilterBar(det, contentW, a.display, theme))
+	}
+
 	// 9. Divider.
 	sections = append(sections, renderDivider(contentW, theme))
 
@@ -69,7 +78,7 @@ func renderDetail(a *App, s *Session, width, height int) string {
 	sections = append(sections, renderLogStatus(det, contentW, theme))
 
 	// 11. Footer: help bar.
-	sections = append(sections, renderDetailHelp(contentW, theme))
+	sections = append(sections, renderDetailHelp(contentW, det.isSearchActive(), theme))
 
 	result := pageFrame(strings.Join(sections, "\n"), contentW, width, height)
 
@@ -520,9 +529,7 @@ func renderLogStatus(det *DetailState, w int, theme *Theme) string {
 	if det.filterStream != "" {
 		status += sep + muted.Render(det.filterStream)
 	}
-	if det.isSearchActive() {
-		status += sep + muted.Render("SEARCH")
-	} else if det.logPaused {
+	if det.isSearchActive() || det.logPaused {
 		status += sep + muted.Render("PAUSED")
 	} else {
 		status += sep + lipgloss.NewStyle().Foreground(theme.Healthy).Render("LIVE")
@@ -586,14 +593,39 @@ func levelColor(level string, theme *Theme) lipgloss.Style {
 	}
 }
 
-func renderDetailHelp(w int, theme *Theme) string {
+func renderDetailHelp(w int, searchActive bool, theme *Theme) string {
+	escLabel := "back"
+	if searchActive {
+		escLabel = "clear filter"
+	}
 	return renderHelpBar([]helpBinding{
-		{"esc", "back"},
+		{"esc", escLabel},
 		{"j/k", "scroll"},
 		{"f", "filter"},
 		{"i", "info"},
 		{"?", "help"},
 	}, w, theme)
+}
+
+func renderFilterBar(det *DetailState, w int, cfg DisplayConfig, theme *Theme) string {
+	muted := mutedStyle(theme)
+	fg := lipgloss.NewStyle().Foreground(theme.Fg)
+	sep := muted.Render(" · ")
+
+	var parts []string
+	if det.searchText != "" {
+		parts = append(parts, muted.Render("search ")+fg.Render(Truncate(det.searchText, 20)))
+	}
+	if det.filterFrom != 0 {
+		t := time.Unix(det.filterFrom, 0)
+		parts = append(parts, muted.Render("from ")+fg.Render(t.Format(cfg.DateFormat+" "+cfg.TimeFormat)))
+	}
+	if det.filterTo != 0 {
+		t := time.Unix(det.filterTo, 0)
+		parts = append(parts, muted.Render("to ")+fg.Render(t.Format(cfg.DateFormat+" "+cfg.TimeFormat)))
+	}
+
+	return centerText(strings.Join(parts, sep), w)
 }
 
 // logAreaHeight computes the number of visible log lines.
@@ -610,6 +642,11 @@ func logAreaHeight(a *App, det *DetailState, s *Session) int {
 	alerts := collectDetailAlerts(det, s.Alerts)
 	if len(alerts) > 0 {
 		fixedH += len(alerts)
+	}
+
+	// Filter bar.
+	if det.isSearchActive() {
+		fixedH += 2 // filter divider(1) + filter line(1)
 	}
 
 	logH := a.height - fixedH
