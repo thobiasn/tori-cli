@@ -123,6 +123,12 @@ func OpenStore(path string) (*Store, error) {
 		return nil, fmt.Errorf("set WAL mode: %w", err)
 	}
 
+	// Limit SQLite page cache to ~2MB (negative = KB).
+	if _, err := db.Exec("PRAGMA cache_size = -2000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set cache_size: %w", err)
+	}
+
 	s := &Store{db: db}
 
 	if err := s.migrate(); err != nil {

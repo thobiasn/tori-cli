@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"time"
 )
@@ -582,6 +583,11 @@ func (s *Store) Prune(ctx context.Context, retentionDays int) error {
 	if err := s.pruneTable(ctx, "alerts", "fired_at", cutoff); err != nil {
 		return fmt.Errorf("prune alerts: %w", err)
 	}
+
+	// Checkpoint WAL to reclaim file space, then ask Go to release memory.
+	s.db.ExecContext(ctx, "PRAGMA wal_checkpoint(PASSIVE)")
+	debug.FreeOSMemory()
+
 	return nil
 }
 
