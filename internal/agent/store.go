@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS alerts (
 	acknowledged INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_fired ON alerts(fired_at);
+CREATE INDEX IF NOT EXISTS idx_alerts_unresolved ON alerts(fired_at) WHERE resolved_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS tracking_state (
 	kind TEXT NOT NULL,

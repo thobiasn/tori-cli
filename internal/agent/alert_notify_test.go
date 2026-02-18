@@ -2,25 +2,43 @@ package agent
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 )
 
 // recordingChannel records notification subjects for test verification.
 type recordingChannel struct {
+	mu    sync.Mutex
 	calls []string
 }
 
 func (r *recordingChannel) Send(_ context.Context, subject, _ string) error {
+	r.mu.Lock()
 	r.calls = append(r.calls, subject)
+	r.mu.Unlock()
 	return nil
+}
+
+func (r *recordingChannel) Calls() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, len(r.calls))
+	copy(out, r.calls)
+	return out
 }
 
 func testAlerterWithRecorder(t *testing.T, alerts map[string]AlertConfig) (*Alerter, *Store, *recordingChannel) {
 	t.Helper()
 	s := testStore(t)
 	rec := &recordingChannel{}
-	n := &Notifier{channels: []Channel{rec}}
+	n := &Notifier{
+		channels: []Channel{rec},
+		queue:    make(chan notification, 64),
+	}
+	n.wg.Add(1)
+	go n.run()
+	t.Cleanup(func() { n.Stop() })
 	a, err := NewAlerter(alerts, s, n)
 	if err != nil {
 		t.Fatal(err)
@@ -48,8 +66,9 @@ func TestNotifyCooldownSuppresses(t *testing.T) {
 	a.Evaluate(ctx, &MetricSnapshot{
 		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
 	})
-	if len(rec.calls) != 1 {
-		t.Fatalf("notifications = %d, want 1", len(rec.calls))
+	a.notifier.Flush()
+	if calls := rec.Calls(); len(calls) != 1 {
+		t.Fatalf("notifications = %d, want 1", len(calls))
 	}
 
 	// Fire "bbb" of same rule within window — DB row created, notification suppressed.
@@ -60,8 +79,9 @@ func TestNotifyCooldownSuppresses(t *testing.T) {
 			{ID: "bbb", Name: "api", State: "exited"},
 		},
 	})
-	if len(rec.calls) != 1 {
-		t.Fatalf("notifications = %d, want 1 (suppressed)", len(rec.calls))
+	a.notifier.Flush()
+	if calls := rec.Calls(); len(calls) != 1 {
+		t.Fatalf("notifications = %d, want 1 (suppressed)", len(calls))
 	}
 
 	// Verify DB row was still created.
@@ -82,8 +102,9 @@ func TestNotifyCooldownSuppresses(t *testing.T) {
 			{ID: "ccc", Name: "db", State: "exited"},
 		},
 	})
-	if len(rec.calls) != 2 {
-		t.Fatalf("notifications = %d, want 2", len(rec.calls))
+	a.notifier.Flush()
+	if calls := rec.Calls(); len(calls) != 2 {
+		t.Fatalf("notifications = %d, want 2", len(calls))
 	}
 }
 
@@ -110,8 +131,9 @@ func TestNotifyCooldownZeroDisabled(t *testing.T) {
 			{ID: "bbb", Name: "api", State: "exited"},
 		},
 	})
-	if len(rec.calls) != 2 {
-		t.Fatalf("notifications = %d, want 2 (cooldown disabled)", len(rec.calls))
+	a.notifier.Flush()
+	if calls := rec.Calls(); len(calls) != 2 {
+		t.Fatalf("notifications = %d, want 2 (cooldown disabled)", len(calls))
 	}
 }
 
@@ -144,8 +166,9 @@ func TestNotifyCooldownPerRule(t *testing.T) {
 			{ID: "aaa", Name: "web", State: "exited", Health: "unhealthy"},
 		},
 	})
-	if len(rec.calls) != 2 {
-		t.Fatalf("notifications = %d, want 2 (one per rule)", len(rec.calls))
+	a.notifier.Flush()
+	if calls := rec.Calls(); len(calls) != 2 {
+		t.Fatalf("notifications = %d, want 2 (one per rule)", len(calls))
 	}
 }
 
@@ -212,8 +235,9 @@ func TestNotifyCooldownSilenceInteraction(t *testing.T) {
 	a.Evaluate(ctx, &MetricSnapshot{
 		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "exited"}},
 	})
-	if len(rec.calls) != 0 {
-		t.Fatalf("notifications = %d, want 0 (silenced)", len(rec.calls))
+	a.notifier.Flush()
+	if calls := rec.Calls(); len(calls) != 0 {
+		t.Fatalf("notifications = %d, want 0 (silenced)", len(calls))
 	}
 
 	// Verify lastNotified was NOT set by silenced fire.
@@ -234,7 +258,8 @@ func TestNotifyCooldownSilenceInteraction(t *testing.T) {
 			{ID: "bbb", Name: "api", State: "exited"},
 		},
 	})
-	if len(rec.calls) != 1 {
-		t.Fatalf("notifications = %d, want 1", len(rec.calls))
+	a.notifier.Flush()
+	if calls := rec.Calls(); len(calls) != 1 {
+		t.Fatalf("notifications = %d, want 1", len(calls))
 	}
 }
