@@ -329,7 +329,7 @@ func (a *Alerter) fire(ctx context.Context, ec *evalContext, inst *alertInstance
 			a.lastNotified[r.name] = now
 			ruleName := r.name
 			a.deferred = append(a.deferred, func() {
-				a.notifier.Send(ctx, "Alert: "+ruleName, msg)
+				a.notifier.Send("Alert: "+ruleName, msg)
 			})
 		}
 	}
@@ -496,6 +496,13 @@ func (a *Alerter) QueryRules() []RuleStatus {
 		}
 	}
 	return out
+}
+
+// Stop shuts down the alerter's notifier. Safe to call if notifier is nil.
+func (a *Alerter) Stop() {
+	if a.notifier != nil {
+		a.notifier.Stop()
+	}
 }
 
 func (a *Alerter) isSilenced(ruleName string) bool {

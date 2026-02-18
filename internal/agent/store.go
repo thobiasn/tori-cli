@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS alerts (
 	acknowledged INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_fired ON alerts(fired_at);
+CREATE INDEX IF NOT EXISTS idx_alerts_unresolved ON alerts(fired_at) WHERE resolved_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS tracking_state (
 	kind TEXT NOT NULL,
@@ -120,6 +121,12 @@ func OpenStore(path string) (*Store, error) {
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("set WAL mode: %w", err)
+	}
+
+	// Limit SQLite page cache to ~2MB (negative = KB).
+	if _, err := db.Exec("PRAGMA cache_size = -2000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set cache_size: %w", err)
 	}
 
 	s := &Store{db: db}

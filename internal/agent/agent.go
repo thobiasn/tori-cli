@@ -192,6 +192,7 @@ func (a *Agent) applyConfig(ctx context.Context, newCfg *Config) {
 		alerter.onStateChange = a.makeOnStateChange()
 		if a.alerter != nil {
 			a.alerter.ResolveAll(ctx)
+			a.alerter.Stop()
 		}
 		a.alerter = alerter
 		a.socket.SetAlerter(alerter)
@@ -199,6 +200,7 @@ func (a *Agent) applyConfig(ctx context.Context, newCfg *Config) {
 	} else {
 		if a.alerter != nil {
 			a.alerter.ResolveAll(ctx)
+			a.alerter.Stop()
 		}
 		a.alerter = nil
 		a.socket.SetAlerter(nil)
@@ -343,6 +345,9 @@ func (a *Agent) shutdown() error {
 	a.events.Wait()
 	a.socket.Stop()
 	a.logs.Stop()
+	if a.alerter != nil {
+		a.alerter.Stop()
+	}
 
 	if err := a.store.Close(); err != nil {
 		slog.Error("close store", "error", err)

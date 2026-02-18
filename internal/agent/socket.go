@@ -350,7 +350,7 @@ func (c *connState) subscribeLogs(env *protocol.Envelope) {
 				if filter.ContainerID != "" && entry.ContainerID != filter.ContainerID {
 					continue
 				}
-				if project != "" && !c.containerInProject(entry.ContainerID, project) {
+				if project != "" && c.ss.docker.ContainerProject(entry.ContainerID) != project {
 					continue
 				}
 				if filter.Stream != "" && entry.Stream != filter.Stream {
@@ -367,16 +367,6 @@ func (c *connState) subscribeLogs(env *protocol.Envelope) {
 			}
 		}
 	}()
-}
-
-// containerInProject checks if a container belongs to a project using the live container list.
-func (c *connState) containerInProject(containerID, project string) bool {
-	for _, ctr := range c.ss.docker.Containers() {
-		if ctr.ID == containerID && ctr.Project == project {
-			return true
-		}
-	}
-	return false
 }
 
 func (c *connState) subscribeAlerts() {
@@ -473,12 +463,6 @@ func (c *connState) queryMetrics(env *protocol.Envelope) {
 		req.Points = maxDownsamplePoints
 	}
 
-	host, err := c.ss.store.QueryHostMetrics(c.ctx, req.Start, req.End)
-	if err != nil {
-		slog.Error("query host metrics", "error", err)
-		c.sendError(env.ID, "query failed")
-		return
-	}
 	var cmFilter []ContainerMetricsFilter
 	if req.Service != "" || req.Project != "" {
 		cmFilter = append(cmFilter, ContainerMetricsFilter{
@@ -486,26 +470,44 @@ func (c *connState) queryMetrics(env *protocol.Envelope) {
 			Service: truncate(req.Service, maxLabelLen),
 		})
 	}
-	containers, err := c.ss.store.QueryContainerMetrics(c.ctx, req.Start, req.End, cmFilter...)
-	if err != nil {
-		slog.Error("query container metrics", "error", err)
-		c.sendError(env.ID, "query failed")
-		return
-	}
-
-	hostOut := convertTimedHost(host)
-	containerOut := convertTimedContainer(containers)
 
 	resp := protocol.QueryMetricsResp{
 		RetentionDays: int(c.ss.retentionDays.Load()),
 	}
 
 	if req.Points > 0 {
-		// Downsampled backfill: TUI only uses Host and Containers.
-		// Skip disk/net queries to keep response size reasonable on wide windows.
-		resp.Host = downsampleHost(hostOut, req.Points, req.Start, req.End)
-		resp.Containers = downsampleContainers(containerOut, req.Points, req.Start, req.End)
+		// Downsampled backfill: aggregate in SQL to avoid loading all raw data.
+		bucketDur := (req.End - req.Start) / int64(req.Points)
+		if bucketDur <= 0 {
+			bucketDur = 1
+		}
+		host, err := c.ss.store.QueryHostMetricsGrouped(c.ctx, req.Start, req.End, bucketDur)
+		if err != nil {
+			slog.Error("query host metrics", "error", err)
+			c.sendError(env.ID, "query failed")
+			return
+		}
+		containers, err := c.ss.store.QueryContainerMetricsGrouped(c.ctx, req.Start, req.End, bucketDur, cmFilter...)
+		if err != nil {
+			slog.Error("query container metrics", "error", err)
+			c.sendError(env.ID, "query failed")
+			return
+		}
+		resp.Host = downsampleHost(convertTimedHost(host), req.Points, req.Start, req.End)
+		resp.Containers = downsampleContainers(convertTimedContainer(containers), req.Points, req.Start, req.End)
 	} else {
+		host, err := c.ss.store.QueryHostMetrics(c.ctx, req.Start, req.End)
+		if err != nil {
+			slog.Error("query host metrics", "error", err)
+			c.sendError(env.ID, "query failed")
+			return
+		}
+		containers, err := c.ss.store.QueryContainerMetrics(c.ctx, req.Start, req.End, cmFilter...)
+		if err != nil {
+			slog.Error("query container metrics", "error", err)
+			c.sendError(env.ID, "query failed")
+			return
+		}
 		disks, err := c.ss.store.QueryDiskMetrics(c.ctx, req.Start, req.End)
 		if err != nil {
 			slog.Error("query disk metrics", "error", err)
@@ -518,10 +520,10 @@ func (c *connState) queryMetrics(env *protocol.Envelope) {
 			c.sendError(env.ID, "query failed")
 			return
 		}
-		resp.Host = hostOut
+		resp.Host = convertTimedHost(host)
 		resp.Disks = convertTimedDisk(disks)
 		resp.Networks = convertTimedNet(nets)
-		resp.Containers = containerOut
+		resp.Containers = convertTimedContainer(containers)
 	}
 	c.sendResponse(env.ID, &resp)
 }

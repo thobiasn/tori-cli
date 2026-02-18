@@ -14,7 +14,8 @@ import (
 func TestSendNoChannels(t *testing.T) {
 	n := NewNotifier(&NotifyConfig{})
 	// Should not panic with no channels enabled.
-	n.Send(context.Background(), "test", "body")
+	n.Send("test", "body")
+	n.Stop()
 }
 
 func TestWebhookPayload(t *testing.T) {
@@ -38,7 +39,8 @@ func TestWebhookPayload(t *testing.T) {
 		Webhooks: []WebhookConfig{{Enabled: true, URL: srv.URL}},
 	})
 
-	n.Send(context.Background(), "Alert: high_cpu", "CPU is at 95%")
+	n.Send("Alert: high_cpu", "CPU is at 95%")
+	n.Stop()
 
 	if got["text"] == "" {
 		t.Fatal("webhook payload text is empty")
@@ -60,7 +62,8 @@ func TestWebhookErrorStatus(t *testing.T) {
 	})
 
 	// Should not panic — errors are logged, not returned.
-	n.Send(context.Background(), "test", "body")
+	n.Send("test", "body")
+	n.Stop()
 }
 
 func TestWebhookCustomHeaders(t *testing.T) {
@@ -85,7 +88,8 @@ func TestWebhookCustomHeaders(t *testing.T) {
 		}},
 	})
 
-	n.Send(context.Background(), "test", "body")
+	n.Send("test", "body")
+	n.Stop()
 
 	if gotAuth != "Bearer token123" {
 		t.Errorf("Authorization = %q, want Bearer token123", gotAuth)
@@ -113,7 +117,8 @@ func TestWebhookCustomTemplate(t *testing.T) {
 		}},
 	})
 
-	n.Send(context.Background(), "CPU alert", "CPU is high")
+	n.Send("CPU alert", "CPU is high")
+	n.Stop()
 
 	want := `{"summary":"CPU alert","detail":"CPU is high"}`
 	if gotBody != want {
@@ -146,7 +151,8 @@ func TestMultipleWebhooks(t *testing.T) {
 		},
 	})
 
-	n.Send(context.Background(), "test", "body")
+	n.Send("test", "body")
+	n.Stop()
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -169,7 +175,8 @@ func TestWebhookDisabledSkipped(t *testing.T) {
 		},
 	})
 
-	n.Send(context.Background(), "test", "body")
+	n.Send("test", "body")
+	n.Stop()
 
 	if called {
 		t.Error("disabled webhook should not be called")
@@ -272,7 +279,8 @@ func TestWebhookHeaderSanitization(t *testing.T) {
 		}},
 	})
 
-	n.Send(context.Background(), "test", "body")
+	n.Send("test", "body")
+	n.Stop()
 
 	if strings.Contains(gotVal, "\r") || strings.Contains(gotVal, "\n") {
 		t.Errorf("header value should be sanitized, got %q", gotVal)

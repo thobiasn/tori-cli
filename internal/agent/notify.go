@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 )
@@ -32,13 +33,26 @@ type Channel interface {
 	Send(ctx context.Context, subject, body string) error
 }
 
+// notification is a queued alert message.
+type notification struct {
+	subject string
+	body    string
+}
+
 // Notifier sends alert notifications via configured channels.
+// Notifications are queued and sent asynchronously to avoid blocking the
+// collect loop when channels are slow or unreachable.
 type Notifier struct {
 	channels []Channel
+	queue    chan notification
+	wg       sync.WaitGroup // tracks run goroutine
+	pending  sync.WaitGroup // tracks queued-but-unprocessed items
+	stopOnce sync.Once
 }
 
 // NewNotifier creates a Notifier from config. Safe to call with zero-value config;
-// Send becomes a no-op if no channels are enabled.
+// Send becomes a no-op if no channels are enabled. If channels are configured,
+// a background goroutine is started to process the queue — call Stop to shut it down.
 func NewNotifier(cfg *NotifyConfig) *Notifier {
 	var channels []Channel
 	if cfg.Email.Enabled {
@@ -50,15 +64,55 @@ func NewNotifier(cfg *NotifyConfig) *Notifier {
 			channels = append(channels, newWebhookChannel(*wh))
 		}
 	}
-	return &Notifier{channels: channels}
+	n := &Notifier{
+		channels: channels,
+		queue:    make(chan notification, 64),
+	}
+	if len(channels) > 0 {
+		n.wg.Add(1)
+		go n.run()
+	}
+	return n
 }
 
-// Send dispatches the alert to all enabled channels with retry. Errors are logged,
-// never returned — alerting must not block the collect loop.
-func (n *Notifier) Send(ctx context.Context, subject, body string) {
-	for _, ch := range n.channels {
-		sendWithRetry(ctx, ch, subject, body)
+func (n *Notifier) run() {
+	defer n.wg.Done()
+	for msg := range n.queue {
+		for _, ch := range n.channels {
+			sendWithRetry(context.Background(), ch, msg.subject, msg.body)
+		}
+		n.pending.Done()
 	}
+}
+
+// Send queues a notification for async delivery. If the queue is full, the
+// notification is dropped with a warning. This never blocks the caller.
+func (n *Notifier) Send(subject, body string) {
+	if len(n.channels) == 0 {
+		return
+	}
+	n.pending.Add(1)
+	select {
+	case n.queue <- notification{subject, body}:
+	default:
+		n.pending.Done()
+		slog.Warn("notification queue full, dropping", "subject", subject)
+	}
+}
+
+// Flush waits for all queued notifications to be processed.
+func (n *Notifier) Flush() {
+	n.pending.Wait()
+}
+
+// Stop closes the notification queue and waits for remaining items to drain.
+// Safe to call multiple times.
+func (n *Notifier) Stop() {
+	if len(n.channels) == 0 {
+		return
+	}
+	n.stopOnce.Do(func() { close(n.queue) })
+	n.wg.Wait()
 }
 
 // sendWithRetry attempts to send a notification up to 3 times with backoff (1s, 3s).

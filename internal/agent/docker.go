@@ -19,11 +19,14 @@ type DockerCollector struct {
 	exclude []string
 
 	// Previous CPU readings per container for delta calculation.
-	prevCPU map[string]cpuPrev
+	prevCPU   map[string]cpuPrev
+	prevCPUMu sync.Mutex // protects prevCPU for parallel stats fetching
 
 	// Cached container list from last Collect, protected by mu.
 	lastContainers []Container
-	mu             sync.RWMutex
+	// Cached container-ID-to-project mapping, rebuilt each Collect.
+	projectMap map[string]string
+	mu         sync.RWMutex
 
 	// Cached inspect results for non-running containers to avoid redundant API calls.
 	inspectCache map[string]inspectResult
@@ -88,6 +91,14 @@ func (d *DockerCollector) Containers() []Container {
 	out := make([]Container, len(d.lastContainers))
 	copy(out, d.lastContainers)
 	return out
+}
+
+// ContainerProject returns the project for a container ID using the cached map.
+// Returns "" if unknown. O(1) lookup, no allocation.
+func (d *DockerCollector) ContainerProject(id string) string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.projectMap[id]
 }
 
 // SetTracking updates the runtime tracking state.
@@ -182,6 +193,17 @@ const sizeCollectInterval = 12
 // inspectCacheTTL controls how long inspect results are cached before refresh.
 const inspectCacheTTL = 30 * time.Second
 
+// statsWorkers limits concurrent ContainerStatsOneShot API calls.
+const statsWorkers = 4
+
+// statsWork describes a running container that needs stats fetched.
+type statsWork struct {
+	id, name, image     string
+	project, service    string
+	ir                  inspectResult
+	diskUsage           uint64
+}
+
 func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Container, error) {
 	collectSize := d.sizeCollectN%sizeCollectInterval == 0
 	d.sizeCollectN++
@@ -194,7 +216,9 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 	var metrics []ContainerMetrics
 	var all []Container     // for lastContainers (TUI visibility)
 	var tracked []Container // returned for log sync / alert eval
+	var pending []statsWork // running tracked containers needing stats
 
+	// Phase 1: Sequential — filter, inspect, categorize.
 	for _, c := range containers {
 		if ctx.Err() != nil {
 			return nil, nil, ctx.Err()
@@ -205,14 +229,10 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 			continue
 		}
 
-		// Inspect for health, startedAt, restartCount, exitCode.
-		// Cache results for non-running containers; evict running ones for fresh data.
 		image := truncate(c.Image, maxImageLen)
 		project := c.Labels["com.docker.compose.project"]
 		service := c.Labels["com.docker.compose.service"]
-		// Cache inspect results with a TTL. Running containers refresh every
-		// inspectCacheTTL; non-running containers rarely change state so
-		// their cached results are reused until eviction.
+
 		var ir inspectResult
 		if cached, ok := d.inspectCache[c.ID]; ok && time.Since(cached.cachedAt) < inspectCacheTTL {
 			ir = cached
@@ -222,7 +242,6 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 			d.inspectCache[c.ID] = ir
 		}
 
-		// Cache container disk size when collected; use cached value otherwise.
 		if collectSize && c.SizeRw > 0 {
 			d.cachedSizes[c.ID] = c.SizeRw
 		}
@@ -245,7 +264,6 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 		}
 		all = append(all, ctr)
 
-		// Skip metrics collection for untracked containers.
 		if !d.IsTracked(name) {
 			continue
 		}
@@ -253,7 +271,6 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 
 		idProject, idService := serviceIdentity(project, service, name)
 
-		// Only get stats for running containers.
 		if c.State != "running" {
 			metrics = append(metrics, ContainerMetrics{
 				ID:           c.ID,
@@ -272,47 +289,61 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 			continue
 		}
 
-		m, err := d.containerStats(ctx, c.ID, name, image, c.State)
-		if err != nil {
-			slog.Warn("failed to get container stats", "container", name, "error", err)
-			metrics = append(metrics, ContainerMetrics{
-				ID:           c.ID,
-				Name:         name,
-				Image:        image,
-				State:        c.State,
-				Project:      idProject,
-				Service:      idService,
-				Health:       ir.health,
-				StartedAt:    ir.startedAt,
-				RestartCount: ir.restartCount,
-				ExitCode:     ir.exitCode,
-				CPULimit:     ir.cpuLimit,
-				DiskUsage:    diskUsage,
-			})
-			continue
-		}
-		m.Project = idProject
-		m.Service = idService
-		m.Health = ir.health
-		m.StartedAt = ir.startedAt
-		m.RestartCount = ir.restartCount
-		m.ExitCode = ir.exitCode
-		m.CPULimit = ir.cpuLimit
-		m.DiskUsage = diskUsage
-		// Override MemLimit: use configured limit from inspect (0 = no configured limit).
-		// The stats-based MemLimit equals host total memory when uncapped, which can't
-		// distinguish "has limit" from "no limit". MemPercent is already computed from
-		// stats before this override, so it stays correct in both cases.
-		if ir.memLimit > 0 {
-			m.MemLimit = uint64(ir.memLimit)
-		} else {
-			m.MemLimit = 0
-		}
-		metrics = append(metrics, *m)
+		pending = append(pending, statsWork{
+			id: c.ID, name: name, image: image,
+			project: idProject, service: idService,
+			ir: ir, diskUsage: diskUsage,
+		})
 	}
 
+	// Phase 2: Parallel — fetch stats for running tracked containers.
+	if len(pending) > 0 {
+		results := make([]ContainerMetrics, len(pending))
+		sem := make(chan struct{}, statsWorkers)
+		var wg sync.WaitGroup
+		for i, w := range pending {
+			wg.Add(1)
+			go func(i int, w statsWork) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				m, err := d.containerStats(ctx, w.id, w.name, w.image, "running")
+				if err != nil {
+					slog.Warn("failed to get container stats", "container", w.name, "error", err)
+				m = &ContainerMetrics{
+						ID: w.id, Name: w.name, Image: w.image, State: "running",
+					}
+				}
+				m.Project = w.project
+				m.Service = w.service
+				m.Health = w.ir.health
+				m.StartedAt = w.ir.startedAt
+				m.RestartCount = w.ir.restartCount
+				m.ExitCode = w.ir.exitCode
+				m.CPULimit = w.ir.cpuLimit
+				m.DiskUsage = w.diskUsage
+				if w.ir.memLimit > 0 {
+					m.MemLimit = uint64(w.ir.memLimit)
+				} else {
+					m.MemLimit = 0
+				}
+				results[i] = *m
+			}(i, w)
+		}
+		wg.Wait()
+		metrics = append(metrics, results...)
+	}
+
+	pm := make(map[string]string, len(all))
+	for _, c := range all {
+		if c.Project != "" {
+			pm[c.ID] = c.Project
+		}
+	}
 	d.mu.Lock()
 	d.lastContainers = all
+	d.projectMap = pm
 	d.mu.Unlock()
 
 	// Evict stale inspect cache entries for containers no longer present.
@@ -330,11 +361,13 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 			delete(d.cachedSizes, id)
 		}
 	}
+	d.prevCPUMu.Lock()
 	for id := range d.prevCPU {
 		if !seen[id] {
 			delete(d.prevCPU, id)
 		}
 	}
+	d.prevCPUMu.Unlock()
 
 	return metrics, tracked, nil
 }
@@ -404,12 +437,15 @@ func (d *DockerCollector) containerStats(ctx context.Context, id, name, image, s
 }
 
 // calcCPUPercent computes CPU percent from delta, same formula as `docker stats`.
+// Safe for concurrent calls (prevCPU map is mutex-protected).
 func (d *DockerCollector) calcCPUPercent(id string, stats *container.StatsResponse) float64 {
 	cpuTotal := stats.CPUStats.CPUUsage.TotalUsage
 	systemCPU := stats.CPUStats.SystemUsage
 
+	d.prevCPUMu.Lock()
 	prev, hasPrev := d.prevCPU[id]
 	d.prevCPU[id] = cpuPrev{containerCPU: cpuTotal, systemCPU: systemCPU}
+	d.prevCPUMu.Unlock()
 
 	if !hasPrev {
 		return CalcCPUPercentDelta(

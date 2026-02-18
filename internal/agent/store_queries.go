@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"time"
 )
@@ -181,6 +182,96 @@ func (s *Store) QueryFiringAlerts(ctx context.Context) ([]Alert, error) {
 }
 
 // --- Query methods ---
+
+// QueryHostMetricsGrouped returns host metrics aggregated into time buckets.
+// Each bucket contains MAX values. Returns at most (end-start)/bucketDur rows,
+// far fewer than the raw query. Used for downsampled historical views.
+func (s *Store) QueryHostMetricsGrouped(ctx context.Context, start, end, bucketDur int64) ([]TimedHostMetrics, error) {
+	if bucketDur <= 0 {
+		bucketDur = 1
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT ? + ((timestamp - ?) / ?) * ? AS bucket_ts,
+		 MAX(cpu_percent), MAX(mem_total), MAX(mem_used), MAX(mem_percent),
+		 MAX(mem_cached), MAX(mem_free), MAX(swap_total), MAX(swap_used),
+		 MAX(load1), MAX(load5), MAX(load15), MAX(uptime)
+		 FROM host_metrics WHERE timestamp >= ? AND timestamp <= ?
+		 GROUP BY (timestamp - ?) / ?
+		 ORDER BY bucket_ts`,
+		start, start, bucketDur, bucketDur,
+		start, end,
+		start, bucketDur)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []TimedHostMetrics
+	for rows.Next() {
+		var t TimedHostMetrics
+		var ts int64
+		if err := rows.Scan(&ts, &t.CPUPercent, &t.MemTotal, &t.MemUsed, &t.MemPercent,
+			&t.MemCached, &t.MemFree,
+			&t.SwapTotal, &t.SwapUsed, &t.Load1, &t.Load5, &t.Load15, &t.Uptime); err != nil {
+			return nil, err
+		}
+		t.Timestamp = time.Unix(ts, 0)
+		result = append(result, t)
+	}
+	return result, rows.Err()
+}
+
+// QueryContainerMetricsGrouped returns container metrics aggregated into time
+// buckets per service identity. Used for downsampled historical views.
+func (s *Store) QueryContainerMetricsGrouped(ctx context.Context, start, end, bucketDur int64, filters ...ContainerMetricsFilter) ([]TimedContainerMetrics, error) {
+	if bucketDur <= 0 {
+		bucketDur = 1
+	}
+	query := `SELECT ? + ((timestamp - ?) / ?) * ? AS bucket_ts,
+		 project, service,
+		 MAX(cpu_percent), MAX(mem_usage), MAX(mem_limit), MAX(mem_percent),
+		 MAX(net_rx), MAX(net_tx), MAX(block_read), MAX(block_write), MAX(pids)
+		 FROM container_metrics WHERE timestamp >= ? AND timestamp <= ?`
+	args := []any{start, start, bucketDur, bucketDur, start, end}
+
+	if len(filters) > 0 {
+		f := filters[0]
+		if f.Service != "" {
+			if f.Project != "" {
+				query += ` AND project = ? AND service = ?`
+				args = append(args, f.Project, f.Service)
+			} else {
+				query += ` AND service = ?`
+				args = append(args, f.Service)
+			}
+		} else if f.Project != "" {
+			query += ` AND project = ?`
+			args = append(args, f.Project)
+		}
+	}
+	query += ` GROUP BY (timestamp - ?) / ?, project, service ORDER BY project, service, bucket_ts`
+	args = append(args, start, bucketDur)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []TimedContainerMetrics
+	for rows.Next() {
+		var t TimedContainerMetrics
+		var ts int64
+		if err := rows.Scan(&ts, &t.Project, &t.Service,
+			&t.CPUPercent, &t.MemUsage, &t.MemLimit, &t.MemPercent,
+			&t.NetRx, &t.NetTx, &t.BlockRead, &t.BlockWrite, &t.PIDs); err != nil {
+			return nil, err
+		}
+		t.Timestamp = time.Unix(ts, 0)
+		result = append(result, t)
+	}
+	return result, rows.Err()
+}
 
 func (s *Store) QueryHostMetrics(ctx context.Context, start, end int64) ([]TimedHostMetrics, error) {
 	rows, err := s.db.QueryContext(ctx,
@@ -475,18 +566,48 @@ func (s *Store) LoadTracking(ctx context.Context) ([]string, error) {
 	return containers, rows.Err()
 }
 
-// Prune deletes data older than the retention period.
+// pruneBatchSize limits the number of rows deleted per batch to avoid long-running
+// transactions that block other database operations (inserts, queries).
+const pruneBatchSize = 5000
+
+// Prune deletes data older than the retention period in batches.
 func (s *Store) Prune(ctx context.Context, retentionDays int) error {
 	cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour).Unix()
 
 	tables := []string{"host_metrics", "disk_metrics", "net_metrics", "container_metrics", "logs"}
 	for _, table := range tables {
-		if _, err := s.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE timestamp < ?", table), cutoff); err != nil {
+		if err := s.pruneTable(ctx, table, "timestamp", cutoff); err != nil {
 			return fmt.Errorf("prune %s: %w", table, err)
 		}
 	}
-	if _, err := s.db.ExecContext(ctx, "DELETE FROM alerts WHERE fired_at < ?", cutoff); err != nil {
+	if err := s.pruneTable(ctx, "alerts", "fired_at", cutoff); err != nil {
 		return fmt.Errorf("prune alerts: %w", err)
 	}
+
+	// Checkpoint WAL to reclaim file space, then ask Go to release memory.
+	s.db.ExecContext(ctx, "PRAGMA wal_checkpoint(PASSIVE)")
+	debug.FreeOSMemory()
+
 	return nil
+}
+
+// pruneTable deletes rows where column < cutoff in batches of pruneBatchSize.
+func (s *Store) pruneTable(ctx context.Context, table, column string, cutoff int64) error {
+	query := fmt.Sprintf(
+		"DELETE FROM %s WHERE rowid IN (SELECT rowid FROM %s WHERE %s < ? LIMIT ?)",
+		table, table, column,
+	)
+	for {
+		res, err := s.db.ExecContext(ctx, query, cutoff, pruneBatchSize)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n < pruneBatchSize {
+			return nil
+		}
+	}
 }

@@ -22,6 +22,11 @@ func testSocketServer(t *testing.T, store *Store) (*SocketServer, *Hub, string) 
 			{ID: "def456", Name: "api", Image: "node", State: "running", Project: "myapp"},
 			{ID: "ghi789", Name: "db", Image: "postgres", State: "running", Project: "other"},
 		},
+		projectMap: map[string]string{
+			"abc123": "myapp",
+			"def456": "myapp",
+			"ghi789": "other",
+		},
 		tracked: make(map[string]bool),
 	}
 	ss := NewSocketServer(hub, store, dc, nil, 7)
@@ -41,6 +46,9 @@ func testSocketServerWithAlerter(t *testing.T, store *Store, alerter *Alerter) (
 		prevCPU: make(map[string]cpuPrev),
 		lastContainers: []Container{
 			{ID: "abc123", Name: "web", Image: "nginx", State: "running", Project: "myapp"},
+		},
+		projectMap: map[string]string{
+			"abc123": "myapp",
 		},
 		tracked: make(map[string]bool),
 	}
