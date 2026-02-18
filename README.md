@@ -1,13 +1,13 @@
 # tori ─(•)>
 
-Lightweight server monitoring for Docker environments. A single binary that replaces the Grafana+Prometheus+Loki stack when all you need is a terminal.
+Server monitoring without the infrastructure. A single binary and an SSH connection — metrics, logs, and alerts for your Docker hosts.
 
 ![tori demo](https://github.com/user-attachments/assets/869f8dad-3f3b-4910-a5a1-069c5e482da0)
 
 <details>
 <summary>Disclaimer</summary>
 
-This project is still very much in development and being tested. I was frustrated that I couldn't find the monitoring/alerting solution that was just right for small scale hosting on a single or multiple VPSs so I decided to build the thing that was just right for my needs. What I'm saying is that you should use this at your own risk, don't expect all features to work yet. Feel free to open issues if you encounter something but don't expect a professional team to solve your specific needs.
+This project is still very much in development and being tested. I was frustrated that I couldn't find the monitoring/alerting solution that was just right for smaller scale hosting on a single or multiple VPSs so I decided to build the thing that was just right for my needs. What I'm saying is that you should use this at your own risk, don't expect all features to work yet. If you do find bugs or are missing features that you would like to see, id very much appreciate you open a new issue. I hope you will enjoy tori as much as I am :)
 
 </details>
 
