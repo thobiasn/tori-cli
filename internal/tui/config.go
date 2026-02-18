@@ -30,11 +30,12 @@ type Config struct {
 	Display DisplayConfig           `toml:"display"`
 }
 
-// DefaultConfigPath returns ~/.config/tori/config.toml using os.UserConfigDir.
+// DefaultConfigPath returns $XDG_CONFIG_HOME/tori/config.toml,
+// falling back to ~/.config/tori/config.toml if unset.
 func DefaultConfigPath() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return filepath.Join(os.Getenv("HOME"), ".config", "tori", "config.toml")
+	dir := os.Getenv("XDG_CONFIG_HOME")
+	if dir == "" {
+		dir = filepath.Join(os.Getenv("HOME"), ".config")
 	}
 	return filepath.Join(dir, "tori", "config.toml")
 }
