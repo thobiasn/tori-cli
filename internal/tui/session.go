@@ -41,7 +41,8 @@ type Session struct {
 	HostCPUHist     *RingBuffer[float64]
 	HostMemHist     *RingBuffer[float64]
 	Rates           *RateCalc
-	BackfillPending bool // true while a backfill query is in-flight
+	BackfillPending bool   // true while a backfill query is in-flight
+	BackfillGen     uint64 // incremented on each window change; stale responses are discarded
 	RetentionDays   int  // reported by agent, limits zoom range
 
 	// Detail view state.

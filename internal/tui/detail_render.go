@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -63,7 +64,7 @@ func renderDetail(a *App, s *Session, width, height int) string {
 	}
 
 	// 8. Logs.
-	sections = append(sections, renderDetailLogs(det, s, contentW, logH, a.display, theme))
+	sections = append(sections, renderDetailLogs(det, s, contentW, logH, a.display, theme, a.spinnerFrame))
 
 	// 8.5. Filter bar (when search/filter is active).
 	if det.isSearchActive() {
@@ -84,7 +85,7 @@ func renderDetail(a *App, s *Session, width, height int) string {
 
 	// Overlay modals.
 	if det.expandModal != nil {
-		modal := renderExpandModal(det.expandModal, width, height, theme, a.display)
+		modal := renderExpandModal(det.expandModal, width, height, theme, a.display, det.searchRe)
 		result = Overlay(result, modal, width, height)
 	} else if det.filterModal != nil {
 		modal := renderFilterModal(det.filterModal, width, height, theme, a.display)
@@ -345,8 +346,8 @@ func renderDetailGraphs(a *App, det *DetailState, s *Session, w int, theme *Them
 	}
 	memStr := rightAlign(fmt.Sprintf(" %s", formatBytes(memVal)), pctW)
 
-	cpuTop, cpuBot := Sparkline(det.cpuHist.Data(), graphW, theme.GraphCPU)
-	memTop, memBot := Sparkline(det.memHist.Data(), graphW, theme.GraphMem)
+	cpuTop, cpuBot := Sparkline(det.cpuHist.Data(), graphW, theme.GraphCPU, cpuLimit*100)
+	memTop, memBot := Sparkline(det.memHist.Data(), graphW, theme.GraphMem, float64(memLimit))
 
 	// Severity-colored values with FgBright as calm baseline.
 	var memPct float64
@@ -438,13 +439,17 @@ func formatCompactDuration(d time.Duration) string {
 	return fmt.Sprintf("%dd", int(d.Hours())/24)
 }
 
-func renderDetailLogs(det *DetailState, s *Session, w, maxH int, cfg DisplayConfig, theme *Theme) string {
+func renderDetailLogs(det *DetailState, s *Session, w, maxH int, cfg DisplayConfig, theme *Theme, frame int) string {
 	data := det.filteredData()
 
 	// Visible window.
 	innerH := maxH
 	if innerH < 1 {
 		innerH = 1
+	}
+
+	if det.logBackfillPending {
+		return LoadingLogs(frame, w, innerH, theme.FgDim)
 	}
 
 	if len(data) == 0 {
@@ -497,7 +502,7 @@ func renderDetailLogs(det *DetailState, s *Session, w, maxH int, cfg DisplayConf
 		}
 
 		tsStr := time.Unix(entry.Timestamp, 0).Format(tsFormat)
-		line := formatLogLine(entry, w, theme, tsStr, nameW, displayName)
+		line := formatLogLine(entry, w, theme, tsStr, nameW, displayName, det.searchRe)
 		if i == det.logCursor {
 			line = cursorRow(line, w)
 		}
@@ -526,8 +531,8 @@ func renderLogStatus(det *DetailState, w int, theme *Theme) string {
 		countStr += muted.Render(" of ") + fg.Render(formatNumber(det.totalLogCount))
 	}
 	status := countStr + muted.Render(" lines")
-	if det.filterStream != "" {
-		status += sep + muted.Render(det.filterStream)
+	if det.filterLevel != "" {
+		status += sep + levelColor(det.filterLevel, theme).Render(det.filterLevel)
 	}
 	if det.isSearchActive() || det.logPaused {
 		status += sep + muted.Render("PAUSED")
@@ -537,17 +542,21 @@ func renderLogStatus(det *DetailState, w int, theme *Theme) string {
 	return centerText(status, w)
 }
 
-func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsStr string, nameW int, displayName string) string {
+func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsStr string, nameW int, displayName string, searchRe *regexp.Regexp) string {
 	tsW := len([]rune(tsStr))
 	muted := mutedStyle(theme)
-
-	// Parse log message for clean text and level.
-	parsed := parseLogMessage(entry.Message)
 
 	// Synthetic lifecycle events — centered like date separators.
 	if entry.Stream == "event" {
 		style := lipgloss.NewStyle().Foreground(theme.FgDim)
 		return centerText(style.Render("— "+sanitizeLogMsg(entry.Message)+" —"), width)
+	}
+
+	// Use pre-computed level and display message from protocol.
+	level := entry.Level
+	msg := entry.DisplayMsg
+	if msg == "" {
+		msg = entry.Message
 	}
 
 	// Left side: "ts [name] [level]" with natural single-space separation.
@@ -561,9 +570,9 @@ func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsStr st
 		left += " " + muted.Render(displayed)
 		leftUsed += 1 + len([]rune(displayed))
 	}
-	if parsed.level != "" {
-		left += " " + levelColor(parsed.level, theme).Render(parsed.level)
-		leftUsed += 1 + len(parsed.level)
+	if level != "" {
+		left += " " + levelColor(level, theme).Render(level)
+		leftUsed += 1 + len(level)
 	}
 
 	overhead := leftUsed + 1
@@ -571,10 +580,15 @@ func formatLogLine(entry protocol.LogEntryMsg, width int, theme *Theme, tsStr st
 	if msgW < 10 {
 		msgW = 10
 	}
-	msgStyle := lipgloss.NewStyle().Foreground(theme.FgBright)
-	msg := msgStyle.Render(Truncate(sanitizeLogMsg(parsed.message), msgW))
+	truncated := Truncate(sanitizeLogMsg(msg), msgW)
+	var rendered string
+	if searchRe != nil {
+		rendered = highlightMatches(truncated, searchRe, theme)
+	} else {
+		rendered = lipgloss.NewStyle().Foreground(theme.FgBright).Render(truncated)
+	}
 
-	return left + " " + msg
+	return left + " " + rendered
 }
 
 // levelColor returns the style for a log level string.
@@ -602,6 +616,7 @@ func renderDetailHelp(w int, searchActive bool, theme *Theme) string {
 		{"esc", escLabel},
 		{"j/k", "scroll"},
 		{"f", "filter"},
+		{"s", "level"},
 		{"i", "info"},
 		{"?", "help"},
 	}, w, theme)
@@ -613,6 +628,9 @@ func renderFilterBar(det *DetailState, w int, cfg DisplayConfig, theme *Theme) s
 	sep := muted.Render(" · ")
 
 	var parts []string
+	if det.filterLevel != "" {
+		parts = append(parts, muted.Render("level ")+levelColor(det.filterLevel, theme).Render(det.filterLevel))
+	}
 	if det.searchText != "" {
 		parts = append(parts, muted.Render("search ")+fg.Render(Truncate(det.searchText, 20)))
 	}

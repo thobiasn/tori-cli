@@ -300,7 +300,7 @@ func renderHelpModal(a *App, _ *Session, width, height int) string {
 			{"h/l", "navigate filter fields"},
 			{"G", "jump to latest"},
 			{"enter", "expand log entry"},
-			{"s", "cycle stream filter"},
+			{"s", "cycle level filter"},
 			{"f", "open filter dialog"},
 			{"+/-", "zoom time range"},
 			{"i", "toggle info overlay"},

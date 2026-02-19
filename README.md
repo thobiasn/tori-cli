@@ -15,7 +15,7 @@ This project is still very much in development and being tested. I was frustrate
 
 - Host metrics — CPU, memory, disk, network, swap, load averages
 - Docker container monitoring — status, stats, health checks, restart tracking
-- Container log tailing with filtering by container, compose group, text search, date/time and stream
+- Container log tailing with regex search, log level filtering, match highlighting, and date/time filtering
 - Alerting with configurable rules, email (SMTP), and webhook notifications
 - SQLite storage with configurable retention
 - Multi-server support — monitor multiple hosts from one terminal
@@ -435,10 +435,10 @@ The `[theme]` section overrides individual TUI colors. By default all colors use
 | `j`/`k` | Scroll logs |
 | `G` | Jump to latest |
 | `Enter` | Expand log entry |
-| `s` | Cycle stream filter (all/stdout/stderr) |
-| `f` | Open filter dialog |
+| `s` | Cycle log level filter (ERR → WARN → INFO → DBUG → all) |
+| `f` | Open filter dialog (regex search, date/time range) |
 | `i` | Toggle info overlay |
-| `Esc` | Back to dashboard |
+| `Esc` | Clear active filter / back to dashboard |
 
 ## Updating
 

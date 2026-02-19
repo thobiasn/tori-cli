@@ -4,7 +4,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/thobiasn/tori-cli/internal/protocol"
 )
 
 // handleDetailKey handles keys when the detail view is active.
@@ -45,29 +44,30 @@ func (a *App) handleDetailKey(msg tea.KeyMsg) (App, tea.Cmd) {
 	switch key {
 	case "esc":
 		if det.isSearchActive() {
-			det.searchText = ""
+			det.setSearchText("")
+			det.filterLevel = ""
 			det.filterFrom = 0
 			det.filterTo = 0
 			return *a, refetchLogs(det, s.Client, s.RetentionDays)
 		}
-		if det.filterStream != "" {
-			det.filterStream = ""
-			det.resetLogPosition()
-			return *a, nil
-		}
 		return *a, a.leaveDetail()
 
 	case "s":
-		switch det.filterStream {
+		switch det.filterLevel {
 		case "":
-			det.filterStream = "stdout"
-		case "stdout":
-			det.filterStream = "stderr"
+			det.filterLevel = "ERR"
+		case "ERR":
+			det.filterLevel = "WARN"
+		case "WARN":
+			det.filterLevel = "INFO"
+		case "INFO":
+			det.filterLevel = "DBUG"
 		default:
-			det.filterStream = ""
+			det.filterLevel = ""
 		}
-		det.resetLogPosition()
-		return *a, nil
+		// Level filtering is server-side, so refetch.
+		det.resetLogs()
+		return *a, fireSearch(det, s.Client, s.RetentionDays)
 
 	case "f":
 		now := time.Now()
@@ -166,17 +166,13 @@ func updateFilterModal(det *DetailState, s *Session, key string, cfg DisplayConf
 			m.focus = 0
 		}
 	case "enter":
-		det.searchText = m.text
+		det.setSearchText(m.text)
 		det.filterFrom = parseFilterBound(m.fromDate.resolved(), m.fromTime.resolved(), cfg.DateFormat, cfg.TimeFormat, false)
 		det.filterTo = parseFilterBound(m.toDate.resolved(), m.toTime.resolved(), cfg.DateFormat, cfg.TimeFormat, true)
 		det.filterModal = nil
 
 		if det.isSearchActive() {
-			det.logs = NewRingBuffer[protocol.LogEntryMsg](logBufCapacity)
-			det.logScroll = 0
-			det.logCursor = 0
-			det.logPaused = false
-			det.backfilled = false
+			det.resetLogs()
 			return fireSearch(det, s.Client, s.RetentionDays)
 		}
 		return refetchLogs(det, s.Client, s.RetentionDays)

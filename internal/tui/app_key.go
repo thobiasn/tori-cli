@@ -186,16 +186,17 @@ func (a *App) handleZoom(key string) tea.Cmd {
 	// Clear history so graphs show fresh data from the backfill.
 	s.HostCPUHist = NewRingBuffer[float64](histBufSize)
 	s.HostMemHist = NewRingBuffer[float64](histBufSize)
+	s.BackfillGen++
 	s.BackfillPending = true
 
-	cmds := []tea.Cmd{backfillMetrics(s.Client, a.windowSeconds())}
+	cmds := []tea.Cmd{backfillMetrics(s.Client, a.windowSeconds(), s.BackfillGen)}
 
 	// Re-backfill detail metrics when in detail view.
 	if a.view == viewDetail {
 		s.Detail.cpuHist = NewRingBuffer[float64](histBufSize)
 		s.Detail.memHist = NewRingBuffer[float64](histBufSize)
+		s.Detail.metricsGen++
 		s.Detail.metricsBackfilled = false
-		s.Detail.metricsBackfillPending = false
 		if cmd := s.Detail.onSwitch(s.Client, a.windowSeconds(), s.RetentionDays); cmd != nil {
 			cmds = append(cmds, cmd)
 		}

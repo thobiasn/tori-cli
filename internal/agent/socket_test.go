@@ -596,11 +596,11 @@ func TestSocketStreamLogsWithFilters(t *testing.T) {
 			want: 1,
 		},
 		{
-			name:   "stream filter",
-			filter: protocol.SubscribeLogs{Stream: "stderr"},
+			name:   "level filter",
+			filter: protocol.SubscribeLogs{Level: "ERR"},
 			entries: []*protocol.LogEntryMsg{
-				{ContainerID: "abc123", ContainerName: "web", Stream: "stderr", Message: "error"},
-				{ContainerID: "abc123", ContainerName: "web", Stream: "stdout", Message: "info"},
+				{ContainerID: "abc123", ContainerName: "web", Stream: "stderr", Message: "error", Level: "ERR"},
+				{ContainerID: "abc123", ContainerName: "web", Stream: "stdout", Message: "info", Level: "INFO"},
 			},
 			want: 1,
 		},
@@ -1294,5 +1294,34 @@ func TestSocketFileCleanedUpOnStop(t *testing.T) {
 	// Verify socket file is removed.
 	if _, err := os.Stat(path); err == nil {
 		t.Error("socket file should be removed after Stop()")
+	}
+}
+
+func TestValidLogLevel(t *testing.T) {
+	tests := []struct {
+		level string
+		want  bool
+	}{
+		{"", true},
+		{"ERR", true},
+		{"WARN", true},
+		{"INFO", true},
+		{"DBUG", true},
+		{"error", false},
+		{"warn", false},
+		{"info", false},
+		{"debug", false},
+		{"CRITICAL", false},
+		{"DEBUG", false},
+		{"TRACE", false},
+		{"nonsense", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.level, func(t *testing.T) {
+			got := validLogLevel(tt.level)
+			if got != tt.want {
+				t.Errorf("validLogLevel(%q) = %v, want %v", tt.level, got, tt.want)
+			}
+		})
 	}
 }

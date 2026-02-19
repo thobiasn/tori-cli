@@ -2,6 +2,7 @@ package tui
 
 import (
 	"math"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -42,16 +43,98 @@ func waveHeight(idx, totalSamples, frame int) int {
 	return int(math.Round((v+1)/2*4)) + 1
 }
 
+// shimmerDensity maps a 0–3 level to braille characters of increasing density.
+// Used for the log loading skeleton shimmer effect.
+var shimmerDensity = [4]rune{
+	0x2824, // ⠤ dots 3,6 — thin horizontal
+	0x2836, // ⠶ dots 2,3,5,6 — medium
+	0x28F6, // ⣶ dots 2,3,5,6,7,8 — thick
+	0x28FF, // ⣿ all dots — full
+}
+
+// LoadingLogs generates animated skeleton log lines using braille characters.
+// Each line mimics a log entry shape (timestamp block + message block of varying width).
+// A diagonal shimmer wave sweeps through, cycling braille density.
+func LoadingLogs(frame, width, height int, color lipgloss.Color) string {
+	if width < 1 || height < 1 {
+		return ""
+	}
+
+	tsW := 8 // timestamp placeholder width
+	gap := 2 // gap between timestamp and message
+	maxMsgW := width - tsW - gap
+	if maxMsgW < 4 {
+		maxMsgW = 4
+	}
+
+	style := lipgloss.NewStyle().Foreground(color)
+	lines := make([]string, height)
+
+	for y := 0; y < height; y++ {
+		// Deterministic pseudo-random message width per line (30%–90% of available).
+		frac := float64((y*17+7)%31) / 31.0
+		msgW := int(frac*float64(maxMsgW)*0.6) + maxMsgW*3/10
+		if msgW > maxMsgW {
+			msgW = maxMsgW
+		}
+
+		buf := make([]rune, width)
+		for x := 0; x < width; x++ {
+			inTs := x < tsW
+			inMsg := x >= tsW+gap && x < tsW+gap+msgW
+			if !inTs && !inMsg {
+				buf[x] = ' '
+				continue
+			}
+
+			// Diagonal shimmer: sine wave with ~1.5 cycles, scrolling.
+			phase := 2 * math.Pi * float64(x+y*4) / float64(width) * 1.5
+			scroll := 2 * math.Pi * float64(frame) / 16
+			v := (math.Sin(phase-scroll) + 1) / 2 // 0..1
+
+			// Bias toward sparse: only the peak reaches full density.
+			level := int(v * 3.99)
+			buf[x] = shimmerDensity[level]
+		}
+		lines[y] = style.Render(string(buf))
+	}
+	return strings.Join(lines, "\n")
+}
+
 // ceilingSteps are the discrete scaling ceilings for braille sparklines.
 // The sparkline picks the first step where peak < step * 0.85, giving ~15% headroom.
 var ceilingSteps = [...]float64{10, 15, 25, 50, 75, 100}
 
+// selectCeiling determines the y-axis ceiling for a sparkline.
+// When knownMax > 0, the data has a known upper bound (e.g. 100% for host
+// metrics, MemLimit bytes for capped containers) and hitting it fills the graph.
+// When knownMax is 0, the ceiling is auto-scaled from the peak: a discrete step
+// is chosen if the peak fits, otherwise peak/0.85 gives ~15% headroom.
+func selectCeiling(peak, knownMax float64) float64 {
+	if knownMax > 0 {
+		return knownMax
+	}
+	maxStep := ceilingSteps[len(ceilingSteps)-1]
+	ceiling := maxStep
+	if peak > maxStep {
+		ceiling = peak / 0.85
+	}
+	for _, step := range ceilingSteps {
+		if peak < step*0.85 {
+			return step
+		}
+	}
+	return ceiling
+}
+
 // Sparkline renders a 2-row braille sparkline in a fixed color.
 // Each braille character encodes two adjacent data points (left and right
 // columns), and two vertically stacked characters give 8 levels of resolution.
-// Values are auto-scaled against a discrete ceiling derived from the peak.
+// When max > 0, it is used as the ceiling directly — the data has a known
+// upper bound and hitting it fills the graph. When max is 0, values are
+// auto-scaled against a discrete ceiling derived from the peak.
 // Returns (topRow, bottomRow) as separately styled strings.
-func Sparkline(data []float64, width int, color lipgloss.Color) (string, string) {
+func Sparkline(data []float64, width int, color lipgloss.Color, knownMax float64) (string, string) {
 	if width < 1 {
 		return "", ""
 	}
@@ -66,14 +149,7 @@ func Sparkline(data []float64, width int, color lipgloss.Color) (string, string)
 		}
 	}
 
-	// Select ceiling: first step where peak < step * 0.85.
-	ceiling := ceilingSteps[len(ceilingSteps)-1]
-	for _, step := range ceilingSteps {
-		if peak < step*0.85 {
-			ceiling = step
-			break
-		}
-	}
+	ceiling := selectCeiling(peak, knownMax)
 
 	topChars := make([]rune, width)
 	botChars := make([]rune, width)

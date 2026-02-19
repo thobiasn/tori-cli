@@ -403,15 +403,6 @@ func TestQueryLogs(t *testing.T) {
 		t.Fatalf("container filter: got %d, want 2", len(results))
 	}
 
-	// Filter by stream.
-	results, err = s.QueryLogs(ctx, LogFilter{Start: ts.Unix(), End: ts.Unix(), Stream: "stderr"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("stream filter: got %d, want 1", len(results))
-	}
-
 	// Filter by search.
 	results, err = s.QueryLogs(ctx, LogFilter{Start: ts.Unix(), End: ts.Unix(), Search: "error"})
 	if err != nil {
@@ -852,6 +843,145 @@ func TestCountLogs(t *testing.T) {
 	}
 	if count != 2 {
 		t.Errorf("by service = %d, want 2", count)
+	}
+}
+
+func TestQueryLogsRegexSearch(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stdout", Message: "error: connection refused"},
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stdout", Message: "warning: timeout after 30s"},
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stdout", Message: "info: server started on port 8080"},
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stdout", Message: "debug: request id=abc123"},
+	})
+
+	tests := []struct {
+		name    string
+		search  string
+		isRegex bool
+		want    int
+	}{
+		{"literal match", "connection refused", false, 1},
+		{"regex alternation", "error|warning", true, 2},
+		{"regex digit pattern", "\\d+s", true, 1},           // matches "30s"
+		{"regex port pattern", "port \\d{4}", true, 1},      // matches "port 8080"
+		{"case insensitive", "ERROR", true, 1},               // (?i) prefix applied in QueryLogs
+		{"regex anchored", "^info:", true, 1},                // matches line starting with info:
+		{"no match", "foobar", false, 0},
+		{"dot star", "error.*refused", true, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results, err := s.QueryLogs(ctx, LogFilter{
+				Start:         ts.Unix(),
+				End:           ts.Unix(),
+				Search:        tt.search,
+				SearchIsRegex: tt.isRegex,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(results) != tt.want {
+				t.Errorf("search %q: got %d results, want %d", tt.search, len(results), tt.want)
+			}
+		})
+	}
+}
+
+func TestQueryLogsInvalidRegexFallback(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stdout", Message: "open bracket [ in message"},
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stdout", Message: "normal log line"},
+	})
+
+	// "[" is invalid regex — should fall back to LIKE match.
+	results, err := s.QueryLogs(ctx, LogFilter{
+		Start:  ts.Unix(),
+		End:    ts.Unix(),
+		Search: "[",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Errorf("invalid regex fallback: got %d results, want 1", len(results))
+	}
+}
+
+func TestQueryLogsLevelFilter(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stderr", Message: "fail", Level: "ERR"},
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stderr", Message: "slow", Level: "WARN"},
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stdout", Message: "ok", Level: "INFO"},
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stdout", Message: "trace", Level: "DBUG"},
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stdout", Message: "plain", Level: ""},
+	})
+
+	tests := []struct {
+		level string
+		want  int
+	}{
+		{"ERR", 1},
+		{"WARN", 1},
+		{"INFO", 1},
+		{"DBUG", 1},
+		{"", 5}, // no filter returns all
+	}
+	for _, tt := range tests {
+		t.Run("level_"+tt.level, func(t *testing.T) {
+			results, err := s.QueryLogs(ctx, LogFilter{
+				Start: ts.Unix(),
+				End:   ts.Unix(),
+				Level: tt.level,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(results) != tt.want {
+				t.Errorf("level %q: got %d results, want %d", tt.level, len(results), tt.want)
+			}
+		})
+	}
+}
+
+func TestQueryLogsLevelAndSearch(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stderr", Message: "connection refused", Level: "ERR"},
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stderr", Message: "disk full", Level: "ERR"},
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stderr", Message: "connection timeout", Level: "WARN"},
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stdout", Message: "connection established", Level: "INFO"},
+	})
+
+	// Level ERR + search "connection" should match only the first entry.
+	results, err := s.QueryLogs(ctx, LogFilter{
+		Start:  ts.Unix(),
+		End:    ts.Unix(),
+		Level:  "ERR",
+		Search: "connection",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Errorf("level+search: got %d results, want 1", len(results))
+	}
+	if len(results) > 0 && results[0].Message != "connection refused" {
+		t.Errorf("got message %q, want %q", results[0].Message, "connection refused")
 	}
 }
 

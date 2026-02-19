@@ -57,6 +57,8 @@ func New(cfg *Config, cfgPath string) (*Agent, error) {
 			ContainerName: e.ContainerName,
 			Stream:        e.Stream,
 			Message:       e.Message,
+			Level:         e.Level,
+			DisplayMsg:    e.DisplayMsg,
 		})
 	}
 

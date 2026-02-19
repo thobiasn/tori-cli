@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -29,6 +30,9 @@ const maxDownsamplePoints = 4096
 
 // maxLogLimit caps the Limit parameter in log queries.
 const maxLogLimit = 10000
+
+// maxSearchLen caps the Search string in log queries and subscriptions.
+const maxSearchLen = 512
 
 // SocketServer serves protocol messages over a Unix domain socket.
 type SocketServer struct {
@@ -326,12 +330,28 @@ func (c *connState) subscribeLogs(env *protocol.Envelope) {
 		}
 	}
 
+	if !validLogLevel(filter.Level) {
+		filter.Level = ""
+	}
+
+	// Compile search regex once before the goroutine.
+	filter.Search = truncate(filter.Search, maxSearchLen)
+	var searchRe *regexp.Regexp
+	if filter.Search != "" {
+		re, err := regexp.Compile("(?i)" + filter.Search)
+		if err != nil {
+			re = regexp.MustCompile("(?i)" + regexp.QuoteMeta(filter.Search))
+		}
+		searchRe = re
+	}
+
 	sub, ch := c.ss.hub.Subscribe(TopicLogs)
 	ctx, cancel := context.WithCancel(c.ctx)
 	c.subs[TopicLogs] = &subscription{sub: sub, topic: TopicLogs, cancel: cancel}
 
 	// Capture project name for dynamic resolution (not a snapshot of IDs).
 	project := filter.Project
+	level := filter.Level
 
 	go func() {
 		for {
@@ -353,10 +373,10 @@ func (c *connState) subscribeLogs(env *protocol.Envelope) {
 				if project != "" && c.ss.docker.ContainerProject(entry.ContainerID) != project {
 					continue
 				}
-				if filter.Stream != "" && entry.Stream != filter.Stream {
+				if level != "" && entry.Level != level {
 					continue
 				}
-				if filter.Search != "" && !strings.Contains(entry.Message, filter.Search) {
+				if searchRe != nil && !searchRe.MatchString(entry.Message) {
 					continue
 				}
 				env, err := protocol.NewEnvelope(protocol.TypeLogEntry, 0, entry)
@@ -542,15 +562,27 @@ func (c *connState) queryLogs(env *protocol.Envelope) {
 	if req.Limit > maxLogLimit {
 		req.Limit = maxLogLimit
 	}
+	if !validLogLevel(req.Level) {
+		req.Level = ""
+	}
+
+	search := truncate(req.Search, maxSearchLen)
+	searchIsRegex := false
+	if search != "" {
+		if _, err := regexp.Compile(search); err == nil {
+			searchIsRegex = true
+		}
+	}
 
 	filter := LogFilter{
-		Start:   req.Start,
-		End:     req.End,
-		Project: truncate(req.Project, maxLabelLen),
-		Service: truncate(req.Service, maxLabelLen),
-		Stream:  req.Stream,
-		Search:  req.Search,
-		Limit:   req.Limit,
+		Start:         req.Start,
+		End:           req.End,
+		Project:       truncate(req.Project, maxLabelLen),
+		Service:       truncate(req.Service, maxLabelLen),
+		Search:        search,
+		SearchIsRegex: searchIsRegex,
+		Level:         req.Level,
+		Limit:         req.Limit,
 	}
 	if filter.Service == "" {
 		if len(req.ContainerIDs) > 0 {
@@ -744,6 +776,15 @@ func (c *connState) queryAlertRules(id uint32) {
 		rules = []protocol.AlertRuleInfo{}
 	}
 	c.sendResponse(id, &protocol.QueryAlertRulesResp{Rules: rules})
+}
+
+// validLogLevel returns true if the level is a recognized log level or empty.
+func validLogLevel(level string) bool {
+	switch level {
+	case "", "ERR", "WARN", "INFO", "DBUG":
+		return true
+	}
+	return false
 }
 
 func isClosedErr(err error) bool {

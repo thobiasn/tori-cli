@@ -2,8 +2,8 @@ package tui
 
 import (
 	"context"
+	"regexp"
 	"sort"
-	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -32,10 +32,11 @@ type DetailState struct {
 	filterModal *logFilterModal
 
 	// Filters.
-	filterStream string // "", "stdout", "stderr"
-	searchText   string
-	filterFrom   int64
-	filterTo     int64
+	filterLevel string // "", "ERR", "WARN", "INFO", "DBUG"
+	searchText  string
+	searchRe    *regexp.Regexp
+	filterFrom  int64
+	filterTo    int64
 
 	totalLogCount int
 
@@ -43,8 +44,10 @@ type DetailState struct {
 	memHist *RingBuffer[float64]
 
 	backfilled             bool
+	logBackfillPending     bool
 	metricsBackfilled      bool
 	metricsBackfillPending bool
+	metricsGen             uint64
 
 	infoOverlay bool
 
@@ -81,6 +84,7 @@ type detailMetricsQueryMsg struct {
 	containerID string
 	project     string
 	windowSec   int64
+	gen         uint64
 }
 
 func (s *DetailState) reset() {
@@ -96,16 +100,19 @@ func (s *DetailState) reset() {
 	s.logPaused = false
 	s.expandModal = nil
 	s.filterModal = nil
-	s.filterStream = ""
+	s.filterLevel = ""
 	s.searchText = ""
+	s.searchRe = nil
 	s.filterFrom = 0
 	s.filterTo = 0
 	s.totalLogCount = 0
 	s.cpuHist = NewRingBuffer[float64](histBufSize)
 	s.memHist = NewRingBuffer[float64](histBufSize)
 	s.backfilled = false
+	s.logBackfillPending = false
 	s.metricsBackfilled = false
 	s.metricsBackfillPending = false
+	s.metricsGen = 0
 	s.infoOverlay = false
 }
 
@@ -114,7 +121,22 @@ func (s *DetailState) isGroupMode() bool {
 }
 
 func (s *DetailState) isSearchActive() bool {
-	return s.searchText != "" || s.filterFrom != 0 || s.filterTo != 0
+	return s.searchText != "" || s.filterFrom != 0 || s.filterTo != 0 || s.filterLevel != ""
+}
+
+// setSearchText sets the search text and compiles a regex from it.
+// Falls back to QuoteMeta on invalid regex.
+func (s *DetailState) setSearchText(text string) {
+	s.searchText = text
+	if text == "" {
+		s.searchRe = nil
+		return
+	}
+	re, err := regexp.Compile("(?i)" + text)
+	if err != nil {
+		re = regexp.MustCompile("(?i)" + regexp.QuoteMeta(text))
+	}
+	s.searchRe = re
 }
 
 func (s *DetailState) onSwitch(c *Client, windowSec int64, retentionDays int) tea.Cmd {
@@ -140,6 +162,7 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64, retentionDays int) te
 
 	// Log backfill.
 	if !s.backfilled {
+		s.logBackfillPending = true
 		id := s.containerID
 		project := s.project
 		cmds = append(cmds, func() tea.Msg {
@@ -162,6 +185,7 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64, retentionDays int) te
 		svcProject := s.svcProject
 		svcService := s.svcService
 		ws := windowSec
+		gen := s.metricsGen
 		cmds = append(cmds, func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -186,9 +210,9 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64, retentionDays int) te
 			}
 			resp, err := c.QueryMetrics(ctx, req)
 			if err != nil {
-				return detailMetricsQueryMsg{containerID: id, project: project, windowSec: ws}
+				return detailMetricsQueryMsg{containerID: id, project: project, windowSec: ws, gen: gen}
 			}
-			return detailMetricsQueryMsg{resp: resp, containerID: id, project: project, windowSec: ws}
+			return detailMetricsQueryMsg{resp: resp, containerID: id, project: project, windowSec: ws, gen: gen}
 		})
 	}
 
@@ -226,6 +250,7 @@ func (s *DetailState) onStreamEntry(entry protocol.LogEntryMsg) {
 }
 
 func (s *DetailState) handleBackfill(msg detailLogQueryMsg) {
+	s.logBackfillPending = false
 	if s.backfilled || s.logs == nil {
 		s.backfilled = true
 		return
@@ -273,6 +298,9 @@ func (s *DetailState) handleBackfill(msg detailLogQueryMsg) {
 }
 
 func (s *DetailState) handleMetricsBackfill(msg detailMetricsQueryMsg) {
+	if msg.gen != s.metricsGen {
+		return // stale response, discard
+	}
 	s.metricsBackfillPending = false
 	if msg.containerID != s.containerID || msg.project != s.project {
 		return
@@ -355,10 +383,10 @@ func (s *DetailState) pushLiveMetrics(containers []protocol.ContainerMetrics) {
 }
 
 func (s *DetailState) matchesFilter(entry protocol.LogEntryMsg) bool {
-	if s.filterStream != "" && entry.Stream != s.filterStream {
+	if s.filterLevel != "" && entry.Level != s.filterLevel {
 		return false
 	}
-	if s.searchText != "" && !strings.Contains(strings.ToLower(entry.Message), strings.ToLower(s.searchText)) {
+	if s.searchRe != nil && !s.searchRe.MatchString(entry.Message) {
 		return false
 	}
 	if s.filterFrom > 0 && entry.Timestamp < s.filterFrom {
@@ -368,6 +396,15 @@ func (s *DetailState) matchesFilter(entry protocol.LogEntryMsg) bool {
 		return false
 	}
 	return true
+}
+
+func (s *DetailState) resetLogs() {
+	s.logs = NewRingBuffer[protocol.LogEntryMsg](logBufCapacity)
+	s.logScroll = 0
+	s.logCursor = 0
+	s.logPaused = false
+	s.backfilled = false
+	s.logBackfillPending = true
 }
 
 func (s *DetailState) resetLogPosition() {
@@ -384,7 +421,7 @@ func (s *DetailState) filteredData() []protocol.LogEntryMsg {
 		return nil
 	}
 	all := s.logs.Data()
-	if s.filterStream == "" && s.searchText == "" && s.filterFrom == 0 && s.filterTo == 0 {
+	if s.filterLevel == "" && s.searchRe == nil && s.filterFrom == 0 && s.filterTo == 0 {
 		return all
 	}
 	var out []protocol.LogEntryMsg

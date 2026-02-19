@@ -16,7 +16,7 @@ import (
 // backfillMetrics fetches historical host metrics to populate graphs.
 // seconds=0 uses the default live backfill (last ~100 minutes).
 // seconds>0 requests server-side downsampling to histBufSize points.
-func backfillMetrics(c *Client, seconds int64) tea.Cmd {
+func backfillMetrics(c *Client, seconds int64, gen uint64) tea.Cmd {
 	return func() tea.Msg {
 		timeout := 5 * time.Second
 		hist := seconds > 0
@@ -47,6 +47,7 @@ func backfillMetrics(c *Client, seconds int64) tea.Cmd {
 			server:    c.server,
 			resp:      resp,
 			rangeHist: hist,
+			gen:       gen,
 		}
 	}
 }
@@ -168,7 +169,7 @@ func (a *App) handleConnectDone(msg connectDoneMsg) (App, tea.Cmd) {
 	s.BackfillPending = true
 
 	var cmds []tea.Cmd
-	cmds = append(cmds, subscribeAll(s.Client, a.windowSeconds()))
+	cmds = append(cmds, subscribeAll(s.Client, a.windowSeconds(), s.BackfillGen))
 
 	if cmd := a.processAutoConnectQueue(); cmd != nil {
 		cmds = append(cmds, cmd)
