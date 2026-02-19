@@ -54,7 +54,81 @@ func ParseLogFields(message string) (level, displayMsg string) {
 			return level, displayMsg
 		}
 	}
+	// Try plain text with positional level detection.
+	// Skip timestamp-like tokens, then check for a level keyword.
+	if level, displayMsg = parsePlainLevel(message); level != "" {
+		return level, displayMsg
+	}
 	return "", message
+}
+
+// parsePlainLevel detects a log level from plain text lines where the level
+// appears as the first non-timestamp token. Handles formats like:
+//
+//	"2026/02/19 09:45:54 INFO message..."
+//	"2026-02-19T09:45:54Z [error] message..."
+//	"INFO message..."
+//	"[WARN] message..."
+func parsePlainLevel(msg string) (string, string) {
+	i := 0
+	sawTimestamp := false
+	for i < len(msg) {
+		// Skip whitespace.
+		for i < len(msg) && msg[i] == ' ' {
+			i++
+		}
+		if i >= len(msg) {
+			break
+		}
+
+		// Read the next token.
+		start := i
+		for i < len(msg) && msg[i] != ' ' {
+			i++
+		}
+		token := msg[start:i]
+
+		// Bracketed token like [INFO] or [error].
+		if sawTimestamp && len(token) >= 3 && token[0] == '[' && token[len(token)-1] == ']' {
+			if lvl := normalizeLevel(token[1 : len(token)-1]); lvl != "" {
+				rest := strings.TrimSpace(msg[i:])
+				if rest == "" {
+					rest = msg
+				}
+				return lvl, rest
+			}
+		}
+
+		// Token with digits is timestamp-like — skip it.
+		if containsDigit(token) {
+			sawTimestamp = true
+			continue
+		}
+
+		// First non-timestamp token after a timestamp: check for level keyword.
+		if sawTimestamp {
+			if lvl := normalizeLevel(token); lvl != "" {
+				rest := strings.TrimSpace(msg[i:])
+				if rest == "" {
+					rest = msg
+				}
+				return lvl, rest
+			}
+		}
+
+		// No timestamp seen, or unknown token — stop looking.
+		break
+	}
+	return "", msg
+}
+
+func containsDigit(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= '0' && s[i] <= '9' {
+			return true
+		}
+	}
+	return false
 }
 
 // InferLevel extracts and normalizes a log level from a raw log message.
