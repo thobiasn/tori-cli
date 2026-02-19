@@ -65,9 +65,10 @@ func (a *App) handleDetailKey(msg tea.KeyMsg) (App, tea.Cmd) {
 		default:
 			det.filterLevel = ""
 		}
-		// Level filtering is server-side, so refetch.
+		// Level filtering is server-side, so refetch. Scope is unchanged
+		// (same container/project/time range) so skip the redundant count.
 		det.resetLogs()
-		return *a, fireSearch(det, s.Client, s.RetentionDays)
+		return *a, fireSearch(det, s.Client, s.RetentionDays, true)
 
 	case "f":
 		now := time.Now()
@@ -173,7 +174,7 @@ func updateFilterModal(det *DetailState, s *Session, key string, cfg DisplayConf
 
 		if det.isSearchActive() {
 			det.resetLogs()
-			return fireSearch(det, s.Client, s.RetentionDays)
+			return fireSearch(det, s.Client, s.RetentionDays, false)
 		}
 		return refetchLogs(det, s.Client, s.RetentionDays)
 	case "esc":

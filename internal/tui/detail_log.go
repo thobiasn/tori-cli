@@ -69,7 +69,7 @@ func buildLogReq(det *DetailState, retDays int) *protocol.QueryLogsReq {
 	return req
 }
 
-func fireSearch(det *DetailState, c *Client, retDays int) tea.Cmd {
+func fireSearch(det *DetailState, c *Client, retDays int, skipCount bool) tea.Cmd {
 	id := det.containerID
 	project := det.project
 
@@ -78,7 +78,7 @@ func fireSearch(det *DetailState, c *Client, retDays int) tea.Cmd {
 		defer cancel()
 		req := buildLogReq(det, retDays)
 		req.Search = det.searchText
-		req.SkipCount = true
+		req.SkipCount = skipCount
 		if det.filterFrom > 0 {
 			req.Start = det.filterFrom
 		}
