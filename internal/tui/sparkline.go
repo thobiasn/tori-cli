@@ -66,8 +66,12 @@ func Sparkline(data []float64, width int, color lipgloss.Color) (string, string)
 		}
 	}
 
-	// Select ceiling: first step where peak < step * 0.85.
-	ceiling := ceilingSteps[len(ceilingSteps)-1]
+	// Select ceiling: first discrete step where peak < step * 0.85.
+	// If peak exceeds all steps, auto-scale with ~15% headroom.
+	ceiling := peak / 0.85
+	if ceiling <= 0 {
+		ceiling = 100
+	}
 	for _, step := range ceilingSteps {
 		if peak < step*0.85 {
 			ceiling = step
