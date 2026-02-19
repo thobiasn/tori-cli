@@ -53,6 +53,11 @@ type ruleCountMsg struct {
 	server string
 	count  int
 }
+type helloMsg struct {
+	server       string
+	agentVersion string
+	warning      string
+}
 
 // birdBlinkResetMsg signals the bird eye should reopen.
 type birdBlinkResetMsg struct{}
@@ -95,6 +100,7 @@ type App struct {
 	sessions      map[string]*Session
 	sessionOrder  []string // sorted server names
 	activeSession string
+	version       string // client build version for hello handshake
 	width         int
 	height        int
 	theme         Theme
@@ -127,7 +133,7 @@ type App struct {
 }
 
 // NewApp creates the root model with one or more sessions.
-func NewApp(sessions map[string]*Session, display DisplayConfig, theme Theme) App {
+func NewApp(sessions map[string]*Session, display DisplayConfig, theme Theme, version string) App {
 	order := make([]string, 0, len(sessions))
 	for name := range sessions {
 		order = append(order, name)
@@ -155,6 +161,7 @@ func NewApp(sessions map[string]*Session, display DisplayConfig, theme Theme) Ap
 		sessions:         sessions,
 		sessionOrder:     order,
 		activeSession:    active,
+		version:          version,
 		switcher:         showSwitcher,
 		autoConnectQueue: autoQueue,
 		theme:            theme,
@@ -201,6 +208,7 @@ func (a App) Init() tea.Cmd {
 	// Subscribe already-connected sessions.
 	for _, s := range a.sessions {
 		if s.Client != nil && s.ConnState == ConnReady {
+			cmds = append(cmds, helloCmd(s.Client, a.version))
 			cmds = append(cmds, subscribeAll(s.Client, a.windowSeconds(), s.BackfillGen))
 		}
 	}
@@ -236,6 +244,34 @@ func subscribeAll(c *Client, windowSec int64, gen uint64) tea.Cmd {
 		backfillMetrics(c, windowSec, gen),
 		queryRuleCount(c),
 	)
+}
+
+func helloCmd(c *Client, clientVersion string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		resp, err := c.Hello(ctx, clientVersion)
+		if err != nil || resp == nil {
+			return nil // Old agent or error — proceed silently.
+		}
+		return helloMsg{
+			server:       c.server,
+			agentVersion: resp.Version,
+			warning:      versionWarning(clientVersion, resp),
+		}
+	}
+}
+
+// versionWarning returns a warning string if the client and agent versions
+// are mismatched. Returns "" when versions are compatible or either side is "dev".
+func versionWarning(clientVersion string, resp *protocol.HelloResp) string {
+	if resp.ProtocolVersion != protocol.ProtocolVersion {
+		return fmt.Sprintf("protocol mismatch: client=%d agent=%d", protocol.ProtocolVersion, resp.ProtocolVersion)
+	}
+	if resp.Version != clientVersion && clientVersion != "dev" && resp.Version != "dev" {
+		return fmt.Sprintf("version mismatch: client=%s agent=%s", clientVersion, resp.Version)
+	}
+	return ""
 }
 
 func queryRuleCount(c *Client) tea.Cmd {
@@ -481,6 +517,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case trackingDoneMsg:
 		if s := a.sessions[msg.server]; s != nil {
 			return a, queryContainersCmd(s.Client)
+		}
+		return a, nil
+
+	case helloMsg:
+		if s := a.sessions[msg.server]; s != nil {
+			s.AgentVersion = msg.agentVersion
+			s.VersionWarning = msg.warning
 		}
 		return a, nil
 

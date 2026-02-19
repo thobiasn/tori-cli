@@ -29,7 +29,7 @@ func testSocketServer(t *testing.T, store *Store) (*SocketServer, *Hub, string) 
 		},
 		tracked: make(map[string]bool),
 	}
-	ss := NewSocketServer(hub, store, dc, nil, 7)
+	ss := NewSocketServer(hub, store, dc, nil, 7, "test")
 	path := filepath.Join(t.TempDir(), "test.sock")
 	if err := ss.Start(path); err != nil {
 		t.Fatal(err)
@@ -52,7 +52,7 @@ func testSocketServerWithAlerter(t *testing.T, store *Store, alerter *Alerter) (
 		},
 		tracked: make(map[string]bool),
 	}
-	ss := NewSocketServer(hub, store, dc, alerter, 7)
+	ss := NewSocketServer(hub, store, dc, alerter, 7, "test")
 	path := filepath.Join(t.TempDir(), "test.sock")
 	if err := ss.Start(path); err != nil {
 		t.Fatal(err)
@@ -69,6 +69,46 @@ func dial(t *testing.T, path string) net.Conn {
 	}
 	t.Cleanup(func() { conn.Close() })
 	return conn
+}
+
+func TestSocketHello(t *testing.T) {
+	s := testStore(t)
+	_, _, path := testSocketServer(t, s)
+	conn := dial(t, path)
+
+	req := protocol.HelloReq{
+		ProtocolVersion: protocol.ProtocolVersion,
+		Version:         "v1.0.0",
+	}
+	env, err := protocol.NewEnvelope(protocol.TypeHello, 1, &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Type != protocol.TypeResult {
+		t.Fatalf("type = %q, want result", resp.Type)
+	}
+	if resp.ID != 1 {
+		t.Fatalf("id = %d, want 1", resp.ID)
+	}
+
+	var hello protocol.HelloResp
+	if err := protocol.DecodeBody(resp.Body, &hello); err != nil {
+		t.Fatal(err)
+	}
+	if hello.ProtocolVersion != protocol.ProtocolVersion {
+		t.Errorf("protocol_version = %d, want %d", hello.ProtocolVersion, protocol.ProtocolVersion)
+	}
+	if hello.Version != "test" {
+		t.Errorf("version = %q, want %q", hello.Version, "test")
+	}
 }
 
 func TestSocketQueryContainers(t *testing.T) {
@@ -1277,7 +1317,7 @@ func TestSocketFileCleanedUpOnStop(t *testing.T) {
 	s := testStore(t)
 	hub := NewHub()
 	dc := &DockerCollector{prevCPU: make(map[string]cpuPrev), tracked: make(map[string]bool)}
-	ss := NewSocketServer(hub, s, dc, nil, 7)
+	ss := NewSocketServer(hub, s, dc, nil, 7, "test")
 
 	path := filepath.Join(t.TempDir(), "test.sock")
 	if err := ss.Start(path); err != nil {

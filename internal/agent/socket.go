@@ -39,6 +39,7 @@ type SocketServer struct {
 	hub           *Hub
 	store         *Store
 	docker        *DockerCollector
+	version       string
 	retentionDays atomic.Int32
 	listener      net.Listener
 	path          string
@@ -53,12 +54,13 @@ type SocketServer struct {
 
 // NewSocketServer creates a SocketServer. Call Start to begin accepting connections.
 // retentionDays controls the maximum query range; 0 falls back to 24h.
-func NewSocketServer(hub *Hub, store *Store, docker *DockerCollector, alerter *Alerter, retentionDays int) *SocketServer {
+func NewSocketServer(hub *Hub, store *Store, docker *DockerCollector, alerter *Alerter, retentionDays int, version string) *SocketServer {
 	ss := &SocketServer{
 		hub:     hub,
 		store:   store,
 		docker:  docker,
 		alerter: alerter,
+		version: version,
 		connSem: make(chan struct{}, maxConnections),
 	}
 	ss.retentionDays.Store(int32(retentionDays))
@@ -284,6 +286,10 @@ func (c *connState) dispatch(env *protocol.Envelope) {
 	case protocol.TypeUnsubscribe:
 		c.unsubscribe(env)
 
+	// Hello.
+	case protocol.TypeHello:
+		c.hello(env)
+
 	// Queries.
 	case protocol.TypeQueryMetrics:
 		c.queryMetrics(env)
@@ -309,6 +315,15 @@ func (c *connState) dispatch(env *protocol.Envelope) {
 	default:
 		c.sendError(env.ID, fmt.Sprintf("unknown message type: %s", env.Type))
 	}
+}
+
+// --- Hello ---
+
+func (c *connState) hello(env *protocol.Envelope) {
+	c.sendResponse(env.ID, &protocol.HelloResp{
+		ProtocolVersion: protocol.ProtocolVersion,
+		Version:         c.ss.version,
+	})
 }
 
 // --- Streaming ---
