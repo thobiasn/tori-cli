@@ -394,6 +394,8 @@ func (s *Store) ensureColumns() {
 	}
 	indexes := []string{
 		"CREATE INDEX IF NOT EXISTS idx_logs_svc ON logs(project, service, timestamp)",
+		"CREATE INDEX IF NOT EXISTS idx_logs_container_level_ts ON logs(container_id, level, timestamp)",
+		"CREATE INDEX IF NOT EXISTS idx_logs_svc_level ON logs(project, service, level, timestamp)",
 	}
 	for _, stmt := range migrations {
 		_, err := s.db.Exec(stmt)

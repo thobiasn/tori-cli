@@ -151,6 +151,7 @@ type QueryLogsReq struct {
 	Search       string   `msgpack:"search,omitempty"`
 	Level        string   `msgpack:"level,omitempty"`
 	Limit        int      `msgpack:"limit,omitempty"`
+	SkipCount    bool     `msgpack:"skip_count,omitempty"` // skip CountLogs when only filters changed
 }
 
 // QueryLogsResp is the response for TypeQueryLogs.

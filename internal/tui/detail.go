@@ -259,7 +259,9 @@ func (s *DetailState) handleBackfill(msg detailLogQueryMsg) {
 		return
 	}
 
-	s.totalLogCount = msg.total
+	if msg.total >= 0 {
+		s.totalLogCount = msg.total
+	}
 
 	if len(msg.entries) == 0 {
 		s.backfilled = true
