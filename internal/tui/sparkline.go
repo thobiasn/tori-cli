@@ -2,6 +2,7 @@ package tui
 
 import (
 	"math"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -40,6 +41,64 @@ func waveHeight(idx, totalSamples, frame int) int {
 	v := math.Sin(phase - scroll)
 	// Map [-1, 1] to [1, 5].
 	return int(math.Round((v+1)/2*4)) + 1
+}
+
+// shimmerDensity maps a 0–3 level to braille characters of increasing density.
+// Used for the log loading skeleton shimmer effect.
+var shimmerDensity = [4]rune{
+	0x2824, // ⠤ dots 3,6 — thin horizontal
+	0x2836, // ⠶ dots 2,3,5,6 — medium
+	0x28F6, // ⣶ dots 2,3,5,6,7,8 — thick
+	0x28FF, // ⣿ all dots — full
+}
+
+// LoadingLogs generates animated skeleton log lines using braille characters.
+// Each line mimics a log entry shape (timestamp block + message block of varying width).
+// A diagonal shimmer wave sweeps through, cycling braille density.
+func LoadingLogs(frame, width, height int, color lipgloss.Color) string {
+	if width < 1 || height < 1 {
+		return ""
+	}
+
+	tsW := 8 // timestamp placeholder width
+	gap := 2 // gap between timestamp and message
+	maxMsgW := width - tsW - gap
+	if maxMsgW < 4 {
+		maxMsgW = 4
+	}
+
+	style := lipgloss.NewStyle().Foreground(color)
+	lines := make([]string, height)
+
+	for y := 0; y < height; y++ {
+		// Deterministic pseudo-random message width per line (30%–90% of available).
+		frac := float64((y*17+7)%31) / 31.0
+		msgW := int(frac*float64(maxMsgW)*0.6) + maxMsgW*3/10
+		if msgW > maxMsgW {
+			msgW = maxMsgW
+		}
+
+		buf := make([]rune, width)
+		for x := 0; x < width; x++ {
+			inTs := x < tsW
+			inMsg := x >= tsW+gap && x < tsW+gap+msgW
+			if !inTs && !inMsg {
+				buf[x] = ' '
+				continue
+			}
+
+			// Diagonal shimmer: sine wave with ~1.5 cycles, scrolling.
+			phase := 2 * math.Pi * float64(x+y*4) / float64(width) * 1.5
+			scroll := 2 * math.Pi * float64(frame) / 16
+			v := (math.Sin(phase-scroll) + 1) / 2 // 0..1
+
+			// Bias toward sparse: only the peak reaches full density.
+			level := int(v * 3.99)
+			buf[x] = shimmerDensity[level]
+		}
+		lines[y] = style.Render(string(buf))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ceilingSteps are the discrete scaling ceilings for braille sparklines.

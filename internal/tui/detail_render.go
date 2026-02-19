@@ -64,7 +64,7 @@ func renderDetail(a *App, s *Session, width, height int) string {
 	}
 
 	// 8. Logs.
-	sections = append(sections, renderDetailLogs(det, s, contentW, logH, a.display, theme))
+	sections = append(sections, renderDetailLogs(det, s, contentW, logH, a.display, theme, a.spinnerFrame))
 
 	// 8.5. Filter bar (when search/filter is active).
 	if det.isSearchActive() {
@@ -439,13 +439,17 @@ func formatCompactDuration(d time.Duration) string {
 	return fmt.Sprintf("%dd", int(d.Hours())/24)
 }
 
-func renderDetailLogs(det *DetailState, s *Session, w, maxH int, cfg DisplayConfig, theme *Theme) string {
+func renderDetailLogs(det *DetailState, s *Session, w, maxH int, cfg DisplayConfig, theme *Theme, frame int) string {
 	data := det.filteredData()
 
 	// Visible window.
 	innerH := maxH
 	if innerH < 1 {
 		innerH = 1
+	}
+
+	if det.logBackfillPending {
+		return LoadingLogs(frame, w, innerH, theme.FgDim)
 	}
 
 	if len(data) == 0 {

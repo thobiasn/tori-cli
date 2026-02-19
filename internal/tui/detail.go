@@ -44,6 +44,7 @@ type DetailState struct {
 	memHist *RingBuffer[float64]
 
 	backfilled             bool
+	logBackfillPending     bool
 	metricsBackfilled      bool
 	metricsBackfillPending bool
 	metricsGen             uint64
@@ -108,6 +109,7 @@ func (s *DetailState) reset() {
 	s.cpuHist = NewRingBuffer[float64](histBufSize)
 	s.memHist = NewRingBuffer[float64](histBufSize)
 	s.backfilled = false
+	s.logBackfillPending = false
 	s.metricsBackfilled = false
 	s.metricsBackfillPending = false
 	s.metricsGen = 0
@@ -160,6 +162,7 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64, retentionDays int) te
 
 	// Log backfill.
 	if !s.backfilled {
+		s.logBackfillPending = true
 		id := s.containerID
 		project := s.project
 		cmds = append(cmds, func() tea.Msg {
@@ -247,6 +250,7 @@ func (s *DetailState) onStreamEntry(entry protocol.LogEntryMsg) {
 }
 
 func (s *DetailState) handleBackfill(msg detailLogQueryMsg) {
+	s.logBackfillPending = false
 	if s.backfilled || s.logs == nil {
 		s.backfilled = true
 		return
@@ -400,6 +404,7 @@ func (s *DetailState) resetLogs() {
 	s.logCursor = 0
 	s.logPaused = false
 	s.backfilled = false
+	s.logBackfillPending = true
 }
 
 func (s *DetailState) resetLogPosition() {
