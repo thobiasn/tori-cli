@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -105,15 +106,15 @@ func (s *Store) InsertLogs(ctx context.Context, entries []LogEntry) error {
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO logs (timestamp, container_id, container_name, project, service, stream, message)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`)
+		`INSERT INTO logs (timestamp, container_id, container_name, project, service, stream, message, level, display_msg)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
 	for _, e := range entries {
-		if _, err := stmt.ExecContext(ctx, e.Timestamp.Unix(), e.ContainerID, e.ContainerName, e.Project, e.Service, e.Stream, e.Message); err != nil {
+		if _, err := stmt.ExecContext(ctx, e.Timestamp.Unix(), e.ContainerID, e.ContainerName, e.Project, e.Service, e.Stream, e.Message, e.Level, e.DisplayMsg); err != nil {
 			return err
 		}
 	}
@@ -420,7 +421,7 @@ func logScopeFilter(query string, args []any, f LogFilter) (string, []any) {
 }
 
 // CountLogs returns the total number of log entries matching the scope filter
-// (container/project + time range). Search, Stream, and Limit are excluded so
+// (container/project + time range). Search, Level, and Limit are excluded so
 // the count represents the total scope, not the filtered subset.
 func (s *Store) CountLogs(ctx context.Context, f LogFilter) (int, error) {
 	query := `SELECT COUNT(*) FROM logs WHERE timestamp >= ? AND timestamp <= ?`
@@ -433,18 +434,23 @@ func (s *Store) CountLogs(ctx context.Context, f LogFilter) (int, error) {
 }
 
 func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) {
-	query := `SELECT timestamp, container_id, container_name, project, service, stream, message FROM logs WHERE timestamp >= ? AND timestamp <= ?`
+	query := `SELECT timestamp, container_id, container_name, project, service, stream, message, level, display_msg FROM logs WHERE timestamp >= ? AND timestamp <= ?`
 	args := []any{f.Start, f.End}
 	query, args = logScopeFilter(query, args, f)
 
-	if f.Stream != "" {
-		query += ` AND stream = ?`
-		args = append(args, f.Stream)
+	if f.Level != "" {
+		query += ` AND level = ?`
+		args = append(args, f.Level)
 	}
 	if f.Search != "" {
-		query += ` AND message LIKE ? ESCAPE '\'`
-		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(f.Search)
-		args = append(args, "%"+escaped+"%")
+		if _, err := regexp.Compile(f.Search); err == nil {
+			query += ` AND message REGEXP ?`
+			args = append(args, "(?i)"+f.Search)
+		} else {
+			query += ` AND message LIKE ? ESCAPE '\'`
+			escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(f.Search)
+			args = append(args, "%"+escaped+"%")
+		}
 	}
 
 	limit := f.Limit
@@ -464,7 +470,7 @@ func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) 
 	for rows.Next() {
 		var e LogEntry
 		var ts int64
-		if err := rows.Scan(&ts, &e.ContainerID, &e.ContainerName, &e.Project, &e.Service, &e.Stream, &e.Message); err != nil {
+		if err := rows.Scan(&ts, &e.ContainerID, &e.ContainerName, &e.Project, &e.Service, &e.Stream, &e.Message, &e.Level, &e.DisplayMsg); err != nil {
 			return nil, err
 		}
 		e.Timestamp = time.Unix(ts, 0)

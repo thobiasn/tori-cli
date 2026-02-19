@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 )
 
 // renderExpandModal renders a centered overlay showing the full log message.
-func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, cfg DisplayConfig) string {
+func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, cfg DisplayConfig, searchRe *regexp.Regexp) string {
 	modalW := width * 3 / 4
 	if modalW < 40 {
 		modalW = 40
@@ -44,10 +45,9 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, cfg D
 	timeStr := muted.Render(t.Format(cfg.TimeFormat))
 	fullDT := muted.Render(t.Format(cfg.DateFormat + " " + cfg.TimeFormat))
 
-	parsed := parseLogMessage(m.entry.Message)
 	var levelStr string
-	if parsed.level != "" {
-		levelStr = levelColor(parsed.level, theme).Render(parsed.level)
+	if m.entry.Level != "" {
+		levelStr = levelColor(m.entry.Level, theme).Render(m.entry.Level)
 	}
 
 	parts := []string{timeStr}
@@ -72,16 +72,45 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, cfg D
 
 	// Message body.
 	msg := sanitizeLogMsg(m.entry.Message)
+	var matchRanges [][]int
 	if json.Valid([]byte(msg)) {
 		var buf bytes.Buffer
 		if json.Indent(&buf, []byte(msg), "", "  ") == nil {
-			msg = buf.String()
+			pretty := buf.String()
+			if searchRe != nil {
+				if raw := searchRe.FindAllStringIndex(msg, -1); len(raw) > 0 {
+					bm := rawToPrettyMap(msg, pretty)
+					matchRanges = make([][]int, 0, len(raw))
+					for _, rm := range raw {
+						if rm[0] < rm[1] {
+							matchRanges = append(matchRanges, []int{bm[rm[0]], bm[rm[1]-1] + 1})
+						}
+					}
+				}
+			}
+			msg = pretty
 		}
+	}
+	if matchRanges == nil && searchRe != nil {
+		matchRanges = searchRe.FindAllStringIndex(msg, -1)
 	}
 
 	wrapped := wrapText(msg, contentW)
 	if len(wrapped) == 0 {
 		wrapped = []string{""}
+	}
+
+	// Pre-compute byte offsets for each wrapped line within msg.
+	offsets := make([]int, len(wrapped))
+	off := 0
+	for i, l := range wrapped {
+		offsets[i] = off
+		lEnd := off + len(l)
+		if lEnd < len(msg) && msg[lEnd] == '\n' {
+			off = lEnd + 1
+		} else {
+			off = lEnd
+		}
 	}
 
 	maxScroll := len(wrapped) - bodyH
@@ -102,8 +131,12 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, cfg D
 	lines = append(lines, "")
 	lines = append(lines, metaLine)
 	lines = append(lines, "")
-	for _, l := range wrapped[start:end] {
-		lines = append(lines, padStr+fg.Render(l))
+	for i, l := range wrapped[start:end] {
+		if len(matchRanges) > 0 {
+			lines = append(lines, padStr+highlightRanges(l, offsets[start+i], matchRanges, theme))
+		} else {
+			lines = append(lines, padStr+fg.Render(l))
+		}
 	}
 
 	// Pad to fill available space.

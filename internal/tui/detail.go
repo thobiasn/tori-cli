@@ -2,8 +2,8 @@ package tui
 
 import (
 	"context"
+	"regexp"
 	"sort"
-	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -32,10 +32,11 @@ type DetailState struct {
 	filterModal *logFilterModal
 
 	// Filters.
-	filterStream string // "", "stdout", "stderr"
-	searchText   string
-	filterFrom   int64
-	filterTo     int64
+	filterLevel string // "", "ERR", "WARN", "INFO", "DBUG"
+	searchText  string
+	searchRe    *regexp.Regexp
+	filterFrom  int64
+	filterTo    int64
 
 	totalLogCount int
 
@@ -96,8 +97,9 @@ func (s *DetailState) reset() {
 	s.logPaused = false
 	s.expandModal = nil
 	s.filterModal = nil
-	s.filterStream = ""
+	s.filterLevel = ""
 	s.searchText = ""
+	s.searchRe = nil
 	s.filterFrom = 0
 	s.filterTo = 0
 	s.totalLogCount = 0
@@ -114,7 +116,22 @@ func (s *DetailState) isGroupMode() bool {
 }
 
 func (s *DetailState) isSearchActive() bool {
-	return s.searchText != "" || s.filterFrom != 0 || s.filterTo != 0
+	return s.searchText != "" || s.filterFrom != 0 || s.filterTo != 0 || s.filterLevel != ""
+}
+
+// setSearchText sets the search text and compiles a regex from it.
+// Falls back to QuoteMeta on invalid regex.
+func (s *DetailState) setSearchText(text string) {
+	s.searchText = text
+	if text == "" {
+		s.searchRe = nil
+		return
+	}
+	re, err := regexp.Compile("(?i)" + text)
+	if err != nil {
+		re = regexp.MustCompile("(?i)" + regexp.QuoteMeta(text))
+	}
+	s.searchRe = re
 }
 
 func (s *DetailState) onSwitch(c *Client, windowSec int64, retentionDays int) tea.Cmd {
@@ -355,10 +372,10 @@ func (s *DetailState) pushLiveMetrics(containers []protocol.ContainerMetrics) {
 }
 
 func (s *DetailState) matchesFilter(entry protocol.LogEntryMsg) bool {
-	if s.filterStream != "" && entry.Stream != s.filterStream {
+	if s.filterLevel != "" && entry.Level != s.filterLevel {
 		return false
 	}
-	if s.searchText != "" && !strings.Contains(strings.ToLower(entry.Message), strings.ToLower(s.searchText)) {
+	if s.searchRe != nil && !s.searchRe.MatchString(entry.Message) {
 		return false
 	}
 	if s.filterFrom > 0 && entry.Timestamp < s.filterFrom {
@@ -384,7 +401,7 @@ func (s *DetailState) filteredData() []protocol.LogEntryMsg {
 		return nil
 	}
 	all := s.logs.Data()
-	if s.filterStream == "" && s.searchText == "" && s.filterFrom == 0 && s.filterTo == 0 {
+	if s.filterLevel == "" && s.searchRe == nil && s.filterFrom == 0 && s.filterTo == 0 {
 		return all
 	}
 	var out []protocol.LogEntryMsg

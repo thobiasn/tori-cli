@@ -72,6 +72,8 @@ func convertLogEntries(src []LogEntry) []protocol.LogEntryMsg {
 			ContainerName: s.ContainerName,
 			Stream:        s.Stream,
 			Message:       s.Message,
+			Level:         s.Level,
+			DisplayMsg:    s.DisplayMsg,
 		}
 	}
 	return out

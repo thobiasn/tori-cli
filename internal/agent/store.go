@@ -3,18 +3,47 @@ package agent
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
+
+func init() {
+	// Cache the last compiled regex — SetMaxOpenConns(1) guarantees
+	// single-threaded access so no mutex is needed.
+	var lastPattern string
+	var lastRe *regexp.Regexp
+
+	sqlite.MustRegisterDeterministicScalarFunction("regexp", 2, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		pattern, ok1 := args[0].(string)
+		value, ok2 := args[1].(string)
+		if !ok1 || !ok2 {
+			return int64(0), nil
+		}
+		if pattern != lastPattern {
+			var err error
+			lastRe, err = regexp.Compile(pattern)
+			if err != nil {
+				return int64(0), nil
+			}
+			lastPattern = pattern
+		}
+		if lastRe.MatchString(value) {
+			return int64(1), nil
+		}
+		return int64(0), nil
+	})
+}
 
 // currentSchemaVersion is incremented when the schema changes in a way that
 // requires data migration (not just adding columns).
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
 
 const schema = `
 CREATE TABLE IF NOT EXISTS host_metrics (
@@ -78,7 +107,9 @@ CREATE TABLE IF NOT EXISTS logs (
 	container_id   TEXT    NOT NULL,
 	container_name TEXT    NOT NULL,
 	stream         TEXT    NOT NULL,
-	message        TEXT    NOT NULL
+	message        TEXT    NOT NULL,
+	level          TEXT    NOT NULL DEFAULT '',
+	display_msg    TEXT    NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(timestamp);
 CREATE INDEX IF NOT EXISTS idx_logs_container_ts ON logs(container_id, timestamp);
@@ -174,6 +205,13 @@ func (s *Store) migrate() error {
 		}
 	}
 
+	// Version 1 → 2: Backfill level and display_msg for existing log rows.
+	if version < 2 {
+		if err := s.backfillLogFields(); err != nil {
+			return fmt.Errorf("backfill log fields: %w", err)
+		}
+	}
+
 	if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", currentSchemaVersion)); err != nil {
 		return fmt.Errorf("set user_version: %w", err)
 	}
@@ -238,6 +276,110 @@ func (s *Store) migrateContainerMetricsV1() error {
 	return nil
 }
 
+// backfillLogFields parses level and display_msg from existing log rows that
+// were ingested before these columns existed. Runs once during the v1→v2 migration.
+func (s *Store) backfillLogFields() error {
+	// Skip on fresh databases where the logs table doesn't exist yet.
+	var tableCount int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='logs'`).Scan(&tableCount); err != nil {
+		return fmt.Errorf("check logs table: %w", err)
+	}
+	if tableCount == 0 {
+		return nil
+	}
+
+	// Ensure columns exist before backfilling (ensureColumns hasn't run yet).
+	for _, stmt := range []string{
+		"ALTER TABLE logs ADD COLUMN level TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE logs ADD COLUMN display_msg TEXT NOT NULL DEFAULT ''",
+	} {
+		_, err := s.db.Exec(stmt)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("add column: %w", err)
+		}
+	}
+
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM logs WHERE level = '' AND display_msg = ''`).Scan(&total); err != nil {
+		return fmt.Errorf("count rows: %w", err)
+	}
+	if total == 0 {
+		return nil
+	}
+
+	slog.Info("backfilling log level and display_msg", "rows", total)
+
+	const batchSize = 1000
+	for {
+		rows, err := s.db.Query(
+			`SELECT rowid, message FROM logs WHERE level = '' AND display_msg = '' LIMIT ?`,
+			batchSize,
+		)
+		if err != nil {
+			return fmt.Errorf("select batch: %w", err)
+		}
+
+		type update struct {
+			rowid      int64
+			level      string
+			displayMsg string
+		}
+		var updates []update
+		for rows.Next() {
+			var rowid int64
+			var msg string
+			if err := rows.Scan(&rowid, &msg); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan row: %w", err)
+			}
+			updates = append(updates, update{
+				rowid:      rowid,
+				level:      InferLevel(msg),
+				displayMsg: ExtractDisplayMsg(msg),
+			})
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("iterate log rows: %w", err)
+		}
+
+		if len(updates) == 0 {
+			break
+		}
+
+		tx, err := s.db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin tx: %w", err)
+		}
+		stmt, err := tx.Prepare(`UPDATE logs SET level = ?, display_msg = ? WHERE rowid = ?`)
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("prepare update: %w", err)
+		}
+		for _, u := range updates {
+			if _, err := stmt.Exec(u.level, u.displayMsg, u.rowid); err != nil {
+				stmt.Close()
+				tx.Rollback()
+				return fmt.Errorf("update row: %w", err)
+			}
+		}
+		stmt.Close()
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit batch: %w", err)
+		}
+
+		// If we got fewer than a full batch, we've processed everything.
+		// This also handles rows where parsed level and display_msg are both
+		// empty — they'd re-match the WHERE clause forever otherwise.
+		if len(updates) < batchSize {
+			break
+		}
+	}
+
+	slog.Info("log backfill complete")
+	return nil
+}
+
 // ensureColumns adds columns that may be missing from older databases.
 // Silently ignores "duplicate column name" errors (column already exists).
 func (s *Store) ensureColumns() {
@@ -246,6 +388,8 @@ func (s *Store) ensureColumns() {
 		"ALTER TABLE host_metrics ADD COLUMN mem_free INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE logs ADD COLUMN project TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE logs ADD COLUMN service TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE logs ADD COLUMN level TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE logs ADD COLUMN display_msg TEXT NOT NULL DEFAULT ''",
 	}
 	indexes := []string{
 		"CREATE INDEX IF NOT EXISTS idx_logs_svc ON logs(project, service, timestamp)",
@@ -350,6 +494,8 @@ type LogEntry struct {
 	Service       string
 	Stream        string
 	Message       string
+	Level         string // "ERR", "WARN", "INFO", "DBUG", or ""
+	DisplayMsg    string // clean message extracted from JSON/logfmt, or raw
 }
 
 // --- Query types ---
@@ -385,7 +531,7 @@ type LogFilter struct {
 	ContainerIDs []string
 	Project      string // service identity: project
 	Service      string // service identity: service (or container name for non-compose)
-	Stream       string
 	Search       string
+	Level        string // "ERR", "WARN", "INFO", "DBUG"
 	Limit        int
 }

@@ -45,8 +45,8 @@ type Envelope struct {
 type SubscribeLogs struct {
 	ContainerID string `msgpack:"container_id,omitempty"`
 	Project     string `msgpack:"project,omitempty"`
-	Stream      string `msgpack:"stream,omitempty"`
 	Search      string `msgpack:"search,omitempty"`
+	Level       string `msgpack:"level,omitempty"`
 }
 
 // Unsubscribe is the body for TypeUnsubscribe.
@@ -70,6 +70,8 @@ type LogEntryMsg struct {
 	ContainerName string `msgpack:"container_name"`
 	Stream        string `msgpack:"stream"`
 	Message       string `msgpack:"message"`
+	Level         string `msgpack:"level,omitempty"`
+	DisplayMsg    string `msgpack:"display_msg,omitempty"`
 }
 
 // AlertEvent is pushed on alert state transitions.
@@ -130,8 +132,8 @@ type QueryLogsReq struct {
 	ContainerIDs []string `msgpack:"container_ids,omitempty"`
 	Project      string   `msgpack:"project,omitempty"` // service identity filter
 	Service      string   `msgpack:"service,omitempty"` // service identity filter
-	Stream       string   `msgpack:"stream,omitempty"`
 	Search       string   `msgpack:"search,omitempty"`
+	Level        string   `msgpack:"level,omitempty"`
 	Limit        int      `msgpack:"limit,omitempty"`
 }
 

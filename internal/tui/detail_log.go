@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -55,6 +54,7 @@ func buildLogReq(det *DetailState, retDays int) *protocol.QueryLogsReq {
 		Start: now - rangeSec,
 		End:   now,
 		Limit: logBufCapacity,
+		Level: det.filterLevel,
 	}
 	if det.svcService != "" {
 		req.Project = det.svcProject
@@ -266,124 +266,6 @@ func parseFilterBound(dateStr, timeStr, dateFormat, timeFormat string, isTo bool
 		return combined.Unix()
 	}
 	return 0
-}
-
-// parsedLog holds the extracted message and level from a raw log line.
-type parsedLog struct {
-	message string
-	level   string
-}
-
-// parseLogMessage tries to extract a clean message and level from a raw log line.
-// Priority: JSON → logfmt → raw.
-func parseLogMessage(raw string) parsedLog {
-	// Try JSON.
-	if len(raw) > 0 && raw[0] == '{' {
-		var m map[string]interface{}
-		if json.Unmarshal([]byte(raw), &m) == nil {
-			p := parsedLog{message: raw}
-			for _, k := range []string{"level", "lvl"} {
-				if v, ok := m[k]; ok {
-					p.level = normalizeLevel(fmt.Sprint(v))
-					break
-				}
-			}
-			for _, k := range []string{"msg", "message", "error"} {
-				if v, ok := m[k]; ok {
-					p.message = fmt.Sprint(v)
-					break
-				}
-			}
-			return p
-		}
-	}
-
-	// Try logfmt (key=value pairs).
-	if strings.ContainsRune(raw, '=') {
-		if p := parseLogfmt(raw); p.message != "" || p.level != "" {
-			if p.message == "" {
-				p.message = raw
-			}
-			return p
-		}
-	}
-
-	return parsedLog{message: raw}
-}
-
-// parseLogfmt extracts msg/message and level/lvl from logfmt-style key=value pairs.
-func parseLogfmt(raw string) parsedLog {
-	var p parsedLog
-	i := 0
-	for i < len(raw) {
-		for i < len(raw) && raw[i] == ' ' {
-			i++
-		}
-		if i >= len(raw) {
-			break
-		}
-
-		keyStart := i
-		for i < len(raw) && raw[i] != '=' && raw[i] != ' ' {
-			i++
-		}
-		if i >= len(raw) || raw[i] != '=' {
-			for i < len(raw) && raw[i] != ' ' {
-				i++
-			}
-			continue
-		}
-		key := raw[keyStart:i]
-		i++ // skip '='
-
-		var val string
-		if i < len(raw) && raw[i] == '"' {
-			i++ // skip opening quote
-			valStart := i
-			for i < len(raw) && raw[i] != '"' {
-				if raw[i] == '\\' && i+1 < len(raw) {
-					i++
-				}
-				i++
-			}
-			val = raw[valStart:i]
-			if i < len(raw) {
-				i++ // skip closing quote
-			}
-		} else {
-			valStart := i
-			for i < len(raw) && raw[i] != ' ' {
-				i++
-			}
-			val = raw[valStart:i]
-		}
-
-		switch strings.ToLower(key) {
-		case "msg", "message":
-			p.message = val
-		case "level", "lvl":
-			p.level = normalizeLevel(val)
-		}
-	}
-	return p
-}
-
-// normalizeLevel normalizes a log level string to a standard form.
-func normalizeLevel(s string) string {
-	switch strings.ToUpper(strings.TrimSpace(s)) {
-	case "INFO", "INFORMATION":
-		return "INFO"
-	case "WARN", "WARNING":
-		return "WARN"
-	case "ERR", "ERROR":
-		return "ERR"
-	case "DEBUG", "DBG", "TRACE":
-		return "DBUG"
-	case "FATAL", "PANIC":
-		return "ERR"
-	default:
-		return ""
-	}
 }
 
 // sanitizeLogMsg strips ANSI, replaces tabs, removes control characters.

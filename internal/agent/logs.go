@@ -200,6 +200,8 @@ func scanLines(r io.Reader, ci containerInfo, stream string, out chan<- LogEntry
 			Service:       ci.service,
 			Stream:        stream,
 			Message:       msg,
+			Level:         InferLevel(msg),
+			DisplayMsg:    ExtractDisplayMsg(msg),
 		}
 	}
 }
