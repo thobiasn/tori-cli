@@ -4,13 +4,6 @@ Server monitoring without the infrastructure. A single binary and an SSH connect
 
 ![tori demo](https://github.com/user-attachments/assets/e0183dc7-9b0e-4358-a7ed-dfd508b2e5e0)
 
-<details>
-<summary>Disclaimer</summary>
-
-This project is still very much in development and being tested. I was frustrated that I couldn't find the monitoring/alerting solution that was just right for smaller scale hosting on a single or multiple VPSs so I decided to build the thing that was just right for my needs. What I'm saying is that you should use this at your own risk, don't expect all features to work yet. If you do find bugs or are missing features that you would like to see, id very much appreciate you open a new issue. I hope you will enjoy tori as much as I am :)
-
-</details>
-
 ## Features
 
 - Host metrics — CPU, memory, disk, network, swap, load averages

@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Tori is a lightweight server monitoring tool for Docker environments. A persistent agent collects metrics, watches containers, tails logs, and fires alerts. A TUI client connects over SSH to view everything in the terminal.
 
-**Status:** M1–M5 complete. M6 (polish) is next. The README.md contains the full specification.
+The README.md contains the full specification.
 
 ## Build & Development Commands
 
@@ -68,7 +68,7 @@ The agent is the source of truth. It collects, stores, evaluates, and alerts ind
 - **Protocol:** msgpack over Unix socket. Two patterns: streaming subscriptions (agent pushes) and request-response (client asks).
 - **Storage:** SQLite in WAL mode at `/var/lib/tori/tori.db` with configurable retention. One database file. If you're writing JOINs across more than 2 tables, rethink the data model.
 - **Config:** TOML format. Agent config at `/etc/tori/config.toml`, client config at `~/.config/tori/config.toml`. Paths in config are absolute. Defaults are sane for bare metal (`/proc`, `/sys`). Docker deployment overrides them (`/host/proc`, `/host/sys`). No detection logic.
-- **TUI:** Bubbletea + Lipgloss + Bubbles (Charm ecosystem). See `.claude/tui-design.md` for the complete visual design language (layout, colors, graphs, responsive rules). All colors must be defined in a single `Theme` struct in `internal/tui/theme.go` — views reference theme fields, never raw color values. Colors default to ANSI (0–15) so the TUI inherits the user's terminal theme. Users can override individual colors in `[theme]` in the client config.
+- **TUI:** Bubbletea + Lipgloss + Bubbles (Charm ecosystem). All colors must be defined in a single `Theme` struct in `internal/tui/theme.go` — views reference theme fields, never raw color values. Colors default to ANSI (0–15) so the TUI inherits the user's terminal theme. Users can override individual colors in `[theme]` in the client config.
 - **Host metrics:** Read directly from `/proc` and `/sys` (no cgo, no external deps).
 - **Docker:** Monitor via Docker socket (`/var/run/docker.sock`), read-only. Containers are grouped by compose project via `com.docker.compose.project` label. Tracking (metrics, logs, alerts) can be toggled per-container or per-group at runtime.
 
@@ -253,7 +253,3 @@ The alerter receives the same data already collected — no additional I/O.
 - `SetTracking(name, project, tracked)` — if project is set, iterates `lastContainers` and toggles all containers in that project individually. `IsTracked(name)` is a simple map lookup.
 - `Collect()` separates all containers (for TUI visibility) from tracked containers (for log sync/alert eval).
 - Config `include`/`exclude` is the permanent baseline; runtime tracking overlays on top.
-
-## Milestone Order
-
-~~M1 Agent foundation~~ → ~~M2 Alerting~~ → ~~M3 Protocol + socket~~ → ~~M4 TUI client~~ → ~~M5 Multi-server + tracking~~ → M6 Polish
