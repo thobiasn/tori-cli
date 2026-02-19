@@ -13,6 +13,7 @@ import (
 type Agent struct {
 	cfg     *Config
 	cfgPath string
+	version string
 	store   *Store
 	host    *HostCollector
 	docker  *DockerCollector
@@ -27,7 +28,7 @@ type Agent struct {
 }
 
 // New creates an Agent from the given config. cfgPath is stored for reload.
-func New(cfg *Config, cfgPath string) (*Agent, error) {
+func New(cfg *Config, cfgPath string, version string) (*Agent, error) {
 	store, err := OpenStore(cfg.Storage.Path)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
@@ -65,6 +66,7 @@ func New(cfg *Config, cfgPath string) (*Agent, error) {
 	a := &Agent{
 		cfg:     cfg,
 		cfgPath: cfgPath,
+		version: version,
 		store:   store,
 		host:    NewHostCollector(&cfg.Host),
 		docker:  docker,
@@ -97,7 +99,7 @@ func New(cfg *Config, cfgPath string) (*Agent, error) {
 
 	a.events = NewEventWatcher(docker, hub)
 	a.events.SetAlerter(a.alerter)
-	a.socket = NewSocketServer(hub, store, docker, a.alerter, cfg.Storage.RetentionDays)
+	a.socket = NewSocketServer(hub, store, docker, a.alerter, cfg.Storage.RetentionDays, version)
 	return a, nil
 }
 

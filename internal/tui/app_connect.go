@@ -169,6 +169,7 @@ func (a *App) handleConnectDone(msg connectDoneMsg) (App, tea.Cmd) {
 	s.BackfillPending = true
 
 	var cmds []tea.Cmd
+	cmds = append(cmds, helloCmd(s.Client, a.version))
 	cmds = append(cmds, subscribeAll(s.Client, a.windowSeconds(), s.BackfillGen))
 
 	if cmd := a.processAutoConnectQueue(); cmd != nil {

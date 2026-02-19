@@ -24,6 +24,21 @@ func TestInferLevel(t *testing.T) {
 		{"empty string", "", ""},
 		{"invalid json", `{"level":"info"`, ""},
 		{"json unknown level", `{"level":"notice","msg":"x"}`, ""},
+
+		// Plain text with positional level detection.
+		{"slog info", "2026/02/19 09:45:54 INFO client disconnected remote=@", "INFO"},
+		{"slog warn", "2026/02/19 09:45:54 WARN slow query duration=5s", "WARN"},
+		{"slog error", "2026/02/19 09:45:54 ERROR connection failed host=db", "ERR"},
+		{"slog debug", "2026/02/19 09:45:54 DEBUG request details method=GET", "DBUG"},
+		{"iso timestamp info", "2026-02-19 09:45:54 INFO started", "INFO"},
+		{"bracketed error", "2026/02/19 09:45:54 [error] something failed", "ERR"},
+		{"bracketed warn no timestamp", "[WARN] something happened", ""},
+		{"bare level no timestamp", "INFO starting up", ""},
+		{"bare error no timestamp", "ERROR connection refused", ""},
+		{"lowercase level no timestamp", "info starting up", ""},
+		{"timestamp no level", "2026/02/19 09:45:54 starting server", ""},
+		{"no false positive in body", "the server reported an error", ""},
+		{"nginx style", "2026/02/19 09:45:54 [error] 123#0: *456 something", "ERR"},
 	}
 
 	for _, tt := range tests {
@@ -52,6 +67,11 @@ func TestExtractDisplayMsg(t *testing.T) {
 		{"empty string", "", ""},
 		{"invalid json passthrough", `{"msg":"x"`, `{"msg":"x"`},
 		{"no message key in json", `{"level":"info","status":"ok"}`, `{"level":"info","status":"ok"}`},
+
+		// Plain text with positional level — displayMsg is content after the level.
+		{"slog displaymsg", "2026/02/19 09:45:54 INFO client disconnected remote=@", "client disconnected remote=@"},
+		{"bracketed displaymsg", "2026/02/19 09:45:54 [error] something failed", "something failed"},
+		{"bare level no timestamp displaymsg", "INFO starting up", "INFO starting up"},
 	}
 
 	for _, tt := range tests {

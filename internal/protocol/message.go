@@ -18,6 +18,7 @@ const (
 	TypeContainerEvent      MsgType = "container:event"
 
 	// Request-response.
+	TypeHello              MsgType = "hello"
 	TypeQueryMetrics       MsgType = "query:metrics"
 	TypeQueryLogs          MsgType = "query:logs"
 	TypeQueryAlerts        MsgType = "query:alerts"
@@ -30,6 +31,9 @@ const (
 	TypeResult             MsgType = "result"
 	TypeError              MsgType = "error"
 )
+
+// ProtocolVersion is incremented on breaking protocol changes.
+const ProtocolVersion = 1
 
 // Envelope is the top-level wire message. Body is decoded in a second pass
 // based on the Type field.
@@ -102,6 +106,18 @@ type ContainerEvent struct {
 }
 
 // --- Request-response messages ---
+
+// HelloReq is sent by the client as its first message after connecting.
+type HelloReq struct {
+	ProtocolVersion int    `msgpack:"protocol_version"`
+	Version         string `msgpack:"version"`
+}
+
+// HelloResp is the agent's response to a hello request.
+type HelloResp struct {
+	ProtocolVersion int    `msgpack:"protocol_version"`
+	Version         string `msgpack:"version"`
+}
 
 // QueryMetricsReq is the body for TypeQueryMetrics.
 type QueryMetricsReq struct {

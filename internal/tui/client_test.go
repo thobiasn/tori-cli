@@ -359,3 +359,96 @@ func TestErrorResponse(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestHelloOldAgent(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	c := NewClient(clientConn)
+	defer c.Close()
+
+	coll := newCollector(0)
+	p := tea.NewProgram(coll, tea.WithoutRenderer(), tea.WithInput(nil))
+	c.SetProgram(p)
+
+	// Old agent responds with TypeError for unknown message type.
+	go mockServer(t, serverConn, func(env *protocol.Envelope) *protocol.Envelope {
+		resp, _ := protocol.NewEnvelope(protocol.TypeError, env.ID, &protocol.ErrorResult{
+			Error: "unknown message type: hello",
+		})
+		return resp
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	resp, err := c.Hello(ctx, "v1.0.0")
+	if err != nil {
+		t.Fatalf("Hello should not return error: %v", err)
+	}
+	if resp != nil {
+		t.Fatalf("Hello should return nil for old agent, got %+v", resp)
+	}
+}
+
+func TestVersionWarning(t *testing.T) {
+	tests := []struct {
+		name          string
+		clientVersion string
+		resp          *protocol.HelloResp
+		want          string
+	}{
+		{
+			name:          "matching versions",
+			clientVersion: "v1.2.3",
+			resp:          &protocol.HelloResp{ProtocolVersion: protocol.ProtocolVersion, Version: "v1.2.3"},
+			want:          "",
+		},
+		{
+			name:          "protocol mismatch",
+			clientVersion: "v1.2.3",
+			resp:          &protocol.HelloResp{ProtocolVersion: 99, Version: "v1.2.3"},
+			want:          "protocol mismatch: client=1 agent=99",
+		},
+		{
+			name:          "version mismatch",
+			clientVersion: "v1.2.3",
+			resp:          &protocol.HelloResp{ProtocolVersion: protocol.ProtocolVersion, Version: "v1.0.0"},
+			want:          "version mismatch: client=v1.2.3 agent=v1.0.0",
+		},
+		{
+			name:          "client dev skips warning",
+			clientVersion: "dev",
+			resp:          &protocol.HelloResp{ProtocolVersion: protocol.ProtocolVersion, Version: "v1.0.0"},
+			want:          "",
+		},
+		{
+			name:          "agent dev skips warning",
+			clientVersion: "v1.2.3",
+			resp:          &protocol.HelloResp{ProtocolVersion: protocol.ProtocolVersion, Version: "dev"},
+			want:          "",
+		},
+		{
+			name:          "both dev",
+			clientVersion: "dev",
+			resp:          &protocol.HelloResp{ProtocolVersion: protocol.ProtocolVersion, Version: "dev"},
+			want:          "",
+		},
+		{
+			name:          "protocol mismatch takes priority over version mismatch",
+			clientVersion: "v1.2.3",
+			resp:          &protocol.HelloResp{ProtocolVersion: 2, Version: "v1.0.0"},
+			want:          "protocol mismatch: client=1 agent=2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := versionWarning(tt.clientVersion, tt.resp)
+			if got != tt.want {
+				t.Errorf("versionWarning(%q, %+v) = %q, want %q", tt.clientVersion, tt.resp, got, tt.want)
+			}
+		})
+	}
+}

@@ -25,7 +25,7 @@ func TestAgentLifecycle(t *testing.T) {
 		Collect: CollectConfig{Interval: Duration{Duration: 1 * time.Second}},
 	}
 
-	a, err := New(cfg, cfgPath)
+	a, err := New(cfg, cfgPath, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestApplyConfigUpdatesFields(t *testing.T) {
 		hub:    hub,
 		done:   make(chan struct{}),
 	}
-	ss := NewSocketServer(hub, store, docker, nil, 7)
+	ss := NewSocketServer(hub, store, docker, nil, 7, "test")
 
 	a := &Agent{
 		cfg: &Config{
@@ -183,7 +183,7 @@ func TestApplyConfigRebuildsAlerter(t *testing.T) {
 
 	hub := NewHub()
 	ew := &EventWatcher{docker: docker, hub: hub, done: make(chan struct{})}
-	ss := NewSocketServer(hub, store, docker, nil, 7)
+	ss := NewSocketServer(hub, store, docker, nil, 7, "test")
 
 	a := &Agent{
 		cfg: &Config{

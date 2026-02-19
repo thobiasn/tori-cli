@@ -79,7 +79,7 @@ func runAgent(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	a, err := agent.New(cfg, *configPath)
+	a, err := agent.New(cfg, *configPath, version)
 	if err != nil {
 		slog.Error("failed to create agent", "error", err)
 		os.Exit(1)
@@ -202,7 +202,7 @@ func runClient(args []string) {
 		sess := tui.NewSession("local", client, nil)
 		sess.ConnState = tui.ConnReady
 		sess.ConnMsg = "connected"
-		runSessions(map[string]*tui.Session{"local": sess}, display, theme)
+		runSessions(map[string]*tui.Session{"local": sess}, display, theme, version)
 
 	case "ssh":
 		sess := tui.NewSession(act.host, nil, nil)
@@ -213,7 +213,7 @@ func runClient(args []string) {
 			IdentityFile: act.sshOpts.IdentityFile,
 			AutoConnect:  true,
 		}
-		runSessions(map[string]*tui.Session{act.host: sess}, display, theme)
+		runSessions(map[string]*tui.Session{act.host: sess}, display, theme, version)
 
 	case "config":
 		cfgPath, err := tui.EnsureDefaultConfig(act.configPath)
@@ -265,7 +265,7 @@ func runClient(args []string) {
 				sessions[name] = sess
 			}
 		}
-		runSessions(sessions, cfg.Display, tui.BuildTheme(cfg.Theme))
+		runSessions(sessions, cfg.Display, tui.BuildTheme(cfg.Theme), version)
 	}
 }
 
@@ -280,8 +280,8 @@ func defaultTheme() tui.Theme {
 	return tui.BuildTheme(tui.ThemeConfig{})
 }
 
-func runSessions(sessions map[string]*tui.Session, display tui.DisplayConfig, theme tui.Theme) {
-	app := tui.NewApp(sessions, display, theme)
+func runSessions(sessions map[string]*tui.Session, display tui.DisplayConfig, theme tui.Theme, ver string) {
+	app := tui.NewApp(sessions, display, theme, ver)
 
 	p := tea.NewProgram(app, tea.WithAltScreen())
 

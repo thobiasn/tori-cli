@@ -292,6 +292,11 @@ func renderStatusLine(s *Session, w int, theme *Theme) string {
 		parts = append(parts, muted.Render(FormatUptime(s.Host.Uptime)+" uptime"))
 	}
 
+	if s.VersionWarning != "" {
+		warn := lipgloss.NewStyle().Foreground(theme.Warning).Render(s.VersionWarning)
+		parts = append(parts, warn)
+	}
+
 	line := strings.Join(parts, sep)
 	return centerText(line, w)
 }

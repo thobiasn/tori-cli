@@ -34,6 +34,10 @@ type Session struct {
 	ContInfo   []protocol.ContainerInfo
 	Alerts     map[int64]*protocol.AlertEvent
 
+	// Version info from hello handshake.
+	AgentVersion   string
+	VersionWarning string
+
 	// Alert rules.
 	RuleCount int // number of configured alert rules
 

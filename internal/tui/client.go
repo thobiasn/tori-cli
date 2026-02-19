@@ -315,6 +315,23 @@ func (c *Client) SetTracking(ctx context.Context, container, project string, tra
 	return err
 }
 
+// Hello sends a hello handshake and returns the agent's response.
+// Returns nil (not an error) if the agent doesn't support hello (old agent).
+func (c *Client) Hello(ctx context.Context, clientVersion string) (*protocol.HelloResp, error) {
+	resp, err := c.Request(ctx, protocol.TypeHello, &protocol.HelloReq{
+		ProtocolVersion: protocol.ProtocolVersion,
+		Version:         clientVersion,
+	})
+	if err != nil {
+		return nil, nil // Old agent or transient error — not fatal.
+	}
+	var r protocol.HelloResp
+	if err := protocol.DecodeBody(resp.Body, &r); err != nil {
+		return nil, nil
+	}
+	return &r, nil
+}
+
 // QueryTracking returns the currently tracked containers and projects.
 func (c *Client) QueryTracking(ctx context.Context) (*protocol.QueryTrackingResp, error) {
 	resp, err := c.Request(ctx, protocol.TypeQueryTracking, nil)
