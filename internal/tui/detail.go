@@ -46,6 +46,7 @@ type DetailState struct {
 	backfilled             bool
 	metricsBackfilled      bool
 	metricsBackfillPending bool
+	metricsGen             uint64
 
 	infoOverlay bool
 
@@ -82,6 +83,7 @@ type detailMetricsQueryMsg struct {
 	containerID string
 	project     string
 	windowSec   int64
+	gen         uint64
 }
 
 func (s *DetailState) reset() {
@@ -108,6 +110,7 @@ func (s *DetailState) reset() {
 	s.backfilled = false
 	s.metricsBackfilled = false
 	s.metricsBackfillPending = false
+	s.metricsGen = 0
 	s.infoOverlay = false
 }
 
@@ -179,6 +182,7 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64, retentionDays int) te
 		svcProject := s.svcProject
 		svcService := s.svcService
 		ws := windowSec
+		gen := s.metricsGen
 		cmds = append(cmds, func() tea.Msg {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -203,9 +207,9 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64, retentionDays int) te
 			}
 			resp, err := c.QueryMetrics(ctx, req)
 			if err != nil {
-				return detailMetricsQueryMsg{containerID: id, project: project, windowSec: ws}
+				return detailMetricsQueryMsg{containerID: id, project: project, windowSec: ws, gen: gen}
 			}
-			return detailMetricsQueryMsg{resp: resp, containerID: id, project: project, windowSec: ws}
+			return detailMetricsQueryMsg{resp: resp, containerID: id, project: project, windowSec: ws, gen: gen}
 		})
 	}
 
@@ -290,6 +294,9 @@ func (s *DetailState) handleBackfill(msg detailLogQueryMsg) {
 }
 
 func (s *DetailState) handleMetricsBackfill(msg detailMetricsQueryMsg) {
+	if msg.gen != s.metricsGen {
+		return // stale response, discard
+	}
 	s.metricsBackfillPending = false
 	if msg.containerID != s.containerID || msg.project != s.project {
 		return

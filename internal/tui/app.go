@@ -61,7 +61,8 @@ type birdBlinkResetMsg struct{}
 type metricsBackfillMsg struct {
 	server    string
 	resp      *protocol.QueryMetricsResp
-	rangeHist bool // true if this was a historical (non-live) request
+	rangeHist bool   // true if this was a historical (non-live) request
+	gen       uint64 // generation counter; stale responses are discarded
 }
 
 // timeWindow represents a graph time window preset.
@@ -200,7 +201,7 @@ func (a App) Init() tea.Cmd {
 	// Subscribe already-connected sessions.
 	for _, s := range a.sessions {
 		if s.Client != nil && s.ConnState == ConnReady {
-			cmds = append(cmds, subscribeAll(s.Client, a.windowSeconds()))
+			cmds = append(cmds, subscribeAll(s.Client, a.windowSeconds(), s.BackfillGen))
 		}
 	}
 
@@ -229,10 +230,10 @@ func (a *App) processAutoConnectQueue() tea.Cmd {
 
 // subscribeAll subscribes to streaming topics, queries containers, and
 // backfills graph history.
-func subscribeAll(c *Client, windowSec int64) tea.Cmd {
+func subscribeAll(c *Client, windowSec int64, gen uint64) tea.Cmd {
 	return tea.Batch(
 		subscribeAndQueryContainers(c),
-		backfillMetrics(c, windowSec),
+		backfillMetrics(c, windowSec, gen),
 		queryRuleCount(c),
 	)
 }
@@ -429,6 +430,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case metricsBackfillMsg:
 		if s := a.sessions[msg.server]; s != nil && msg.resp != nil {
+			if msg.gen != s.BackfillGen {
+				return a, nil // stale response, discard
+			}
 			if msg.resp.RetentionDays > 0 {
 				s.RetentionDays = msg.resp.RetentionDays
 			}
