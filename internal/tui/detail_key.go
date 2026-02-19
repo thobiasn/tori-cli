@@ -4,7 +4,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/thobiasn/tori-cli/internal/protocol"
 )
 
 // handleDetailKey handles keys when the detail view is active.
@@ -67,11 +66,7 @@ func (a *App) handleDetailKey(msg tea.KeyMsg) (App, tea.Cmd) {
 			det.filterLevel = ""
 		}
 		// Level filtering is server-side, so refetch.
-		det.logs = NewRingBuffer[protocol.LogEntryMsg](logBufCapacity)
-		det.logScroll = 0
-		det.logCursor = 0
-		det.logPaused = false
-		det.backfilled = false
+		det.resetLogs()
 		return *a, fireSearch(det, s.Client, s.RetentionDays)
 
 	case "f":
@@ -177,11 +172,7 @@ func updateFilterModal(det *DetailState, s *Session, key string, cfg DisplayConf
 		det.filterModal = nil
 
 		if det.isSearchActive() {
-			det.logs = NewRingBuffer[protocol.LogEntryMsg](logBufCapacity)
-			det.logScroll = 0
-			det.logCursor = 0
-			det.logPaused = false
-			det.backfilled = false
+			det.resetLogs()
 			return fireSearch(det, s.Client, s.RetentionDays)
 		}
 		return refetchLogs(det, s.Client, s.RetentionDays)

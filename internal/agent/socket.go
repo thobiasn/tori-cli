@@ -566,14 +566,23 @@ func (c *connState) queryLogs(env *protocol.Envelope) {
 		req.Level = ""
 	}
 
+	search := truncate(req.Search, maxSearchLen)
+	searchIsRegex := false
+	if search != "" {
+		if _, err := regexp.Compile(search); err == nil {
+			searchIsRegex = true
+		}
+	}
+
 	filter := LogFilter{
-		Start:   req.Start,
-		End:     req.End,
-		Project: truncate(req.Project, maxLabelLen),
-		Service: truncate(req.Service, maxLabelLen),
-		Search:  truncate(req.Search, maxSearchLen),
-		Level:   req.Level,
-		Limit:   req.Limit,
+		Start:         req.Start,
+		End:           req.End,
+		Project:       truncate(req.Project, maxLabelLen),
+		Service:       truncate(req.Service, maxLabelLen),
+		Search:        search,
+		SearchIsRegex: searchIsRegex,
+		Level:         req.Level,
+		Limit:         req.Limit,
 	}
 	if filter.Service == "" {
 		if len(req.ContainerIDs) > 0 {

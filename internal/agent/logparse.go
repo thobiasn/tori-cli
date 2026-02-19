@@ -6,72 +6,67 @@ import (
 	"strings"
 )
 
-// InferLevel extracts and normalizes a log level from a raw log message.
-// Tries JSON (level/lvl key), then logfmt (level/lvl key).
-// Returns "ERR", "WARN", "INFO", "DBUG", or "".
-func InferLevel(message string) string {
+// ParseLogFields extracts both level and display message from a raw log line
+// with a single parse pass. Returns normalized level ("ERR","WARN","INFO","DBUG","")
+// and a clean display message (or the original message if no structured format).
+func ParseLogFields(message string) (level, displayMsg string) {
 	if len(message) > 0 && message[0] == '{' {
-		if lvl := parseJSONLevel(message); lvl != "" {
-			return lvl
-		}
-	}
-	if strings.ContainsRune(message, '=') {
-		fields := parseLogfmtFields(message, "level", "lvl")
-		for _, k := range []string{"level", "lvl"} {
-			if v, ok := fields[k]; ok {
-				return normalizeLevel(v)
+		var m map[string]interface{}
+		if json.Unmarshal([]byte(message), &m) == nil {
+			for _, k := range []string{"level", "lvl"} {
+				if v, ok := m[k]; ok {
+					level = normalizeLevel(fmt.Sprint(v))
+					break
+				}
+			}
+			for _, k := range []string{"msg", "message", "error"} {
+				if v, ok := m[k]; ok {
+					displayMsg = fmt.Sprint(v)
+					break
+				}
+			}
+			if level != "" || displayMsg != "" {
+				if displayMsg == "" {
+					displayMsg = message
+				}
+				return level, displayMsg
 			}
 		}
 	}
-	return ""
+	if strings.ContainsRune(message, '=') {
+		fields := parseLogfmtFields(message, "level", "lvl", "msg", "message")
+		for _, k := range []string{"level", "lvl"} {
+			if v, ok := fields[k]; ok {
+				level = normalizeLevel(v)
+				break
+			}
+		}
+		for _, k := range []string{"msg", "message"} {
+			if v, ok := fields[k]; ok {
+				displayMsg = v
+				break
+			}
+		}
+		if level != "" || displayMsg != "" {
+			if displayMsg == "" {
+				displayMsg = message
+			}
+			return level, displayMsg
+		}
+	}
+	return "", message
+}
+
+// InferLevel extracts and normalizes a log level from a raw log message.
+func InferLevel(message string) string {
+	level, _ := ParseLogFields(message)
+	return level
 }
 
 // ExtractDisplayMsg extracts a clean display message from a raw log message.
-// Tries JSON (msg/message/error key), then logfmt (msg/message key).
-// Returns the original message if no structured format is detected.
 func ExtractDisplayMsg(message string) string {
-	if len(message) > 0 && message[0] == '{' {
-		if msg := parseJSONMsg(message); msg != "" {
-			return msg
-		}
-	}
-	if strings.ContainsRune(message, '=') {
-		fields := parseLogfmtFields(message, "msg", "message")
-		for _, k := range []string{"msg", "message"} {
-			if v, ok := fields[k]; ok {
-				return v
-			}
-		}
-	}
-	return message
-}
-
-// parseJSONLevel extracts a normalized level from a JSON log line.
-func parseJSONLevel(raw string) string {
-	var m map[string]interface{}
-	if json.Unmarshal([]byte(raw), &m) != nil {
-		return ""
-	}
-	for _, k := range []string{"level", "lvl"} {
-		if v, ok := m[k]; ok {
-			return normalizeLevel(fmt.Sprint(v))
-		}
-	}
-	return ""
-}
-
-// parseJSONMsg extracts the message field from a JSON log line.
-func parseJSONMsg(raw string) string {
-	var m map[string]interface{}
-	if json.Unmarshal([]byte(raw), &m) != nil {
-		return ""
-	}
-	for _, k := range []string{"msg", "message", "error"} {
-		if v, ok := m[k]; ok {
-			return fmt.Sprint(v)
-		}
-	}
-	return ""
+	_, dm := ParseLogFields(message)
+	return dm
 }
 
 // parseLogfmtFields extracts the values for the specified keys from a logfmt line.

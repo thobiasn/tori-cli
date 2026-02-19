@@ -332,10 +332,11 @@ func (s *Store) backfillLogFields() error {
 				rows.Close()
 				return fmt.Errorf("scan row: %w", err)
 			}
+			lvl, dm := ParseLogFields(msg)
 			updates = append(updates, update{
 				rowid:      rowid,
-				level:      InferLevel(msg),
-				displayMsg: ExtractDisplayMsg(msg),
+				level:      lvl,
+				displayMsg: dm,
 			})
 		}
 		rows.Close()
@@ -526,12 +527,13 @@ type TimedContainerMetrics struct {
 
 // LogFilter specifies query parameters for log retrieval.
 type LogFilter struct {
-	Start        int64  // unix seconds
-	End          int64  // unix seconds
-	ContainerIDs []string
-	Project      string // service identity: project
-	Service      string // service identity: service (or container name for non-compose)
-	Search       string
-	Level        string // "ERR", "WARN", "INFO", "DBUG"
-	Limit        int
+	Start         int64  // unix seconds
+	End           int64  // unix seconds
+	ContainerIDs  []string
+	Project       string // service identity: project
+	Service       string // service identity: service (or container name for non-compose)
+	Search        string
+	SearchIsRegex bool   // true = Search is valid regex, false = use LIKE
+	Level         string // "ERR", "WARN", "INFO", "DBUG"
+	Limit         int
 }

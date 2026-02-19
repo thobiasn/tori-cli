@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -443,7 +442,7 @@ func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) 
 		args = append(args, f.Level)
 	}
 	if f.Search != "" {
-		if _, err := regexp.Compile(f.Search); err == nil {
+		if f.SearchIsRegex {
 			query += ` AND message REGEXP ?`
 			args = append(args, "(?i)"+f.Search)
 		} else {

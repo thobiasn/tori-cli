@@ -859,25 +859,27 @@ func TestQueryLogsRegexSearch(t *testing.T) {
 	})
 
 	tests := []struct {
-		name   string
-		search string
-		want   int
+		name    string
+		search  string
+		isRegex bool
+		want    int
 	}{
-		{"literal match", "connection refused", 1},
-		{"regex alternation", "error|warning", 2},
-		{"regex digit pattern", "\\d+s", 1},           // matches "30s"
-		{"regex port pattern", "port \\d{4}", 1},      // matches "port 8080"
-		{"case insensitive", "ERROR", 1},               // (?i) prefix applied in QueryLogs
-		{"regex anchored", "^info:", 1},                // matches line starting with info:
-		{"no match", "foobar", 0},
-		{"dot star", "error.*refused", 1},
+		{"literal match", "connection refused", false, 1},
+		{"regex alternation", "error|warning", true, 2},
+		{"regex digit pattern", "\\d+s", true, 1},           // matches "30s"
+		{"regex port pattern", "port \\d{4}", true, 1},      // matches "port 8080"
+		{"case insensitive", "ERROR", true, 1},               // (?i) prefix applied in QueryLogs
+		{"regex anchored", "^info:", true, 1},                // matches line starting with info:
+		{"no match", "foobar", false, 0},
+		{"dot star", "error.*refused", true, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			results, err := s.QueryLogs(ctx, LogFilter{
-				Start:  ts.Unix(),
-				End:    ts.Unix(),
-				Search: tt.search,
+				Start:         ts.Unix(),
+				End:           ts.Unix(),
+				Search:        tt.search,
+				SearchIsRegex: tt.isRegex,
 			})
 			if err != nil {
 				t.Fatal(err)

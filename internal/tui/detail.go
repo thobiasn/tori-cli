@@ -387,6 +387,14 @@ func (s *DetailState) matchesFilter(entry protocol.LogEntryMsg) bool {
 	return true
 }
 
+func (s *DetailState) resetLogs() {
+	s.logs = NewRingBuffer[protocol.LogEntryMsg](logBufCapacity)
+	s.logScroll = 0
+	s.logCursor = 0
+	s.logPaused = false
+	s.backfilled = false
+}
+
 func (s *DetailState) resetLogPosition() {
 	s.logScroll = 0
 	s.logPaused = false

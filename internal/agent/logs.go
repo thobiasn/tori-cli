@@ -192,6 +192,7 @@ func scanLines(r io.Reader, ci containerInfo, stream string, out chan<- LogEntry
 	for scanner.Scan() {
 		line := scanner.Text()
 		ts, msg := parseTimestamp(line)
+		level, displayMsg := ParseLogFields(msg)
 		out <- LogEntry{
 			Timestamp:     ts,
 			ContainerID:   ci.id,
@@ -200,8 +201,8 @@ func scanLines(r io.Reader, ci containerInfo, stream string, out chan<- LogEntry
 			Service:       ci.service,
 			Stream:        stream,
 			Message:       msg,
-			Level:         InferLevel(msg),
-			DisplayMsg:    ExtractDisplayMsg(msg),
+			Level:         level,
+			DisplayMsg:    displayMsg,
 		}
 	}
 }

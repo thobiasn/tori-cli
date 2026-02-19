@@ -93,11 +93,7 @@ func fireSearch(det *DetailState, c *Client, retDays int) tea.Cmd {
 }
 
 func refetchLogs(det *DetailState, c *Client, retDays int) tea.Cmd {
-	det.logs = NewRingBuffer[protocol.LogEntryMsg](logBufCapacity)
-	det.logScroll = 0
-	det.logCursor = 0
-	det.logPaused = false
-	det.backfilled = false
+	det.resetLogs()
 	det.totalLogCount = 0
 
 	id := det.containerID
