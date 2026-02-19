@@ -49,9 +49,11 @@ var ceilingSteps = [...]float64{10, 15, 25, 50, 75, 100}
 // Sparkline renders a 2-row braille sparkline in a fixed color.
 // Each braille character encodes two adjacent data points (left and right
 // columns), and two vertically stacked characters give 8 levels of resolution.
-// Values are auto-scaled against a discrete ceiling derived from the peak.
+// When max > 0, it is used as the ceiling directly — the data has a known
+// upper bound and hitting it fills the graph. When max is 0, values are
+// auto-scaled against a discrete ceiling derived from the peak.
 // Returns (topRow, bottomRow) as separately styled strings.
-func Sparkline(data []float64, width int, color lipgloss.Color) (string, string) {
+func Sparkline(data []float64, width int, color lipgloss.Color, knownMax float64) (string, string) {
 	if width < 1 {
 		return "", ""
 	}
@@ -66,16 +68,23 @@ func Sparkline(data []float64, width int, color lipgloss.Color) (string, string)
 		}
 	}
 
-	// Select ceiling: first discrete step where peak < step * 0.85.
-	// If peak exceeds all steps, auto-scale with ~15% headroom.
-	ceiling := peak / 0.85
-	if ceiling <= 0 {
-		ceiling = 100
-	}
-	for _, step := range ceilingSteps {
-		if peak < step*0.85 {
-			ceiling = step
-			break
+	// Determine ceiling.
+	var ceiling float64
+	if knownMax > 0 {
+		// Known upper bound: use it directly so hitting max fills the graph.
+		ceiling = knownMax
+	} else {
+		// Auto-scale: pick first discrete step, or scale from peak.
+		maxStep := ceilingSteps[len(ceilingSteps)-1]
+		ceiling = maxStep
+		if peak > maxStep {
+			ceiling = peak / 0.85
+		}
+		for _, step := range ceilingSteps {
+			if peak < step*0.85 {
+				ceiling = step
+				break
+			}
 		}
 	}
 

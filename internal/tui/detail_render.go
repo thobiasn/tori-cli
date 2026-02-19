@@ -346,8 +346,8 @@ func renderDetailGraphs(a *App, det *DetailState, s *Session, w int, theme *Them
 	}
 	memStr := rightAlign(fmt.Sprintf(" %s", formatBytes(memVal)), pctW)
 
-	cpuTop, cpuBot := Sparkline(det.cpuHist.Data(), graphW, theme.GraphCPU)
-	memTop, memBot := Sparkline(det.memHist.Data(), graphW, theme.GraphMem)
+	cpuTop, cpuBot := Sparkline(det.cpuHist.Data(), graphW, theme.GraphCPU, cpuLimit*100)
+	memTop, memBot := Sparkline(det.memHist.Data(), graphW, theme.GraphMem, float64(memLimit))
 
 	// Severity-colored values with FgBright as calm baseline.
 	var memPct float64
