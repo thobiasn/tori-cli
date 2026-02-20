@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1309,6 +1310,151 @@ func TestQueryLogsRecomputesDisplayMsg(t *testing.T) {
 		case m.Message == "plain text message":
 			if m.DisplayMsg != "plain text message" {
 				t.Errorf("plain entry DisplayMsg = %q, want 'plain text message'", m.DisplayMsg)
+			}
+		}
+	}
+}
+
+// TestUpgradeV2WithExistingLogs simulates upgrading a v2 database that has
+// log rows with populated display_msg values. The new code no longer writes
+// or reads display_msg from the DB, so this verifies:
+// 1. Existing logs remain readable via QueryLogs (8-column SELECT on 9-column rows)
+// 2. New logs can be inserted alongside old ones (8-column INSERT)
+// 3. CountLogs works across both old and new rows
+// 4. convertLogEntries produces correct DisplayMsg for both
+func TestUpgradeV2WithExistingLogs(t *testing.T) {
+	// Create a v2 database with log rows that have populated display_msg.
+	path := filepath.Join(t.TempDir(), "v2logs.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	db.Exec("PRAGMA journal_mode=WAL")
+
+	v2Schema := `
+CREATE TABLE IF NOT EXISTS host_metrics (
+	timestamp INTEGER, cpu_percent REAL, mem_total INTEGER, mem_used INTEGER,
+	mem_percent REAL, mem_cached INTEGER DEFAULT 0, mem_free INTEGER DEFAULT 0,
+	swap_total INTEGER, swap_used INTEGER,
+	load1 REAL, load5 REAL, load15 REAL, uptime REAL
+);
+CREATE TABLE IF NOT EXISTS container_metrics (
+	timestamp INTEGER, project TEXT, service TEXT, cpu_percent REAL,
+	mem_usage INTEGER, mem_limit INTEGER, mem_percent REAL,
+	net_rx INTEGER, net_tx INTEGER, block_read INTEGER, block_write INTEGER, pids INTEGER
+);
+CREATE TABLE IF NOT EXISTS disk_metrics (timestamp INTEGER, mountpoint TEXT, device TEXT, total INTEGER, used INTEGER, free INTEGER, percent REAL);
+CREATE TABLE IF NOT EXISTS net_metrics (timestamp INTEGER, iface TEXT, rx_bytes INTEGER, tx_bytes INTEGER, rx_packets INTEGER, tx_packets INTEGER, rx_errors INTEGER, tx_errors INTEGER);
+CREATE TABLE IF NOT EXISTS logs (timestamp INTEGER, container_id TEXT, container_name TEXT, project TEXT DEFAULT '', service TEXT DEFAULT '', stream TEXT, message TEXT, level TEXT DEFAULT '', display_msg TEXT DEFAULT '');
+CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(timestamp);
+CREATE INDEX IF NOT EXISTS idx_logs_container_ts ON logs(container_id, timestamp);
+CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, rule_name TEXT, severity TEXT, condition TEXT, instance_key TEXT, fired_at INTEGER, resolved_at INTEGER, message TEXT, acknowledged INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS tracking_state (kind TEXT NOT NULL, name TEXT NOT NULL, UNIQUE(kind, name));
+PRAGMA user_version = 2;
+`
+	if _, err := db.Exec(v2Schema); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+
+	// Insert old-format log rows WITH display_msg populated (as v2 code did).
+	ts := time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC).Unix()
+	oldRows := []struct {
+		cid, cname, project, service, stream, msg, level, displayMsg string
+	}{
+		{"c1", "web", "myapp", "web", "stdout", `{"level":"info","msg":"request served"}`, "INFO", "request served"},
+		{"c1", "web", "myapp", "web", "stderr", `{"level":"error","message":"timeout"}`, "ERR", "timeout"},
+		{"c2", "api", "myapp", "api", "stdout", "plain log line", "", "plain log line"},
+	}
+	for _, r := range oldRows {
+		_, err := db.Exec(
+			`INSERT INTO logs (timestamp, container_id, container_name, project, service, stream, message, level, display_msg)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			ts, r.cid, r.cname, r.project, r.service, r.stream, r.msg, r.level, r.displayMsg,
+		)
+		if err != nil {
+			db.Close()
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+
+	// Open with new code — triggers v2→v3 migration.
+	s, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+
+	// 1. Existing logs are readable via QueryLogs (8-column SELECT on 9-column rows).
+	entries, err := s.QueryLogs(ctx, LogFilter{Start: ts, End: ts})
+	if err != nil {
+		t.Fatalf("QueryLogs on old rows: %v", err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("got %d entries, want 3", len(entries))
+	}
+
+	// Verify old data is intact.
+	for _, e := range entries {
+		if e.ContainerID == "" || e.Message == "" {
+			t.Errorf("old row has empty fields: %+v", e)
+		}
+	}
+
+	// 2. New logs can be inserted alongside old ones (8-column INSERT).
+	newTS := ts + 1
+	err = s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: time.Unix(newTS, 0), ContainerID: "c1", ContainerName: "web",
+			Project: "myapp", Service: "web", Stream: "stdout",
+			Message: `{"level":"warn","msg":"slow query"}`, Level: "WARN"},
+	})
+	if err != nil {
+		t.Fatalf("InsertLogs after upgrade: %v", err)
+	}
+
+	// Query both old and new rows together.
+	all, err := s.QueryLogs(ctx, LogFilter{Start: ts, End: newTS})
+	if err != nil {
+		t.Fatalf("QueryLogs mixed rows: %v", err)
+	}
+	if len(all) != 4 {
+		t.Fatalf("got %d entries, want 4 (3 old + 1 new)", len(all))
+	}
+
+	// 3. CountLogs works across both old and new rows.
+	count, err := s.CountLogs(ctx, LogFilter{Start: ts, End: newTS})
+	if err != nil {
+		t.Fatalf("CountLogs: %v", err)
+	}
+	if count != 4 {
+		t.Errorf("CountLogs = %d, want 4", count)
+	}
+
+	// 4. convertLogEntries produces correct DisplayMsg for both old and new rows.
+	msgs := convertLogEntries(all)
+	for i, m := range msgs {
+		if m.DisplayMsg == "" {
+			t.Errorf("msgs[%d].DisplayMsg is empty for message %q", i, m.Message)
+		}
+	}
+
+	// Spot-check specific values.
+	for _, m := range msgs {
+		switch m.Message {
+		case `{"level":"info","msg":"request served"}`:
+			if m.DisplayMsg != "request served" {
+				t.Errorf("old JSON DisplayMsg = %q, want 'request served'", m.DisplayMsg)
+			}
+		case `{"level":"warn","msg":"slow query"}`:
+			if m.DisplayMsg != "slow query" {
+				t.Errorf("new JSON DisplayMsg = %q, want 'slow query'", m.DisplayMsg)
+			}
+		case "plain log line":
+			if m.DisplayMsg != "plain log line" {
+				t.Errorf("plain DisplayMsg = %q, want 'plain log line'", m.DisplayMsg)
 			}
 		}
 	}
