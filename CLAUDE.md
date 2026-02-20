@@ -249,6 +249,7 @@ The alerter receives the same data already collected — no additional I/O.
 
 ### Docker runtime tracking
 
+- **No containers are tracked by default.** The `tracked` map starts empty. Users enable tracking per-container or per-group via the `t` key in the TUI dashboard.
 - `DockerCollector` has a single `tracked map[string]bool` keyed by container name.
 - `SetTracking(name, project, tracked)` — if project is set, iterates `lastContainers` and toggles all containers in that project individually. `IsTracked(name)` is a simple map lookup.
 - `Collect()` separates all containers (for TUI visibility) from tracked containers (for log sync/alert eval).
