@@ -1114,7 +1114,7 @@ func TestPruneHighVolumeLogs(t *testing.T) {
 		float64(prePrune.Size())/(1024*1024), float64(postPrune.Size())/(1024*1024))
 }
 
-func TestPruneDoesNotShrinkDBFile(t *testing.T) {
+func TestPruneReclaimsSpace(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.db")
 	s, err := OpenStore(path)
@@ -1167,12 +1167,13 @@ func TestPruneDoesNotShrinkDBFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if postPrune.Size() < prePrune.Size() {
-		t.Errorf("DB file shrank from %d to %d bytes — unexpected without VACUUM", prePrune.Size(), postPrune.Size())
+	// With incremental auto_vacuum enabled, prune should reclaim disk space.
+	if postPrune.Size() >= prePrune.Size() {
+		t.Errorf("DB file did not shrink: %d bytes pre-prune, %d bytes post-prune", prePrune.Size(), postPrune.Size())
 	}
 
-	t.Logf("DB size: %d bytes pre-prune, %d bytes post-prune (%.1f%% of original)",
-		prePrune.Size(), postPrune.Size(), float64(postPrune.Size())/float64(prePrune.Size())*100)
+	t.Logf("DB size: %d bytes pre-prune, %d bytes post-prune (%.1f%% reclaimed)",
+		prePrune.Size(), postPrune.Size(), (1-float64(postPrune.Size())/float64(prePrune.Size()))*100)
 }
 
 func TestResolveOrphanedAlerts(t *testing.T) {
@@ -1251,6 +1252,65 @@ func TestQueryFiringAlerts(t *testing.T) {
 	}
 	if results[0].ResolvedAt != nil {
 		t.Error("firing alert should have nil ResolvedAt")
+	}
+}
+
+func TestQueryLogsRecomputesDisplayMsg(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// InsertLogs no longer writes display_msg — it will be empty in the DB.
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stdout",
+			Message: `{"level":"info","msg":"started"}`, Level: "INFO", DisplayMsg: "started"},
+		{Timestamp: ts, ContainerID: "a", ContainerName: "web", Stream: "stderr",
+			Message: "plain text message", Level: "", DisplayMsg: "plain text message"},
+	})
+
+	// Verify display_msg is empty in the DB.
+	var dbDisplayMsg string
+	err := s.db.QueryRow("SELECT display_msg FROM logs LIMIT 1").Scan(&dbDisplayMsg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dbDisplayMsg != "" {
+		t.Errorf("display_msg in DB = %q, want empty (not stored)", dbDisplayMsg)
+	}
+
+	// QueryLogs returns entries without DisplayMsg.
+	entries, err := s.QueryLogs(ctx, LogFilter{Start: ts.Unix(), End: ts.Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want 2", len(entries))
+	}
+
+	// convertLogEntries recomputes DisplayMsg from Message.
+	msgs := convertLogEntries(entries)
+
+	// QueryLogs returns ORDER BY timestamp DESC, so both entries have the same
+	// timestamp — check that both have non-empty DisplayMsg values.
+	for i, m := range msgs {
+		if m.DisplayMsg == "" {
+			t.Errorf("msgs[%d].DisplayMsg is empty, want recomputed value", i)
+		}
+	}
+
+	// Verify specific values by matching on Message content.
+	for _, m := range msgs {
+		switch {
+		case m.Message == `{"level":"info","msg":"started"}`:
+			if m.DisplayMsg != "started" {
+				t.Errorf("JSON entry DisplayMsg = %q, want 'started'", m.DisplayMsg)
+			}
+		case m.Message == "plain text message":
+			if m.DisplayMsg != "plain text message" {
+				t.Errorf("plain entry DisplayMsg = %q, want 'plain text message'", m.DisplayMsg)
+			}
+		}
 	}
 }
 

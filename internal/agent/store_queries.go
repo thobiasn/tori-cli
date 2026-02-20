@@ -105,15 +105,15 @@ func (s *Store) InsertLogs(ctx context.Context, entries []LogEntry) error {
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO logs (timestamp, container_id, container_name, project, service, stream, message, level, display_msg)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		`INSERT INTO logs (timestamp, container_id, container_name, project, service, stream, message, level)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
 	for _, e := range entries {
-		if _, err := stmt.ExecContext(ctx, e.Timestamp.Unix(), e.ContainerID, e.ContainerName, e.Project, e.Service, e.Stream, e.Message, e.Level, e.DisplayMsg); err != nil {
+		if _, err := stmt.ExecContext(ctx, e.Timestamp.Unix(), e.ContainerID, e.ContainerName, e.Project, e.Service, e.Stream, e.Message, e.Level); err != nil {
 			return err
 		}
 	}
@@ -433,7 +433,7 @@ func (s *Store) CountLogs(ctx context.Context, f LogFilter) (int, error) {
 }
 
 func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) {
-	query := `SELECT timestamp, container_id, container_name, project, service, stream, message, level, display_msg FROM logs WHERE timestamp >= ? AND timestamp <= ?`
+	query := `SELECT timestamp, container_id, container_name, project, service, stream, message, level FROM logs WHERE timestamp >= ? AND timestamp <= ?`
 	args := []any{f.Start, f.End}
 	query, args = logScopeFilter(query, args, f)
 
@@ -469,7 +469,7 @@ func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) 
 	for rows.Next() {
 		var e LogEntry
 		var ts int64
-		if err := rows.Scan(&ts, &e.ContainerID, &e.ContainerName, &e.Project, &e.Service, &e.Stream, &e.Message, &e.Level, &e.DisplayMsg); err != nil {
+		if err := rows.Scan(&ts, &e.ContainerID, &e.ContainerName, &e.Project, &e.Service, &e.Stream, &e.Message, &e.Level); err != nil {
 			return nil, err
 		}
 		e.Timestamp = time.Unix(ts, 0)
@@ -589,8 +589,11 @@ func (s *Store) Prune(ctx context.Context, retentionDays int) error {
 		return fmt.Errorf("prune alerts: %w", err)
 	}
 
-	// Checkpoint WAL to reclaim file space, then ask Go to release memory.
+	// Checkpoint WAL, reclaim freed pages, refresh query planner stats,
+	// then ask Go to release memory.
 	s.db.ExecContext(ctx, "PRAGMA wal_checkpoint(PASSIVE)")
+	s.db.ExecContext(ctx, "PRAGMA incremental_vacuum(500)")
+	s.db.ExecContext(ctx, "ANALYZE")
 	debug.FreeOSMemory()
 
 	return nil
@@ -613,6 +616,13 @@ func (s *Store) pruneTable(ctx context.Context, table, column string, cutoff int
 		}
 		if n < pruneBatchSize {
 			return nil
+		}
+
+		// Yield between batches so inserts and queries aren't blocked.
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
 		}
 	}
 }

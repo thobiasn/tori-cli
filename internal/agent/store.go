@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"modernc.org/sqlite"
@@ -43,7 +45,7 @@ func init() {
 
 // currentSchemaVersion is incremented when the schema changes in a way that
 // requires data migration (not just adding columns).
-const currentSchemaVersion = 2
+const currentSchemaVersion = 3
 
 const schema = `
 CREATE TABLE IF NOT EXISTS host_metrics (
@@ -137,11 +139,16 @@ CREATE TABLE IF NOT EXISTS tracking_state (
 
 // Store manages SQLite persistence for metrics and logs.
 type Store struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
 }
 
 // OpenStore opens or creates a SQLite database at the given path with WAL mode.
 func OpenStore(path string) (*Store, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("create database directory: %w", err)
+	}
+
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
@@ -160,7 +167,14 @@ func OpenStore(path string) (*Store, error) {
 		return nil, fmt.Errorf("set cache_size: %w", err)
 	}
 
-	s := &Store{db: db}
+	// Enable incremental auto-vacuum for new databases. On existing databases
+	// this PRAGMA has no effect without a VACUUM (handled by migration).
+	if _, err := db.Exec("PRAGMA auto_vacuum = 2"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set auto_vacuum: %w", err)
+	}
+
+	s := &Store{db: db, path: path}
 
 	if err := s.migrate(); err != nil {
 		db.Close()
@@ -209,6 +223,13 @@ func (s *Store) migrate() error {
 	if version < 2 {
 		if err := s.backfillLogFields(); err != nil {
 			return fmt.Errorf("backfill log fields: %w", err)
+		}
+	}
+
+	// Version 2 → 3: Enable incremental auto-vacuum.
+	if version < 3 {
+		if err := s.enableAutoVacuum(); err != nil {
+			slog.Warn("auto_vacuum migration skipped", "error", err)
 		}
 	}
 
@@ -378,6 +399,48 @@ func (s *Store) backfillLogFields() error {
 	}
 
 	slog.Info("log backfill complete")
+	return nil
+}
+
+// enableAutoVacuum switches an existing database to incremental auto-vacuum mode.
+// This requires a one-time VACUUM which rewrites the entire file. Skipped if
+// there isn't enough free disk space (2× the DB file size).
+func (s *Store) enableAutoVacuum() error {
+	var mode int
+	if err := s.db.QueryRow("PRAGMA auto_vacuum").Scan(&mode); err != nil {
+		return fmt.Errorf("read auto_vacuum: %w", err)
+	}
+	if mode == 2 {
+		return nil // already incremental
+	}
+
+	info, err := os.Stat(s.path)
+	if err != nil {
+		return fmt.Errorf("stat db: %w", err)
+	}
+	dbSize := info.Size()
+
+	var fs syscall.Statfs_t
+	if err := syscall.Statfs(filepath.Dir(s.path), &fs); err != nil {
+		return fmt.Errorf("statfs: %w", err)
+	}
+	freeBytes := int64(fs.Bavail) * int64(fs.Bsize)
+
+	if freeBytes < 2*dbSize {
+		slog.Warn("skipping auto_vacuum: insufficient free space",
+			"db_size", dbSize, "free", freeBytes)
+		return nil
+	}
+
+	slog.Info("enabling auto_vacuum, running one-time VACUUM (this may take a moment for large databases)")
+
+	if _, err := s.db.Exec("PRAGMA auto_vacuum = 2"); err != nil {
+		return fmt.Errorf("set auto_vacuum: %w", err)
+	}
+	if _, err := s.db.Exec("VACUUM"); err != nil {
+		return fmt.Errorf("vacuum: %w", err)
+	}
+
 	return nil
 }
 

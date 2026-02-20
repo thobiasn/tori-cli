@@ -69,7 +69,7 @@ func buildLogReq(det *DetailState, retDays int) *protocol.QueryLogsReq {
 	return req
 }
 
-func fireSearch(det *DetailState, c *Client, retDays int, skipCount bool) tea.Cmd {
+func fireSearch(det *DetailState, c *Client, retDays int) tea.Cmd {
 	id := det.containerID
 	project := det.project
 
@@ -78,7 +78,7 @@ func fireSearch(det *DetailState, c *Client, retDays int, skipCount bool) tea.Cm
 		defer cancel()
 		req := buildLogReq(det, retDays)
 		req.Search = det.searchText
-		req.SkipCount = skipCount
+		req.SkipCount = true
 		if det.filterFrom > 0 {
 			req.Start = det.filterFrom
 		}
@@ -95,7 +95,6 @@ func fireSearch(det *DetailState, c *Client, retDays int, skipCount bool) tea.Cm
 
 func refetchLogs(det *DetailState, c *Client, retDays int) tea.Cmd {
 	det.resetLogs()
-	det.totalLogCount = 0
 
 	id := det.containerID
 	project := det.project
@@ -104,6 +103,7 @@ func refetchLogs(det *DetailState, c *Client, retDays int) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		req := buildLogReq(det, retDays)
+		req.SkipCount = true
 		entries, total, err := c.QueryLogs(ctx, req)
 		if err != nil {
 			return detailLogQueryMsg{containerID: id, project: project}

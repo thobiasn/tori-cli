@@ -223,27 +223,34 @@ func (s *DetailState) onSwitch(c *Client, windowSec int64, retentionDays int) te
 }
 
 func (s *DetailState) onStreamEntry(entry protocol.LogEntryMsg) {
-	if s.logs == nil || s.isSearchActive() {
+	if s.logs == nil {
 		return
 	}
+
+	// Always count matching entries, even when filters are active.
+	// totalLogCount is the total stored for this container/project,
+	// independent of search/level/time filters.
+	matched := false
 	if s.isGroupMode() {
 		for _, id := range s.projectIDs {
 			if entry.ContainerID == id {
-				s.logs.Push(entry)
-				s.totalLogCount++
-				if s.logPaused {
-					s.logScroll++
-				}
-				return
+				matched = true
+				break
 			}
 		}
+	} else {
+		matched = entry.ContainerID == s.containerID
+	}
+	if !matched {
 		return
 	}
-	if entry.ContainerID != s.containerID {
+	s.totalLogCount++
+
+	// When filters are active, count but don't buffer.
+	if s.isSearchActive() {
 		return
 	}
 	s.logs.Push(entry)
-	s.totalLogCount++
 	if s.logPaused {
 		s.logScroll++
 	}
@@ -407,6 +414,8 @@ func (s *DetailState) resetLogs() {
 	s.logPaused = false
 	s.backfilled = false
 	s.logBackfillPending = true
+	// totalLogCount is intentionally preserved — it tracks the total stored
+	// for this container/project, independent of filter changes.
 }
 
 func (s *DetailState) resetLogPosition() {
