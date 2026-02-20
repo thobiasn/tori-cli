@@ -66,6 +66,7 @@ func convertTimedContainer(src []TimedContainerMetrics) []protocol.TimedContaine
 func convertLogEntries(src []LogEntry) []protocol.LogEntryMsg {
 	out := make([]protocol.LogEntryMsg, len(src))
 	for i, s := range src {
+		_, displayMsg := ParseLogFields(s.Message)
 		out[i] = protocol.LogEntryMsg{
 			Timestamp:     s.Timestamp.Unix(),
 			ContainerID:   s.ContainerID,
@@ -73,7 +74,7 @@ func convertLogEntries(src []LogEntry) []protocol.LogEntryMsg {
 			Stream:        s.Stream,
 			Message:       s.Message,
 			Level:         s.Level,
-			DisplayMsg:    s.DisplayMsg,
+			DisplayMsg:    displayMsg,
 		}
 	}
 	return out

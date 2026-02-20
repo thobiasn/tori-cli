@@ -74,7 +74,7 @@ Connect:
 tori
 ```
 
-That's it — tori connects over SSH, no extra ports or setup needed.
+No containers are tracked yet — press `t` on a container or compose group to start collecting metrics, logs, and alerts for it. Tracking state is persisted and survives agent restarts.
 
 ## Installation
 
@@ -255,9 +255,8 @@ sys = "/sys"
 
 [docker]
 socket = "/var/run/docker.sock"
-# track all containers by default
-# can be toggled per-container or per-group at runtime via the TUI
-# these filters set the initial state:
+# no containers are tracked by default — enable via 't' in the TUI
+# optionally pre-enable tracking for containers matching these filters:
 # include = ["myapp-*"]
 # exclude = ["tori-*"]
 

@@ -380,3 +380,92 @@ CREATE TABLE IF NOT EXISTS tracking_state (kind TEXT NOT NULL, name TEXT NOT NUL
 		t.Errorf("user_version = %d, want %d", version, currentSchemaVersion)
 	}
 }
+
+func TestEnableAutoVacuum(t *testing.T) {
+	// Create a v2 database (auto_vacuum not yet enabled).
+	path := filepath.Join(t.TempDir(), "v2.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	db.Exec("PRAGMA journal_mode=WAL")
+
+	// v2 schema — minimal tables to pass migration.
+	v2Schema := `
+CREATE TABLE IF NOT EXISTS host_metrics (
+	timestamp INTEGER, cpu_percent REAL, mem_total INTEGER, mem_used INTEGER,
+	mem_percent REAL, mem_cached INTEGER DEFAULT 0, mem_free INTEGER DEFAULT 0,
+	swap_total INTEGER, swap_used INTEGER,
+	load1 REAL, load5 REAL, load15 REAL, uptime REAL
+);
+CREATE TABLE IF NOT EXISTS container_metrics (
+	timestamp INTEGER, project TEXT, service TEXT, cpu_percent REAL,
+	mem_usage INTEGER, mem_limit INTEGER, mem_percent REAL,
+	net_rx INTEGER, net_tx INTEGER, block_read INTEGER, block_write INTEGER, pids INTEGER
+);
+CREATE TABLE IF NOT EXISTS disk_metrics (timestamp INTEGER, mountpoint TEXT, device TEXT, total INTEGER, used INTEGER, free INTEGER, percent REAL);
+CREATE TABLE IF NOT EXISTS net_metrics (timestamp INTEGER, iface TEXT, rx_bytes INTEGER, tx_bytes INTEGER, rx_packets INTEGER, tx_packets INTEGER, rx_errors INTEGER, tx_errors INTEGER);
+CREATE TABLE IF NOT EXISTS logs (timestamp INTEGER, container_id TEXT, container_name TEXT, project TEXT DEFAULT '', service TEXT DEFAULT '', stream TEXT, message TEXT, level TEXT DEFAULT '', display_msg TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, rule_name TEXT, severity TEXT, condition TEXT, instance_key TEXT, fired_at INTEGER, resolved_at INTEGER, message TEXT, acknowledged INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS tracking_state (kind TEXT NOT NULL, name TEXT NOT NULL, UNIQUE(kind, name));
+PRAGMA user_version = 2;
+`
+	if _, err := db.Exec(v2Schema); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	db.Close()
+
+	// Verify auto_vacuum is 0 (none) before migration.
+	db2, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db2.SetMaxOpenConns(1)
+	var modeBefore int
+	if err := db2.QueryRow("PRAGMA auto_vacuum").Scan(&modeBefore); err != nil {
+		db2.Close()
+		t.Fatal(err)
+	}
+	db2.Close()
+	if modeBefore != 0 {
+		t.Fatalf("auto_vacuum before migration = %d, want 0", modeBefore)
+	}
+
+	// OpenStore triggers v2→v3 migration including enableAutoVacuum.
+	s, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	var mode int
+	if err := s.db.QueryRow("PRAGMA auto_vacuum").Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if mode != 2 {
+		t.Errorf("auto_vacuum = %d, want 2 (incremental)", mode)
+	}
+
+	var version int
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != currentSchemaVersion {
+		t.Errorf("user_version = %d, want %d", version, currentSchemaVersion)
+	}
+}
+
+func TestNewStoreAutoVacuum(t *testing.T) {
+	// A fresh database should have auto_vacuum = 2 (incremental).
+	s := testStore(t)
+
+	var mode int
+	if err := s.db.QueryRow("PRAGMA auto_vacuum").Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if mode != 2 {
+		t.Errorf("auto_vacuum = %d, want 2 (incremental)", mode)
+	}
+}

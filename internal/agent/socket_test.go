@@ -263,6 +263,45 @@ func TestSocketQueryLogs(t *testing.T) {
 	}
 }
 
+func TestSocketQueryLogsSkipCount(t *testing.T) {
+	s := testStore(t)
+	ctx := t.Context()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: ts, ContainerID: "abc", ContainerName: "web", Stream: "stdout", Message: "hello"},
+		{Timestamp: ts, ContainerID: "abc", ContainerName: "web", Stream: "stdout", Message: "world"},
+	})
+
+	_, _, path := testSocketServer(t, s)
+	conn := dial(t, path)
+
+	req := protocol.QueryLogsReq{Start: ts.Unix(), End: ts.Unix(), SkipCount: true}
+	env, err := protocol.NewEnvelope(protocol.TypeQueryLogs, 3, &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var logs protocol.QueryLogsResp
+	if err := protocol.DecodeBody(resp.Body, &logs); err != nil {
+		t.Fatal(err)
+	}
+	if len(logs.Entries) != 2 {
+		t.Fatalf("entries = %d, want 2", len(logs.Entries))
+	}
+	if logs.Total != -1 {
+		t.Errorf("total = %d, want -1 (count skipped)", logs.Total)
+	}
+}
+
 func TestSocketQueryAlerts(t *testing.T) {
 	s := testStore(t)
 	ctx := t.Context()
