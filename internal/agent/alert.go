@@ -41,6 +41,10 @@ type alertRule struct {
 	notifyCooldown time.Duration
 	severity       string
 	actions        []string
+	// Log-rule fields (only set when condition.Scope == "log").
+	match      string
+	matchRegex bool
+	window     time.Duration
 }
 
 // evalContext bundles the per-evaluation arguments shared by transition and fire.
@@ -101,6 +105,9 @@ func NewAlerter(alerts map[string]AlertConfig, store *Store, notifier *Notifier)
 			notifyCooldown: ac.NotifyCooldown.Duration,
 			severity:       ac.Severity,
 			actions:        ac.Actions,
+			match:          ac.Match,
+			matchRegex:     ac.MatchRegex,
+			window:         ac.Window.Duration,
 		})
 	}
 	return a, nil
@@ -123,6 +130,8 @@ func (a *Alerter) Evaluate(ctx context.Context, snap *MetricSnapshot) {
 			a.evalHostRule(ctx, r, snap, now, seen)
 		case r.condition.Scope == "container":
 			a.evalContainerRule(ctx, r, snap, now, seen)
+		case r.condition.Scope == "log":
+			a.evalLogRule(ctx, r, snap, now, seen)
 		}
 	}
 
@@ -250,6 +259,37 @@ func (a *Alerter) evalContainerRule(ctx context.Context, r *alertRule, snap *Met
 	}
 }
 
+func (a *Alerter) evalLogRule(ctx context.Context, r *alertRule, snap *MetricSnapshot, now time.Time, seen map[string]bool) {
+	if snap.Containers == nil {
+		for key := range a.instances {
+			if strings.HasPrefix(key, r.name+":") {
+				seen[key] = true
+			}
+		}
+		return
+	}
+
+	windowStart := now.Add(-r.window)
+	counts, err := a.store.CountLogMatches(ctx, r.match, r.matchRegex, windowStart.Unix(), now.Unix())
+	if err != nil {
+		slog.Error("count log matches", "rule", r.name, "error", err)
+		for key := range a.instances {
+			if strings.HasPrefix(key, r.name+":") {
+				seen[key] = true
+			}
+		}
+		return
+	}
+
+	for _, c := range snap.Containers {
+		key := r.name + ":" + c.ID
+		seen[key] = true
+		count := float64(counts[c.ID])
+		matched := compareNum(count, r.condition.Op, r.condition.NumVal)
+		a.transition(ctx, &evalContext{rule: r, key: key, containerID: c.ID, label: c.Name}, matched, now)
+	}
+}
+
 func (a *Alerter) transition(ctx context.Context, ec *evalContext, matched bool, now time.Time) {
 	inst := a.instances[ec.key]
 	if inst == nil {
@@ -291,7 +331,12 @@ func (a *Alerter) fire(ctx context.Context, ec *evalContext, inst *alertInstance
 	r := ec.rule
 
 	condStr := r.condition.Scope + "." + r.condition.Field + " " + r.condition.Op + " " + conditionValue(&r.condition)
-	msg := fmt.Sprintf("[%s] %s: %s", r.severity, r.name, r.condition.Scope+"."+r.condition.Field)
+	var msg string
+	if r.condition.Scope == "log" {
+		msg = fmt.Sprintf("[%s] %s: log matches for %q", r.severity, r.name, r.match)
+	} else {
+		msg = fmt.Sprintf("[%s] %s: %s", r.severity, r.name, r.condition.Scope+"."+r.condition.Field)
+	}
 	if ec.label != "" {
 		msg += " (" + ec.label + ")"
 	}
@@ -452,6 +497,9 @@ type RuleStatus struct {
 	Actions        []string
 	FiringCount    int
 	SilencedUntil  time.Time
+	Match          string
+	MatchRegex     bool
+	Window         time.Duration
 }
 
 // QueryRules returns the status of all configured alert rules.
@@ -494,6 +542,9 @@ func (a *Alerter) QueryRules() []RuleStatus {
 			Actions:        r.actions,
 			FiringCount:    firingCounts[r.name],
 			SilencedUntil:  silences[r.name],
+			Match:          r.match,
+			MatchRegex:     r.matchRegex,
+			Window:         r.window,
 		}
 	}
 	return out

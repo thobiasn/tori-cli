@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"text/template"
 	"time"
@@ -42,6 +43,9 @@ type AlertConfig struct {
 	NotifyCooldown Duration `toml:"notify_cooldown"`
 	Severity       string   `toml:"severity"`
 	Actions        []string `toml:"actions"`
+	Match          string   `toml:"match"`       // log pattern (text substring or regex)
+	MatchRegex     bool     `toml:"match_regex"` // true = regex, false = substring
+	Window         Duration `toml:"window"`      // time window for log.count
 }
 
 type NotifyConfig struct {
@@ -215,8 +219,29 @@ func validateWebhook(idx int, wh *WebhookConfig) error {
 }
 
 func validateAlert(name string, ac *AlertConfig) error {
-	if _, err := parseCondition(ac.Condition); err != nil {
+	cond, err := parseCondition(ac.Condition)
+	if err != nil {
 		return fmt.Errorf("alert %q: %w", name, err)
+	}
+	if cond.Scope == "log" {
+		if ac.Match == "" {
+			return fmt.Errorf("alert %q: match is required for log rules", name)
+		}
+		if ac.Window.Duration <= 0 {
+			return fmt.Errorf("alert %q: window is required for log rules (e.g. \"5m\")", name)
+		}
+		if ac.MatchRegex {
+			if _, err := regexp.Compile(ac.Match); err != nil {
+				return fmt.Errorf("alert %q: invalid match regex: %w", name, err)
+			}
+		}
+	} else {
+		if ac.Match != "" {
+			return fmt.Errorf("alert %q: match is only valid for log rules", name)
+		}
+		if ac.Window.Duration != 0 {
+			return fmt.Errorf("alert %q: window is only valid for log rules", name)
+		}
 	}
 	if ac.For.Duration < 0 {
 		return fmt.Errorf("alert %q: for must not be negative", name)

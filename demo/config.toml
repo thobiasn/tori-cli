@@ -19,3 +19,10 @@ condition = "container.memory_percent > 80"
 for = "30s"
 severity = "warning"
 actions = ["notify"]
+
+[alerts.error_spike]
+condition = "log.count > 10"
+match = "error"
+window = "5m"
+severity = "warning"
+actions = ["notify"]

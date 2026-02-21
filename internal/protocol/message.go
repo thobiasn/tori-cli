@@ -246,6 +246,9 @@ type AlertRuleInfo struct {
 	Actions        []string `msgpack:"actions"`
 	FiringCount    int      `msgpack:"firing_count"`
 	SilencedUntil  int64    `msgpack:"silenced_until,omitempty"` // unix timestamp, 0 = not silenced
+	Match          string   `msgpack:"match,omitempty"`
+	MatchRegex     bool     `msgpack:"match_regex,omitempty"`
+	Window         string   `msgpack:"window,omitempty"`
 }
 
 // QueryAlertRulesResp is the response for TypeQueryAlertRules.
