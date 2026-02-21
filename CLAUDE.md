@@ -132,11 +132,13 @@ Code is a liability, not an asset. Every line we write is a line we have to main
 
 ### Alert system
 
-- Conditions are 3-token strings: `scope.field op value` (e.g., `host.cpu_percent > 90`, `container.state == 'exited'`).
-- Host fields: `cpu_percent`, `memory_percent`, `disk_percent`, `load1`, `load5`, `load15`, `swap_percent`. Container fields: `cpu_percent`, `cpu_limit_percent`, `memory_percent`, `state`, `health`, `restart_count`, `exit_code`.
+- Conditions are 3-token strings: `scope.field op value` (e.g., `host.cpu_percent > 90`, `container.state == 'exited'`, `log.count > 5`).
+- Three scopes: `host`, `container`, `log`.
+- Host fields: `cpu_percent`, `memory_percent`, `disk_percent`, `load1`, `load5`, `load15`, `swap_percent`. Container fields: `cpu_percent`, `cpu_limit_percent`, `memory_percent`, `state`, `health`, `restart_count`, `exit_code`. Log fields: `count`.
 - `cpu_limit_percent` = `CPUPercent / CPULimit` when a CPU limit is configured, 0 when not. Preferred over `cpu_percent` for container alerts since it's relative to the container's actual constraint.
+- **Log rules** require `match` (pattern), `window` (duration), and optionally `match_regex` (bool) in AlertConfig. Evaluated per-container via `CountLogMatches()` SQL query grouped by container_id. One query per log rule per collect cycle.
 - Field names are validated against a whitelist in `parseCondition`. String fields (`state`, `health`) only allow `==`/`!=`.
-- Alerter instances are keyed: `rulename` for host, `rulename:containerID` for container, `rulename:mountpoint` for disk.
+- Alerter instances are keyed: `rulename` for host, `rulename:containerID` for container and log, `rulename:mountpoint` for disk.
 - State machine: inactive → pending (if `for > 0`) → firing → resolved → inactive. `for = 0` skips pending.
 - Inactive unseen instances are GC'd from the map to prevent unbounded growth with ephemeral containers.
 - When collection fails (nil snapshot field), existing instances are marked as `seen` to avoid false resolution.

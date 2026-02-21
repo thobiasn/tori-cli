@@ -419,6 +419,39 @@ func logScopeFilter(query string, args []any, f LogFilter) (string, []any) {
 	return query, args
 }
 
+// CountLogMatches returns the number of log entries matching the given pattern
+// within the time range [start, end], grouped by container_id.
+func (s *Store) CountLogMatches(ctx context.Context, pattern string, isRegex bool, start, end int64) (map[string]int, error) {
+	var query string
+	var args []any
+
+	if isRegex {
+		query = `SELECT container_id, COUNT(*) FROM logs WHERE timestamp >= ? AND timestamp <= ? AND message REGEXP ? GROUP BY container_id`
+		args = []any{start, end, "(?i)" + pattern}
+	} else {
+		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(pattern)
+		query = `SELECT container_id, COUNT(*) FROM logs WHERE timestamp >= ? AND timestamp <= ? AND message LIKE ? ESCAPE '\' GROUP BY container_id`
+		args = []any{start, end, "%" + escaped + "%"}
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var containerID string
+		var count int
+		if err := rows.Scan(&containerID, &count); err != nil {
+			return nil, err
+		}
+		counts[containerID] = count
+	}
+	return counts, rows.Err()
+}
+
 // CountLogs returns the total number of log entries matching the scope filter
 // (container/project + time range). Search, Level, and Limit are excluded so
 // the count represents the total scope, not the filtered subset.

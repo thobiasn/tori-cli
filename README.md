@@ -287,6 +287,21 @@ for = "0s"
 severity = "critical"
 actions = ["notify"]
 
+[alerts.error_spike]
+condition = "log.count > 10"
+match = "error"
+window = "5m"
+severity = "warning"
+actions = ["notify"]
+
+[alerts.oom_kills]
+condition = "log.count > 0"
+match = "OOM|out of memory"
+match_regex = true
+window = "10m"
+severity = "critical"
+actions = ["notify"]
+
 [notify.email]
 enabled = true
 smtp_host = "smtp.example.com"
@@ -323,8 +338,19 @@ Alert conditions use the format `scope.field op value`. Available fields:
 | `container.health` | string | Container health (e.g. `'healthy'`, `'unhealthy'`) |
 | `container.restart_count` | numeric | Container restart count |
 | `container.exit_code` | numeric | Container exit code |
+| `log.count` | numeric | Number of log lines matching `match` within `window` (per-container) |
 
 Numeric fields support `>`, `<`, `>=`, `<=`, `==`, `!=`. String fields support `==` and `!=` only, with values in single quotes.
+
+Log rules require two additional fields:
+
+| Field | Description |
+|---|---|
+| `match` | Text pattern or regex to match against log messages |
+| `window` | Time window for counting matches (e.g. `"5m"`, `"1h"`) |
+| `match_regex` | Set to `true` for regex matching (default: `false`, uses substring match) |
+
+Log rules are container-scoped — each tracked container is evaluated independently. Matching is case-insensitive. Only tracked containers with log collection enabled will be evaluated.
 
 Each alert rule supports these optional timing fields:
 
@@ -471,6 +497,12 @@ For client-only installs, just remove the binary (`~/.local/bin/tori` or `/usr/l
 **No exposed ports:** tori does not listen on any network port. All client communication goes through SSH to the Unix socket. There is no HTTP server, no API endpoint, nothing to expose or firewall. SSH compression is enabled by default on all tunnels to reduce bandwidth for metrics and log traffic.
 
 **Log contents:** tori stores container logs in SQLite. These may contain sensitive application data (tokens, user info, errors with PII). The database file at `/var/lib/tori/tori.db` should have restrictive permissions and the retention policy should be set appropriately.
+
+## Operational Notes
+
+**Storage and chatty containers:** All logs from tracked containers are stored in SQLite for the full `retention_days` window (default: 7 days). High-volume containers can grow the database significantly. If storage is a concern, reduce `retention_days` in the agent config. You can also be selective about which containers you track — the `t` key in the dashboard toggles tracking per-container, and only tracked containers have their logs stored.
+
+**Log alert windows and retention:** Log alert `window` values must be shorter than your `retention_days` — logs outside the retention window have been pruned and can't be counted. In practice, keep windows short (minutes to hours) for responsive alerting.
 
 ## Requirements
 

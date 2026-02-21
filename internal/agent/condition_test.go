@@ -26,6 +26,9 @@ func TestParseCondition(t *testing.T) {
 		{"container.health == 'unhealthy'", "container", "health", "==", 0, "unhealthy", true, false},
 		{"container.restart_count > 5", "container", "restart_count", ">", 5, "", false, false},
 		{"container.exit_code != 0", "container", "exit_code", "!=", 0, "", false, false},
+		{"log.count > 5", "log", "count", ">", 5, "", false, false},
+		{"log.count >= 1", "log", "count", ">=", 1, "", false, false},
+		{"log.count == 0", "log", "count", "==", 0, "", false, false},
 
 		// Invalid cases.
 		{"", "", "", "", 0, "", false, true},
@@ -37,6 +40,7 @@ func TestParseCondition(t *testing.T) {
 		{"unknown.cpu_percent > 90", "", "", "", 0, "", false, true},    // bad scope
 		{"host.unknown_field > 2", "", "", "", 0, "", false, true},      // unknown field
 		{"container.image == 'nginx'", "", "", "", 0, "", false, true},  // unknown field
+		{"log.message == 'error'", "", "", "", 0, "", false, true},      // unknown log field
 		{"container.state > 'exited'", "", "", "", 0, "", false, true},  // string field with > op
 		{"container.state >= 'a'", "", "", "", 0, "", false, true},      // string field with >= op
 	}

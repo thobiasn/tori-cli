@@ -91,5 +91,20 @@ services:
         severity = "warning"
         actions = ["notify"]
 
+        # [alerts.error_spike]
+        # condition = "log.count > 10"
+        # match = "error"                    # substring match (case-insensitive)
+        # window = "5m"
+        # severity = "warning"
+        # actions = ["notify"]
+
+        # [alerts.oom_kills]
+        # condition = "log.count > 0"
+        # match = "OOM|out of memory"        # regex match
+        # match_regex = true
+        # window = "10m"
+        # severity = "critical"
+        # actions = ["notify"]
+
 volumes:
   tori-data:

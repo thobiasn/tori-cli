@@ -26,6 +26,9 @@ var validFields = map[string]map[string]bool{
 		"restart_count":     true,
 		"exit_code":         true,
 	},
+	"log": {
+		"count": true,
+	},
 }
 
 // String-only fields that only support == and != operators.
@@ -36,8 +39,8 @@ var stringFields = map[string]bool{
 
 // Condition represents a parsed alert condition like "host.cpu_percent > 90".
 type Condition struct {
-	Scope  string  // "host" or "container"
-	Field  string  // "cpu_percent", "memory_percent", "disk_percent", "state"
+	Scope  string  // "host", "container", or "log"
+	Field  string  // "cpu_percent", "memory_percent", "disk_percent", "state", "count"
 	Op     string  // ">", "<", ">=", "<=", "==", "!="
 	NumVal float64 // numeric threshold (when IsStr is false)
 	StrVal string  // string value (when IsStr is true)
@@ -62,9 +65,9 @@ func parseCondition(s string) (Condition, error) {
 	}
 
 	switch c.Scope {
-	case "host", "container":
+	case "host", "container", "log":
 	default:
-		return Condition{}, fmt.Errorf("unknown scope %q (must be host or container)", c.Scope)
+		return Condition{}, fmt.Errorf("unknown scope %q (must be host, container, or log)", c.Scope)
 	}
 
 	fields, ok := validFields[c.Scope]

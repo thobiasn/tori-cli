@@ -847,6 +847,83 @@ func TestCountLogs(t *testing.T) {
 	}
 }
 
+func TestCountLogMatches(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: ts, ContainerID: "aaa", ContainerName: "web", Stream: "stderr", Message: "error: connection refused"},
+		{Timestamp: ts, ContainerID: "aaa", ContainerName: "web", Stream: "stderr", Message: "error: timeout"},
+		{Timestamp: ts, ContainerID: "aaa", ContainerName: "web", Stream: "stdout", Message: "info: request served"},
+		{Timestamp: ts, ContainerID: "bbb", ContainerName: "api", Stream: "stderr", Message: "error: disk full"},
+	})
+
+	// Substring match.
+	counts, err := s.CountLogMatches(ctx, "error", false, ts.Unix(), ts.Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["aaa"] != 2 {
+		t.Errorf("aaa count = %d, want 2", counts["aaa"])
+	}
+	if counts["bbb"] != 1 {
+		t.Errorf("bbb count = %d, want 1", counts["bbb"])
+	}
+
+	// Regex match.
+	counts, err = s.CountLogMatches(ctx, "error.*timeout", true, ts.Unix(), ts.Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["aaa"] != 1 {
+		t.Errorf("regex: aaa count = %d, want 1", counts["aaa"])
+	}
+	if counts["bbb"] != 0 {
+		t.Errorf("regex: bbb count = %d, want 0", counts["bbb"])
+	}
+
+	// No matches.
+	counts, err = s.CountLogMatches(ctx, "panic", false, ts.Unix(), ts.Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(counts) != 0 {
+		t.Errorf("expected empty map, got %v", counts)
+	}
+}
+
+func TestCountLogMatchesTimeWindow(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	t1 := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := t1.Add(10 * time.Minute)
+
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: t1, ContainerID: "aaa", ContainerName: "web", Stream: "stderr", Message: "error: old"},
+		{Timestamp: t2, ContainerID: "aaa", ContainerName: "web", Stream: "stderr", Message: "error: new"},
+	})
+
+	// Only the recent log should match.
+	counts, err := s.CountLogMatches(ctx, "error", false, t2.Unix()-60, t2.Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["aaa"] != 1 {
+		t.Errorf("windowed count = %d, want 1", counts["aaa"])
+	}
+
+	// Both match with full range.
+	counts, err = s.CountLogMatches(ctx, "error", false, t1.Unix(), t2.Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["aaa"] != 2 {
+		t.Errorf("full range count = %d, want 2", counts["aaa"])
+	}
+}
+
 func TestQueryLogsRegexSearch(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()

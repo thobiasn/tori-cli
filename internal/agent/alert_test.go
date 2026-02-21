@@ -1276,3 +1276,380 @@ func TestContainerExitCodeAlert(t *testing.T) {
 	}
 }
 
+func TestLogAlertFiresOnThreshold(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"error_spike": {
+			Condition: "log.count > 5",
+			Match:     "error",
+			Window:    Duration{5 * time.Minute},
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Insert 6 error logs for container "aaa".
+	var entries []LogEntry
+	for i := 0; i < 6; i++ {
+		entries = append(entries, LogEntry{
+			Timestamp:     now.Add(-time.Duration(i) * time.Second),
+			ContainerID:   "aaa",
+			ContainerName: "web",
+			Stream:        "stderr",
+			Message:       "error: something broke",
+		})
+	}
+	s.InsertLogs(ctx, entries)
+
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "running"}},
+	})
+
+	inst := a.instances["error_spike:aaa"]
+	if inst == nil || inst.state != stateFiring {
+		t.Fatal("expected error_spike:aaa to be firing")
+	}
+
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts WHERE rule_name = 'error_spike'").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("alert rows = %d, want 1", count)
+	}
+}
+
+func TestLogAlertDoesNotFireBelowThreshold(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"error_spike": {
+			Condition: "log.count > 5",
+			Match:     "error",
+			Window:    Duration{5 * time.Minute},
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Insert only 3 error logs.
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: now, ContainerID: "aaa", ContainerName: "web", Stream: "stderr", Message: "error: one"},
+		{Timestamp: now, ContainerID: "aaa", ContainerName: "web", Stream: "stderr", Message: "error: two"},
+		{Timestamp: now, ContainerID: "aaa", ContainerName: "web", Stream: "stderr", Message: "error: three"},
+	})
+
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "running"}},
+	})
+
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("alert rows = %d, want 0 (below threshold)", count)
+	}
+}
+
+func TestLogAlertPerContainer(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"error_spike": {
+			Condition: "log.count > 5",
+			Match:     "error",
+			Window:    Duration{5 * time.Minute},
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// 6 errors for "aaa", 2 for "bbb".
+	var entries []LogEntry
+	for i := 0; i < 6; i++ {
+		entries = append(entries, LogEntry{
+			Timestamp: now, ContainerID: "aaa", ContainerName: "web",
+			Stream: "stderr", Message: "error: fail",
+		})
+	}
+	entries = append(entries,
+		LogEntry{Timestamp: now, ContainerID: "bbb", ContainerName: "api", Stream: "stderr", Message: "error: one"},
+		LogEntry{Timestamp: now, ContainerID: "bbb", ContainerName: "api", Stream: "stderr", Message: "error: two"},
+	)
+	s.InsertLogs(ctx, entries)
+
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{
+			{ID: "aaa", Name: "web", State: "running"},
+			{ID: "bbb", Name: "api", State: "running"},
+		},
+	})
+
+	// Only "aaa" should fire.
+	if inst := a.instances["error_spike:aaa"]; inst == nil || inst.state != stateFiring {
+		t.Error("expected error_spike:aaa to be firing")
+	}
+
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("alert rows = %d, want 1 (only aaa over threshold)", count)
+	}
+}
+
+func TestLogAlertResolvesWhenCountDrops(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"error_spike": {
+			Condition: "log.count > 5",
+			Match:     "error",
+			Window:    Duration{5 * time.Minute},
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Insert 6 error logs.
+	var entries []LogEntry
+	for i := 0; i < 6; i++ {
+		entries = append(entries, LogEntry{
+			Timestamp: now, ContainerID: "aaa", ContainerName: "web",
+			Stream: "stderr", Message: "error: fail",
+		})
+	}
+	s.InsertLogs(ctx, entries)
+
+	snap := &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "running"}},
+	}
+
+	// Fire.
+	a.Evaluate(ctx, snap)
+	if a.instances["error_spike:aaa"].state != stateFiring {
+		t.Fatal("expected firing")
+	}
+
+	// Advance past window — logs are now outside the 5m window.
+	now = now.Add(10 * time.Minute)
+	a.Evaluate(ctx, snap)
+
+	inst := a.instances["error_spike:aaa"]
+	if inst != nil && inst.state != stateInactive {
+		t.Errorf("expected resolved after window elapsed, got state %d", inst.state)
+	}
+
+	var resolvedAt *int64
+	if err := s.db.QueryRow("SELECT resolved_at FROM alerts WHERE rule_name = 'error_spike'").Scan(&resolvedAt); err != nil {
+		t.Fatal(err)
+	}
+	if resolvedAt == nil {
+		t.Error("resolved_at should be set")
+	}
+}
+
+func TestLogAlertRegexMatch(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"oom": {
+			Condition:  "log.count > 0",
+			Match:      "OOM|out of memory",
+			MatchRegex: true,
+			Window:     Duration{10 * time.Minute},
+			Severity:   "critical",
+			Actions:    []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: now, ContainerID: "aaa", ContainerName: "web", Stream: "stderr", Message: "OOM killed process 1234"},
+		{Timestamp: now, ContainerID: "bbb", ContainerName: "api", Stream: "stderr", Message: "out of memory allocating 1MB"},
+		{Timestamp: now, ContainerID: "ccc", ContainerName: "db", Stream: "stdout", Message: "normal log line"},
+	})
+
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{
+			{ID: "aaa", Name: "web", State: "running"},
+			{ID: "bbb", Name: "api", State: "running"},
+			{ID: "ccc", Name: "db", State: "running"},
+		},
+	})
+
+	if inst := a.instances["oom:aaa"]; inst == nil || inst.state != stateFiring {
+		t.Error("expected oom:aaa firing")
+	}
+	if inst := a.instances["oom:bbb"]; inst == nil || inst.state != stateFiring {
+		t.Error("expected oom:bbb firing")
+	}
+
+	// "ccc" has no matching logs.
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Errorf("alert rows = %d, want 2", count)
+	}
+}
+
+func TestLogAlertWithForDuration(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"error_spike": {
+			Condition: "log.count > 5",
+			Match:     "error",
+			Window:    Duration{5 * time.Minute},
+			For:       Duration{30 * time.Second},
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Insert 6 error logs.
+	var entries []LogEntry
+	for i := 0; i < 6; i++ {
+		entries = append(entries, LogEntry{
+			Timestamp: now, ContainerID: "aaa", ContainerName: "web",
+			Stream: "stderr", Message: "error: fail",
+		})
+	}
+	s.InsertLogs(ctx, entries)
+
+	snap := &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "running"}},
+	}
+
+	// First eval — should go pending.
+	a.Evaluate(ctx, snap)
+	if a.instances["error_spike:aaa"].state != statePending {
+		t.Fatal("expected pending")
+	}
+
+	// 15s later — still pending.
+	now = now.Add(15 * time.Second)
+	a.Evaluate(ctx, snap)
+	if a.instances["error_spike:aaa"].state != statePending {
+		t.Fatal("expected still pending at 15s")
+	}
+
+	// 30s total — should fire.
+	now = now.Add(15 * time.Second)
+	a.Evaluate(ctx, snap)
+	if a.instances["error_spike:aaa"].state != stateFiring {
+		t.Fatal("expected firing at 30s")
+	}
+
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("alert rows = %d, want 1", count)
+	}
+}
+
+func TestLogAlertNilContainersDoesNotFalseResolve(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"error_spike": {
+			Condition: "log.count > 5",
+			Match:     "error",
+			Window:    Duration{5 * time.Minute},
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Insert 6 error logs and fire.
+	var entries []LogEntry
+	for i := 0; i < 6; i++ {
+		entries = append(entries, LogEntry{
+			Timestamp: now, ContainerID: "aaa", ContainerName: "web",
+			Stream: "stderr", Message: "error: fail",
+		})
+	}
+	s.InsertLogs(ctx, entries)
+
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "running"}},
+	})
+	if a.instances["error_spike:aaa"].state != stateFiring {
+		t.Fatal("expected firing")
+	}
+
+	// Nil containers (collection failed) — should NOT resolve.
+	now = now.Add(10 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{})
+
+	if a.instances["error_spike:aaa"].state != stateFiring {
+		t.Error("nil containers should not resolve active log alert")
+	}
+}
+
+func TestLogAlertFireMessage(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"error_spike": {
+			Condition: "log.count > 5",
+			Match:     "error",
+			Window:    Duration{5 * time.Minute},
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	var entries []LogEntry
+	for i := 0; i < 6; i++ {
+		entries = append(entries, LogEntry{
+			Timestamp: now, ContainerID: "aaa", ContainerName: "web",
+			Stream: "stderr", Message: "error: fail",
+		})
+	}
+	s.InsertLogs(ctx, entries)
+
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", State: "running"}},
+	})
+
+	// Verify the alert message format.
+	var msg string
+	if err := s.db.QueryRow("SELECT message FROM alerts WHERE rule_name = 'error_spike'").Scan(&msg); err != nil {
+		t.Fatal(err)
+	}
+	if msg != `[warning] error_spike: log matches for "error" (web)` {
+		t.Errorf("message = %q", msg)
+	}
+}
+

@@ -835,6 +835,13 @@ func (c *connState) queryAlertRules(id uint32) {
 			if !rs.SilencedUntil.IsZero() {
 				info.SilencedUntil = rs.SilencedUntil.Unix()
 			}
+			if rs.Match != "" {
+				info.Match = rs.Match
+				info.MatchRegex = rs.MatchRegex
+			}
+			if rs.Window > 0 {
+				info.Window = rs.Window.String()
+			}
 			rules = append(rules, info)
 		}
 	}

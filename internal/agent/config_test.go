@@ -556,6 +556,141 @@ actions = ["notify"]
 	}
 }
 
+func TestLoadConfigLogAlert(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[alerts.error_spike]
+condition = "log.count > 5"
+match = "error"
+window = "5m"
+severity = "warning"
+actions = ["notify"]
+`), 0644)
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ac := cfg.Alerts["error_spike"]
+	if ac.Match != "error" {
+		t.Errorf("match = %q, want error", ac.Match)
+	}
+	if ac.Window.Duration != 5*time.Minute {
+		t.Errorf("window = %s, want 5m", ac.Window.Duration)
+	}
+}
+
+func TestLoadConfigLogAlertRegex(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[alerts.oom]
+condition = "log.count > 0"
+match = "OOM|out of memory"
+match_regex = true
+window = "10m"
+severity = "critical"
+actions = ["notify"]
+`), 0644)
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ac := cfg.Alerts["oom"]
+	if !ac.MatchRegex {
+		t.Error("match_regex should be true")
+	}
+}
+
+func TestLoadConfigLogAlertMissingMatch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[alerts.bad]
+condition = "log.count > 5"
+window = "5m"
+severity = "warning"
+actions = ["notify"]
+`), 0644)
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for log rule without match")
+	}
+}
+
+func TestLoadConfigLogAlertMissingWindow(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[alerts.bad]
+condition = "log.count > 5"
+match = "error"
+severity = "warning"
+actions = ["notify"]
+`), 0644)
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for log rule without window")
+	}
+}
+
+func TestLoadConfigLogAlertInvalidRegex(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[alerts.bad]
+condition = "log.count > 5"
+match = "[invalid"
+match_regex = true
+window = "5m"
+severity = "warning"
+actions = ["notify"]
+`), 0644)
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for invalid regex")
+	}
+}
+
+func TestLoadConfigMatchOnNonLogRule(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[alerts.bad]
+condition = "host.cpu_percent > 90"
+match = "error"
+severity = "warning"
+actions = ["notify"]
+`), 0644)
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for match on non-log rule")
+	}
+}
+
+func TestLoadConfigWindowOnNonLogRule(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[alerts.bad]
+condition = "host.cpu_percent > 90"
+window = "5m"
+severity = "warning"
+actions = ["notify"]
+`), 0644)
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for window on non-log rule")
+	}
+}
+
 func TestDurationUnmarshal(t *testing.T) {
 	tests := []struct {
 		input string
