@@ -201,7 +201,7 @@ func TestWebhookRetrySuccess(t *testing.T) {
 	defer srv.Close()
 
 	ch := newWebhookChannel(WebhookConfig{Enabled: true, URL: srv.URL})
-	sendWithRetry(context.Background(), ch, "test", "body")
+	sendWithRetry(context.Background(), ch, notification{subject: "test", body: "body"})
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -224,7 +224,7 @@ func TestWebhookRetryExhausted(t *testing.T) {
 
 	ch := newWebhookChannel(WebhookConfig{Enabled: true, URL: srv.URL})
 	// Should not panic — errors are logged after exhausting retries.
-	sendWithRetry(context.Background(), ch, "test", "body")
+	sendWithRetry(context.Background(), ch, notification{subject: "test", body: "body"})
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -250,7 +250,7 @@ func TestWebhookRetryContextCancelled(t *testing.T) {
 	cancel()
 
 	ch := newWebhookChannel(WebhookConfig{Enabled: true, URL: srv.URL})
-	sendWithRetry(ctx, ch, "test", "body")
+	sendWithRetry(ctx, ch, notification{subject: "test", body: "body"})
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -284,5 +284,60 @@ func TestWebhookHeaderSanitization(t *testing.T) {
 
 	if strings.Contains(gotVal, "\r") || strings.Contains(gotVal, "\n") {
 		t.Errorf("header value should be sanitized, got %q", gotVal)
+	}
+}
+
+func TestWebhookTemplateSeverityStatus(t *testing.T) {
+	var gotBody string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	n := NewNotifier(&NotifyConfig{
+		Webhooks: []WebhookConfig{{
+			Enabled:  true,
+			URL:      srv.URL,
+			Template: `{"sev":"{{.Severity}}","status":"{{.Status}}","msg":"{{.Subject}}"}`,
+		}},
+	})
+
+	n.SendAlert("CPU alert", "CPU is high", "critical", "firing")
+	n.Stop()
+
+	want := `{"sev":"critical","status":"firing","msg":"CPU alert"}`
+	if gotBody != want {
+		t.Errorf("body = %q, want %q", gotBody, want)
+	}
+}
+
+func TestWebhookTemplateSeverityEmpty(t *testing.T) {
+	var gotBody string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	n := NewNotifier(&NotifyConfig{
+		Webhooks: []WebhookConfig{{
+			Enabled:  true,
+			URL:      srv.URL,
+			Template: `{"sev":"{{.Severity}}","status":"{{.Status}}","msg":"{{.Subject}}"}`,
+		}},
+	})
+
+	// Plain Send (no severity/status) — fields render as empty strings.
+	n.Send("test", "body")
+	n.Stop()
+
+	want := `{"sev":"","status":"","msg":"test"}`
+	if gotBody != want {
+		t.Errorf("body = %q, want %q", gotBody, want)
 	}
 }
