@@ -1404,3 +1404,105 @@ func TestValidLogLevel(t *testing.T) {
 		})
 	}
 }
+
+func TestSocketTestNotifyNoAlerter(t *testing.T) {
+	s := testStore(t)
+	_, _, path := testSocketServer(t, s)
+	conn := dial(t, path)
+
+	req := protocol.TestNotifyReq{RuleName: "high_cpu"}
+	env, err := protocol.NewEnvelope(protocol.TypeActionTestNotify, 1, &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Type != protocol.TypeError {
+		t.Fatalf("expected error, got %q", resp.Type)
+	}
+	var errResult protocol.ErrorResult
+	if err := protocol.DecodeBody(resp.Body, &errResult); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errResult.Error, "alerter not configured") {
+		t.Errorf("error = %q, want 'alerter not configured'", errResult.Error)
+	}
+}
+
+func TestSocketTestNotifyUnknownRule(t *testing.T) {
+	s := testStore(t)
+	alerter, _ := testAlerter(t, map[string]AlertConfig{
+		"high_cpu": {Condition: "host.cpu_percent > 90", Severity: "warning", Actions: []string{"notify"}},
+	})
+	_, _, path := testSocketServerWithAlerter(t, s, alerter)
+	conn := dial(t, path)
+
+	req := protocol.TestNotifyReq{RuleName: "nonexistent"}
+	env, err := protocol.NewEnvelope(protocol.TypeActionTestNotify, 1, &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Type != protocol.TypeError {
+		t.Fatalf("expected error, got %q", resp.Type)
+	}
+	var errResult protocol.ErrorResult
+	if err := protocol.DecodeBody(resp.Body, &errResult); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errResult.Error, "unknown rule") {
+		t.Errorf("error = %q, want 'unknown rule'", errResult.Error)
+	}
+}
+
+func TestSocketTestNotifyRateLimit(t *testing.T) {
+	s := testStore(t)
+	alerter, _ := testAlerter(t, map[string]AlertConfig{
+		"high_cpu": {Condition: "host.cpu_percent > 90", Severity: "warning", Actions: []string{"notify"}},
+	})
+	ss, _, path := testSocketServerWithAlerter(t, s, alerter)
+
+	// Simulate a recent test notification.
+	ss.lastTestNotify.Store(time.Now().Unix())
+
+	conn := dial(t, path)
+	req := protocol.TestNotifyReq{RuleName: "high_cpu"}
+	env, err := protocol.NewEnvelope(protocol.TypeActionTestNotify, 1, &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Type != protocol.TypeError {
+		t.Fatalf("expected error, got %q", resp.Type)
+	}
+	var errResult protocol.ErrorResult
+	if err := protocol.DecodeBody(resp.Body, &errResult); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errResult.Error, "rate limited") {
+		t.Errorf("error = %q, want rate limited", errResult.Error)
+	}
+}

@@ -77,6 +77,11 @@ func NewNotifier(cfg *NotifyConfig) *Notifier {
 	return n
 }
 
+// HasChannels returns whether any notification channels are configured.
+func (n *Notifier) HasChannels() bool {
+	return len(n.channels) > 0
+}
+
 func (n *Notifier) run() {
 	defer n.wg.Done()
 	for msg := range n.queue {

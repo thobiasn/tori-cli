@@ -554,6 +554,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case testNotifyDoneMsg:
+		if s := a.sessions[msg.server]; s != nil && s.AlertsView.ruleDialog {
+			s.AlertsView.testNotifyStatus = msg.status
+		}
+		return a, nil
+
 	case spinnerTickMsg:
 		a.spinnerFrame++
 		return a, spinnerTick()

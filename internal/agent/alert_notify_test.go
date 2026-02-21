@@ -274,6 +274,65 @@ func TestNotifyCooldownSilenceInteraction(t *testing.T) {
 	}
 }
 
+func TestSendTestNotification(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"high_cpu": {
+			Condition: "host.cpu_percent > 90",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, _, rec := testAlerterWithRecorder(t, alerts)
+
+	if err := a.SendTestNotification("high_cpu"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	a.notifier.Flush()
+
+	notices := rec.Notifications()
+	if len(notices) != 1 {
+		t.Fatalf("notifications = %d, want 1", len(notices))
+	}
+	if notices[0].subject != "Test: high_cpu" {
+		t.Errorf("subject = %q, want %q", notices[0].subject, "Test: high_cpu")
+	}
+	if notices[0].severity != "critical" {
+		t.Errorf("severity = %q, want %q", notices[0].severity, "critical")
+	}
+	if notices[0].status != "test" {
+		t.Errorf("status = %q, want %q", notices[0].status, "test")
+	}
+}
+
+func TestSendTestNotificationUnknownRule(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"high_cpu": {
+			Condition: "host.cpu_percent > 90",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, _, _ := testAlerterWithRecorder(t, alerts)
+
+	if err := a.SendTestNotification("nonexistent"); err == nil {
+		t.Fatal("expected error for unknown rule")
+	}
+}
+
+func TestSendTestNotificationNoChannels(t *testing.T) {
+	a, _ := testAlerter(t, map[string]AlertConfig{
+		"high_cpu": {
+			Condition: "host.cpu_percent > 90",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	})
+
+	if err := a.SendTestNotification("high_cpu"); err == nil {
+		t.Fatal("expected error with no channels")
+	}
+}
+
 func TestAlertNotificationCarriesSeverityAndStatus(t *testing.T) {
 	alerts := map[string]AlertConfig{
 		"high_cpu": {

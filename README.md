@@ -298,8 +298,10 @@ to = ["you@example.com"]
 enabled = true
 url = "https://hooks.slack.com/services/..."
 # headers = { Authorization = "Bearer token" }
-# template = '{"text": "{{.Subject}}\n{{.Body}}"}'
+# template = '{"text": "{{.Subject}}\n{{.Body}}\nSeverity: {{.Severity}} Status: {{.Status}}"}'
 ```
+
+Webhook template fields: `{{.Subject}}`, `{{.Body}}`, `{{.Severity}}` (warning/critical), `{{.Status}}` (firing/resolved/test).
 
 ### Alert reference
 
@@ -417,6 +419,7 @@ The `[theme]` section overrides individual TUI colors. By default all colors use
 | `Enter` | Expand details |
 | `a` | Acknowledge alert |
 | `s` | Silence rule |
+| `t` | Test notification (rules section/dialog) |
 | `r` | Show/hide resolved alerts |
 | `g` | Go to container |
 
