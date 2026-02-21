@@ -7,15 +7,17 @@ import (
 	"time"
 )
 
-// recordingChannel records notification subjects for test verification.
+// recordingChannel records notifications for test verification.
 type recordingChannel struct {
-	mu    sync.Mutex
-	calls []string
+	mu      sync.Mutex
+	calls   []string
+	notices []notification
 }
 
-func (r *recordingChannel) Send(_ context.Context, subject, _ string) error {
+func (r *recordingChannel) Send(_ context.Context, n notification) error {
 	r.mu.Lock()
-	r.calls = append(r.calls, subject)
+	r.calls = append(r.calls, n.subject)
+	r.notices = append(r.notices, n)
 	r.mu.Unlock()
 	return nil
 }
@@ -25,6 +27,14 @@ func (r *recordingChannel) Calls() []string {
 	defer r.mu.Unlock()
 	out := make([]string, len(r.calls))
 	copy(out, r.calls)
+	return out
+}
+
+func (r *recordingChannel) Notifications() []notification {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]notification, len(r.notices))
+	copy(out, r.notices)
 	return out
 }
 
@@ -261,5 +271,49 @@ func TestNotifyCooldownSilenceInteraction(t *testing.T) {
 	a.notifier.Flush()
 	if calls := rec.Calls(); len(calls) != 1 {
 		t.Fatalf("notifications = %d, want 1", len(calls))
+	}
+}
+
+func TestAlertNotificationCarriesSeverityAndStatus(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"high_cpu": {
+			Condition: "host.cpu_percent > 90",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+		"moderate_load": {
+			Condition: "host.load1 > 2",
+			Severity:  "warning",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, _, rec := testAlerterWithRecorder(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	a.Evaluate(ctx, &MetricSnapshot{
+		Host: &HostMetrics{CPUPercent: 95, Load1: 3.0},
+	})
+	a.notifier.Flush()
+
+	notices := rec.Notifications()
+	if len(notices) != 2 {
+		t.Fatalf("notifications = %d, want 2", len(notices))
+	}
+
+	// Rules evaluate in sorted order: high_cpu then moderate_load.
+	if notices[0].severity != "critical" {
+		t.Errorf("notices[0].severity = %q, want \"critical\"", notices[0].severity)
+	}
+	if notices[0].status != "firing" {
+		t.Errorf("notices[0].status = %q, want \"firing\"", notices[0].status)
+	}
+	if notices[1].severity != "warning" {
+		t.Errorf("notices[1].severity = %q, want \"warning\"", notices[1].severity)
+	}
+	if notices[1].status != "firing" {
+		t.Errorf("notices[1].status = %q, want \"firing\"", notices[1].status)
 	}
 }

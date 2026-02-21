@@ -328,8 +328,9 @@ func (a *Alerter) fire(ctx context.Context, ec *evalContext, inst *alertInstance
 			}
 			a.lastNotified[r.name] = now
 			ruleName := r.name
+			severity := r.severity
 			a.deferred = append(a.deferred, func() {
-				a.notifier.Send("Alert: "+ruleName, msg)
+				a.notifier.SendAlert("Alert: "+ruleName, msg, severity, "firing")
 			})
 		}
 	}

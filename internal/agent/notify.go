@@ -30,13 +30,15 @@ var webhookClient = &http.Client{
 
 // Channel sends alert notifications to a single destination.
 type Channel interface {
-	Send(ctx context.Context, subject, body string) error
+	Send(ctx context.Context, n notification) error
 }
 
 // notification is a queued alert message.
 type notification struct {
-	subject string
-	body    string
+	subject  string
+	body     string
+	severity string // "warning", "critical", or "" for non-alert notifications
+	status   string // "firing", "resolved", or "" for non-alert notifications
 }
 
 // Notifier sends alert notifications via configured channels.
@@ -79,7 +81,7 @@ func (n *Notifier) run() {
 	defer n.wg.Done()
 	for msg := range n.queue {
 		for _, ch := range n.channels {
-			sendWithRetry(context.Background(), ch, msg.subject, msg.body)
+			sendWithRetry(context.Background(), ch, msg)
 		}
 		n.pending.Done()
 	}
@@ -88,15 +90,24 @@ func (n *Notifier) run() {
 // Send queues a notification for async delivery. If the queue is full, the
 // notification is dropped with a warning. This never blocks the caller.
 func (n *Notifier) Send(subject, body string) {
+	n.send(notification{subject: subject, body: body})
+}
+
+// SendAlert queues an alert notification with severity and status metadata.
+func (n *Notifier) SendAlert(subject, body, severity, status string) {
+	n.send(notification{subject: subject, body: body, severity: severity, status: status})
+}
+
+func (n *Notifier) send(msg notification) {
 	if len(n.channels) == 0 {
 		return
 	}
 	n.pending.Add(1)
 	select {
-	case n.queue <- notification{subject, body}:
+	case n.queue <- msg:
 	default:
 		n.pending.Done()
-		slog.Warn("notification queue full, dropping", "subject", subject)
+		slog.Warn("notification queue full, dropping", "subject", msg.subject)
 	}
 }
 
@@ -117,11 +128,11 @@ func (n *Notifier) Stop() {
 
 // sendWithRetry attempts to send a notification up to 3 times with backoff (1s, 3s).
 // Retries abort early if ctx is cancelled.
-func sendWithRetry(ctx context.Context, ch Channel, subject, body string) {
+func sendWithRetry(ctx context.Context, ch Channel, msg notification) {
 	backoffs := []time.Duration{1 * time.Second, 3 * time.Second}
 	var err error
 	for attempt := range 3 {
-		err = ch.Send(ctx, subject, body)
+		err = ch.Send(ctx, msg)
 		if err == nil {
 			return
 		}
@@ -143,7 +154,7 @@ type emailChannel struct {
 	cfg EmailConfig
 }
 
-func (e *emailChannel) Send(ctx context.Context, subject, body string) error {
+func (e *emailChannel) Send(ctx context.Context, n notification) error {
 	addr := net.JoinHostPort(e.cfg.SMTPHost, fmt.Sprintf("%d", e.cfg.SMTPPort))
 
 	// Sanitize header values to prevent SMTP header injection.
@@ -152,7 +163,8 @@ func (e *emailChannel) Send(ctx context.Context, subject, body string) error {
 	for i, t := range e.cfg.To {
 		to[i] = sanitizeHeader(t)
 	}
-	subject = sanitizeHeader(subject)
+	subject := sanitizeHeader(n.subject)
+	body := n.body
 
 	toHeader := strings.Join(to, ", ")
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\n\r\n%s",
@@ -212,8 +224,10 @@ type webhookChannel struct {
 
 // webhookData is the data passed to webhook templates.
 type webhookData struct {
-	Subject string
-	Body    string
+	Subject  string
+	Body     string
+	Severity string
+	Status   string
 }
 
 func newWebhookChannel(cfg WebhookConfig) *webhookChannel {
@@ -225,18 +239,24 @@ func newWebhookChannel(cfg WebhookConfig) *webhookChannel {
 	return wc
 }
 
-func (w *webhookChannel) Send(ctx context.Context, subject, body string) error {
+func (w *webhookChannel) Send(ctx context.Context, n notification) error {
 	var payload []byte
 	if w.tmpl != nil {
 		var buf bytes.Buffer
-		if err := w.tmpl.Execute(&buf, webhookData{Subject: subject, Body: body}); err != nil {
+		data := webhookData{
+			Subject:  n.subject,
+			Body:     n.body,
+			Severity: n.severity,
+			Status:   n.status,
+		}
+		if err := w.tmpl.Execute(&buf, data); err != nil {
 			return fmt.Errorf("template execute: %w", err)
 		}
 		payload = buf.Bytes()
 	} else {
 		var err error
 		payload, err = json.Marshal(map[string]string{
-			"text": fmt.Sprintf("*%s*\n%s", subject, body),
+			"text": fmt.Sprintf("*%s*\n%s", n.subject, n.body),
 		})
 		if err != nil {
 			return err
