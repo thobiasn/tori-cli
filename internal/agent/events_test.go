@@ -431,13 +431,22 @@ func TestEventHealthStatusTriggersAlert(t *testing.T) {
 		t.Fatal("timeout waiting for hub message")
 	}
 
-	// Verify alert fired.
-	alerter.mu.Lock()
-	inst := alerter.instances["unhealthy:abc123"]
-	alerter.mu.Unlock()
-
-	if inst == nil || inst.state != stateFiring {
-		t.Error("expected unhealthy:abc123 to be firing after health_status event")
+	// Verify alert fired. EvaluateContainerEvent runs after the hub publish,
+	// so poll briefly to avoid racing with it.
+	deadline := time.After(2 * time.Second)
+	for {
+		alerter.mu.Lock()
+		inst := alerter.instances["unhealthy:abc123"]
+		fired := inst != nil && inst.state == stateFiring
+		alerter.mu.Unlock()
+		if fired {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("expected unhealthy:abc123 to be firing after health_status event")
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
 
