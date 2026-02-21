@@ -26,6 +26,7 @@ const (
 	TypeActionAckAlert     MsgType = "action:ack_alert"
 	TypeActionSilence      MsgType = "action:silence_alert"
 	TypeActionSetTracking  MsgType = "action:set_tracking"
+	TypeActionTestNotify   MsgType = "action:test_notify"
 	TypeQueryTracking      MsgType = "query:tracking"
 	TypeQueryAlertRules    MsgType = "query:alert_rules"
 	TypeResult             MsgType = "result"
@@ -227,6 +228,11 @@ type AckAlertReq struct {
 type SilenceAlertReq struct {
 	RuleName string `msgpack:"rule_name"`
 	Duration int64  `msgpack:"duration"` // seconds
+}
+
+// TestNotifyReq is the body for TypeActionTestNotify.
+type TestNotifyReq struct {
+	RuleName string `msgpack:"rule_name"`
 }
 
 // AlertRuleInfo describes a configured alert rule and its current status.

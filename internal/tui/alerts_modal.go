@@ -152,11 +152,19 @@ func renderRuleDialog(a *App, s *Session, width, height int) string {
 		lines = append(lines, muted.Render("firing:     ")+lipgloss.NewStyle().Foreground(sevColor).Render(firingStr))
 	}
 
+	if av.testNotifyStatus != "" {
+		statusStyle := lipgloss.NewStyle().Foreground(theme.Healthy)
+		if av.testNotifyStatus != "sent" {
+			statusStyle = lipgloss.NewStyle().Foreground(theme.Critical)
+		}
+		lines = append(lines, muted.Render("test:       ")+statusStyle.Render(av.testNotifyStatus))
+	}
+
 	return (dialogLayout{
 		title: "rule",
 		width: modalW,
 		lines: lines,
-		tips:  dialogTips(theme, "s", "silence", "j/k", "navigate", "esc", "close"),
+		tips:  dialogTips(theme, "t", "test notify", "s", "silence", "j/k", "navigate", "esc", "close"),
 	}).render(width, height, theme)
 }
 

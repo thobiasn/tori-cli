@@ -48,8 +48,9 @@ type SocketServer struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 
-	alerterMu sync.RWMutex
-	alerter   *Alerter
+	alerterMu      sync.RWMutex
+	alerter        *Alerter
+	lastTestNotify atomic.Int64 // unix timestamp of last test notification
 }
 
 // NewSocketServer creates a SocketServer. Call Start to begin accepting connections.
@@ -307,6 +308,8 @@ func (c *connState) dispatch(env *protocol.Envelope) {
 		c.silenceAlert(env)
 	case protocol.TypeActionSetTracking:
 		c.setTracking(env)
+	case protocol.TypeActionTestNotify:
+		c.testNotify(env)
 	case protocol.TypeQueryTracking:
 		c.queryTracking(env)
 	case protocol.TypeQueryAlertRules:
@@ -724,6 +727,50 @@ func (c *connState) silenceAlert(env *protocol.Envelope) {
 		msg = "unsilenced"
 	}
 	c.sendResult(env.ID, &protocol.Result{OK: true, Message: msg})
+}
+
+func (c *connState) testNotify(env *protocol.Envelope) {
+	var req protocol.TestNotifyReq
+	if err := protocol.DecodeBody(env.Body, &req); err != nil {
+		c.sendError(env.ID, "invalid body")
+		return
+	}
+	if len(req.RuleName) == 0 || len(req.RuleName) > maxNameLen {
+		c.sendError(env.ID, "invalid rule name")
+		return
+	}
+
+	c.ss.alerterMu.RLock()
+	alerter := c.ss.alerter
+	c.ss.alerterMu.RUnlock()
+	if alerter == nil {
+		c.sendError(env.ID, "alerter not configured")
+		return
+	}
+	if !alerter.HasRule(req.RuleName) {
+		c.sendError(env.ID, "unknown rule name")
+		return
+	}
+
+	// Rate limit: one test notification per 60 seconds (CAS to avoid TOCTOU).
+	for {
+		last := c.ss.lastTestNotify.Load()
+		now := time.Now().Unix()
+		elapsed := now - last
+		if elapsed < 60 {
+			c.sendError(env.ID, fmt.Sprintf("rate limited, try again in %ds", 60-elapsed))
+			return
+		}
+		if c.ss.lastTestNotify.CompareAndSwap(last, now) {
+			break
+		}
+	}
+
+	if err := alerter.SendTestNotification(req.RuleName); err != nil {
+		c.sendError(env.ID, err.Error())
+		return
+	}
+	c.sendResult(env.ID, &protocol.Result{OK: true, Message: "test notification sent"})
 }
 
 func (c *connState) setTracking(env *protocol.Envelope) {

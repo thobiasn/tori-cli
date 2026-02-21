@@ -314,6 +314,7 @@ func renderHelpModal(a *App, _ *Session, width, height int) string {
 			{"enter", "expand details"},
 			{"a", "acknowledge alert"},
 			{"s", "silence rule/alert"},
+			{"t", "test notification"},
 			{"r", "show/hide resolved"},
 			{"g", "go to container"},
 			{"1", "dashboard view"},

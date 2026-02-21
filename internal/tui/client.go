@@ -305,6 +305,12 @@ func (c *Client) SilenceAlert(ctx context.Context, rule string, dur int64) error
 	return err
 }
 
+// TestNotify sends a test notification for the given rule name.
+func (c *Client) TestNotify(ctx context.Context, ruleName string) error {
+	_, err := c.Request(ctx, protocol.TypeActionTestNotify, &protocol.TestNotifyReq{RuleName: ruleName})
+	return err
+}
+
 // SetTracking toggles tracking for a container name or compose project.
 func (c *Client) SetTracking(ctx context.Context, container, project string, tracked bool) error {
 	_, err := c.Request(ctx, protocol.TypeActionSetTracking, &protocol.SetTrackingReq{

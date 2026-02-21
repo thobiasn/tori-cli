@@ -499,6 +499,26 @@ func (a *Alerter) QueryRules() []RuleStatus {
 	return out
 }
 
+// SendTestNotification sends a test notification for the given rule name.
+func (a *Alerter) SendTestNotification(ruleName string) error {
+	if a.notifier == nil || !a.notifier.HasChannels() {
+		return fmt.Errorf("no notification channels configured")
+	}
+	var rule *alertRule
+	for i := range a.rules {
+		if a.rules[i].name == ruleName {
+			rule = &a.rules[i]
+			break
+		}
+	}
+	if rule == nil {
+		return fmt.Errorf("unknown rule: %s", ruleName)
+	}
+	body := fmt.Sprintf("Test notification for rule '%s'.", ruleName)
+	a.notifier.SendAlert("Test: "+ruleName, body, rule.severity, "test")
+	return nil
+}
+
 // Stop shuts down the alerter's notifier. Safe to call if notifier is nil.
 func (a *Alerter) Stop() {
 	if a.notifier != nil {

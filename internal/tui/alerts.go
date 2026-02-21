@@ -20,16 +20,17 @@ const (
 
 // AlertsState holds the state for the alerts view.
 type AlertsState struct {
-	rules        []protocol.AlertRuleInfo
-	resolved     []protocol.AlertMsg
-	focus        alertsSection
-	alertCursor  int
-	ruleCursor   int
-	showResolved bool
-	alertDialog  bool // true when alert detail dialog is open
-	ruleDialog   bool // true when rule detail dialog is open
-	silenceModal *silenceModalState
-	loaded       bool
+	rules            []protocol.AlertRuleInfo
+	resolved         []protocol.AlertMsg
+	focus            alertsSection
+	alertCursor      int
+	ruleCursor       int
+	showResolved     bool
+	alertDialog      bool // true when alert detail dialog is open
+	ruleDialog       bool // true when rule detail dialog is open
+	silenceModal     *silenceModalState
+	loaded           bool
+	testNotifyStatus string // "sent", error message, or "" (cleared on navigation/close)
 }
 
 type silenceModalState struct {
@@ -69,6 +70,10 @@ type alertsDataMsg struct {
 }
 type alertAckDoneMsg struct{ server string }
 type alertSilenceDoneMsg struct{ server string }
+type testNotifyDoneMsg struct {
+	server string
+	status string // "sent" or error message
+}
 
 // queryAlertsData fetches alert rules and recent historical alerts.
 func queryAlertsData(c *Client, server string) tea.Cmd {
@@ -171,6 +176,7 @@ func (a *App) enterAlerts() tea.Cmd {
 	av.alertDialog = false
 	av.ruleDialog = false
 	av.silenceModal = nil
+	av.testNotifyStatus = ""
 	av.focus = sectionAlerts
 	return queryAlertsData(s.Client, s.Name)
 }
@@ -255,6 +261,7 @@ func (a *App) handleAlertsKey(msg tea.KeyMsg) (App, tea.Cmd) {
 		} else {
 			if av.ruleCursor >= 0 && av.ruleCursor < len(av.rules) {
 				av.ruleDialog = true
+				av.testNotifyStatus = ""
 			}
 		}
 		return *a, nil
@@ -267,6 +274,12 @@ func (a *App) handleAlertsKey(msg tea.KeyMsg) (App, tea.Cmd) {
 
 	case "s":
 		return a.handleAlertsSilence()
+
+	case "t":
+		if av.focus == sectionRules {
+			return a.testNotifyRule()
+		}
+		return *a, nil
 
 	case "g":
 		return a.goToAlertContainer()
@@ -311,12 +324,17 @@ func (a *App) handleRuleDialogKey(key string) (App, tea.Cmd) {
 	switch key {
 	case "esc", "enter":
 		av.ruleDialog = false
+		av.testNotifyStatus = ""
 	case "j", "down":
+		av.testNotifyStatus = ""
 		a.alertsNavigate(1)
 	case "k", "up":
+		av.testNotifyStatus = ""
 		a.alertsNavigate(-1)
 	case "s":
 		return a.handleAlertsSilence()
+	case "t":
+		return a.testNotifyRule()
 	}
 	return *a, nil
 }
@@ -425,6 +443,29 @@ func (a *App) handleAlertsSilence() (App, tea.Cmd) {
 		cursor:   0,
 	}
 	return *a, nil
+}
+
+// testNotifyRule sends a test notification for the current rule.
+func (a *App) testNotifyRule() (App, tea.Cmd) {
+	s := a.session()
+	if s == nil || s.Client == nil {
+		return *a, nil
+	}
+	av := &s.AlertsView
+	if av.ruleCursor < 0 || av.ruleCursor >= len(av.rules) {
+		return *a, nil
+	}
+	ruleName := av.rules[av.ruleCursor].Name
+	client := s.Client
+	server := s.Name
+	return *a, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := client.TestNotify(ctx, ruleName); err != nil {
+			return testNotifyDoneMsg{server: server, status: err.Error()}
+		}
+		return testNotifyDoneMsg{server: server, status: "sent"}
+	}
 }
 
 // handleSilenceDialogKey handles keys within the silence duration dialog.

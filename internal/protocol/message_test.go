@@ -139,6 +139,7 @@ func TestQueryMessagesRoundtrip(t *testing.T) {
 		{"QueryAlertsReq", TypeQueryAlerts, &QueryAlertsReq{Start: 1000, End: 2000}},
 		{"AckAlertReq", TypeActionAckAlert, &AckAlertReq{AlertID: 42}},
 		{"SilenceAlertReq", TypeActionSilence, &SilenceAlertReq{RuleName: "high_cpu", Duration: 3600}},
+		{"TestNotifyReq", TypeActionTestNotify, &TestNotifyReq{RuleName: "high_cpu"}},
 		{"SubscribeLogs", TypeSubscribeLogs, &SubscribeLogs{ContainerID: "abc", Project: "myapp", Search: "panic", Level: "ERR"}},
 		{"Unsubscribe", TypeUnsubscribe, &Unsubscribe{Topic: "metrics"}},
 	}
