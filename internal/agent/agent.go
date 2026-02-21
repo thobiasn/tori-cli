@@ -128,7 +128,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		"retention_days", a.cfg.Storage.RetentionDays,
 	)
 
-	if err := a.socket.Start(a.cfg.Socket.Path); err != nil {
+	if err := a.socket.Start(a.cfg.Socket.Path, a.cfg.Socket.Mode.FileMode); err != nil {
 		return fmt.Errorf("start socket: %w", err)
 	}
 
@@ -160,6 +160,9 @@ func nonReloadableFields(old, updated *Config) {
 	}
 	if old.Socket.Path != updated.Socket.Path {
 		slog.Warn("config reload: socket.path cannot be changed at runtime", "old", old.Socket.Path, "new", updated.Socket.Path)
+	}
+	if old.Socket.Mode.FileMode != updated.Socket.Mode.FileMode {
+		slog.Warn("config reload: socket.mode cannot be changed at runtime", "old", fmt.Sprintf("%#o", old.Socket.Mode.FileMode), "new", fmt.Sprintf("%#o", updated.Socket.Mode.FileMode))
 	}
 	if old.Host.Proc != updated.Host.Proc {
 		slog.Warn("config reload: host.proc cannot be changed at runtime", "old", old.Host.Proc, "new", updated.Host.Proc)

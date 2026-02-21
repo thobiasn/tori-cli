@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,6 +18,7 @@ retention_days = 14
 
 [socket]
 path = "/tmp/test.sock"
+mode = "0666"
 
 [host]
 proc = "/host/proc"
@@ -44,6 +46,9 @@ interval = "30s"
 	}
 	if cfg.Socket.Path != "/tmp/test.sock" {
 		t.Errorf("socket path = %q, want /tmp/test.sock", cfg.Socket.Path)
+	}
+	if cfg.Socket.Mode.FileMode != 0666 {
+		t.Errorf("socket mode = %#o, want 0666", cfg.Socket.Mode.FileMode)
 	}
 	if cfg.Host.Proc != "/host/proc" {
 		t.Errorf("proc = %q, want /host/proc", cfg.Host.Proc)
@@ -80,6 +85,9 @@ func TestLoadConfigDefaults(t *testing.T) {
 	}
 	if cfg.Socket.Path != "/run/tori/tori.sock" {
 		t.Errorf("default socket = %q, want /run/tori/tori.sock", cfg.Socket.Path)
+	}
+	if cfg.Socket.Mode.FileMode != 0660 {
+		t.Errorf("default socket mode = %#o, want 0660", cfg.Socket.Mode.FileMode)
 	}
 	if cfg.Host.Proc != "/proc" {
 		t.Errorf("default proc = %q, want /proc", cfg.Host.Proc)
@@ -688,6 +696,54 @@ actions = ["notify"]
 	_, err := LoadConfig(path)
 	if err == nil {
 		t.Fatal("expected error for window on non-log rule")
+	}
+}
+
+func TestFileModeUnmarshal(t *testing.T) {
+	tests := []struct {
+		input string
+		want  fs.FileMode
+		err   bool
+	}{
+		{"0660", 0660, false},
+		{"660", 0660, false},
+		{"0666", 0666, false},
+		{"hello", 0, true},
+		{"0999", 0, true},
+		{"", 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			var m FileMode
+			err := m.UnmarshalText([]byte(tt.input))
+			if tt.err {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if m.FileMode != tt.want {
+				t.Errorf("got %#o, want %#o", m.FileMode, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadConfigInvalidSocketMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	os.WriteFile(path, []byte(`
+[socket]
+mode = "0644"
+`), 0644)
+
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for invalid socket mode")
 	}
 }
 

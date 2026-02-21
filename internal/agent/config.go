@@ -2,9 +2,11 @@ package agent
 
 import (
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -23,6 +25,21 @@ func (d *Duration) UnmarshalText(text []byte) error {
 	if err != nil {
 		return fmt.Errorf("invalid duration %q: %w", text, err)
 	}
+	return nil
+}
+
+// FileMode wraps fs.FileMode for TOML octal string parsing ("0660", "660").
+type FileMode struct {
+	fs.FileMode
+}
+
+func (m *FileMode) UnmarshalText(text []byte) error {
+	s := string(text)
+	v, err := strconv.ParseUint(s, 8, 32)
+	if err != nil {
+		return fmt.Errorf("invalid file mode %q: must be octal (e.g. \"0660\")", s)
+	}
+	m.FileMode = fs.FileMode(v)
 	return nil
 }
 
@@ -74,7 +91,8 @@ type StorageConfig struct {
 }
 
 type SocketConfig struct {
-	Path string `toml:"path"`
+	Path string   `toml:"path"`
+	Mode FileMode `toml:"mode"`
 }
 
 type HostConfig struct {
@@ -123,6 +141,9 @@ func setDefaults(cfg *Config, md toml.MetaData) {
 	if cfg.Socket.Path == "" {
 		cfg.Socket.Path = "/run/tori/tori.sock"
 	}
+	if cfg.Socket.Mode.FileMode == 0 {
+		cfg.Socket.Mode.FileMode = 0660
+	}
 	if cfg.Host.Proc == "" {
 		cfg.Host.Proc = "/proc"
 	}
@@ -149,6 +170,9 @@ func setDefaults(cfg *Config, md toml.MetaData) {
 func validate(cfg *Config) error {
 	if cfg.Storage.RetentionDays < 1 {
 		return fmt.Errorf("retention_days must be >= 1, got %d", cfg.Storage.RetentionDays)
+	}
+	if cfg.Socket.Mode.FileMode != 0660 && cfg.Socket.Mode.FileMode != 0666 {
+		return fmt.Errorf("socket mode must be \"0660\" or \"0666\", got %#o", cfg.Socket.Mode.FileMode)
 	}
 	if cfg.Collect.Interval.Duration < 1*time.Second {
 		return fmt.Errorf("collect interval must be >= 1s, got %s", cfg.Collect.Interval.Duration)

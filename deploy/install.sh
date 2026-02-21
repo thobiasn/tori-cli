@@ -193,10 +193,21 @@ if getent group docker >/dev/null 2>&1; then
     info "added tori to docker group"
 fi
 
+# --- Add invoking user to tori group ---
+
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+    usermod -aG tori "$SUDO_USER"
+    info "added $SUDO_USER to tori group (log out and back in to take effect)"
+else
+    warn "add users who need socket access: usermod -aG tori <user>"
+fi
+
 # --- Create directories ---
 
 mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$RUN_DIR"
-chown tori:tori "$DATA_DIR" "$RUN_DIR"
+chown tori:tori "$DATA_DIR"
+chown tori:tori "$RUN_DIR"
+chmod 0750 "$RUN_DIR"
 info "created directories"
 
 # --- Install systemd service ---
@@ -216,9 +227,12 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 
+RuntimeDirectory=tori
+RuntimeDirectoryMode=0750
+
 # Security hardening
 ProtectSystem=strict
-ReadWritePaths=/var/lib/tori /run/tori
+ReadWritePaths=/var/lib/tori
 ProtectHome=true
 NoNewPrivileges=true
 PrivateTmp=true
@@ -243,6 +257,7 @@ if [ ! -f "${CONFIG_DIR}/config.toml" ]; then
 
 [socket]
 # path = "/run/tori/tori.sock"
+# mode = "0660"
 
 [host]
 # proc = "/proc"

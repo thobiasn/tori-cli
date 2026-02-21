@@ -17,6 +17,7 @@ services:
 
         [socket]
         path = "/run/tori/tori.sock"
+        mode = "0666"
 
         [host]
         proc = "/host/proc"

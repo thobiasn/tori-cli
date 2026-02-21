@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"os"
@@ -89,8 +90,8 @@ func (ss *SocketServer) maxQueryRange() int64 {
 	return r
 }
 
-// Start begins listening on the given Unix socket path.
-func (ss *SocketServer) Start(path string) error {
+// Start begins listening on the given Unix socket path with the specified file mode.
+func (ss *SocketServer) Start(path string, mode fs.FileMode) error {
 	// Remove stale socket file.
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove stale socket: %w", err)
@@ -101,8 +102,7 @@ func (ss *SocketServer) Start(path string) error {
 		return fmt.Errorf("listen: %w", err)
 	}
 
-	// World-accessible: SSH is the auth gate, not file permissions.
-	if err := os.Chmod(path, 0666); err != nil {
+	if err := os.Chmod(path, mode); err != nil {
 		ln.Close()
 		return fmt.Errorf("chmod socket: %w", err)
 	}

@@ -12,9 +12,12 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 
+RuntimeDirectory=tori
+RuntimeDirectoryMode=0750
+
 # Security hardening
 ProtectSystem=strict
-ReadWritePaths=/var/lib/tori /run/tori
+ReadWritePaths=/var/lib/tori
 ProtectHome=true
 NoNewPrivileges=true
 PrivateTmp=true

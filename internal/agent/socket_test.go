@@ -31,7 +31,7 @@ func testSocketServer(t *testing.T, store *Store) (*SocketServer, *Hub, string) 
 	}
 	ss := NewSocketServer(hub, store, dc, nil, 7, "test")
 	path := filepath.Join(t.TempDir(), "test.sock")
-	if err := ss.Start(path); err != nil {
+	if err := ss.Start(path, 0666); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ss.Stop() })
@@ -54,7 +54,7 @@ func testSocketServerWithAlerter(t *testing.T, store *Store, alerter *Alerter) (
 	}
 	ss := NewSocketServer(hub, store, dc, alerter, 7, "test")
 	path := filepath.Join(t.TempDir(), "test.sock")
-	if err := ss.Start(path); err != nil {
+	if err := ss.Start(path, 0666); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ss.Stop() })
@@ -955,7 +955,7 @@ func TestSocketConnectionLimit(t *testing.T) {
 		connSem: make(chan struct{}, 2), // max 2 connections
 	}
 	path := filepath.Join(t.TempDir(), "test.sock")
-	if err := ss.Start(path); err != nil {
+	if err := ss.Start(path, 0666); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ss.Stop() })
@@ -1352,6 +1352,40 @@ func TestSocketQueryMetricsDownsampledSkipsDiskNet(t *testing.T) {
 	}
 }
 
+func TestSocketFileMode(t *testing.T) {
+	s := testStore(t)
+	hub := NewHub()
+	dc := &DockerCollector{prevCPU: make(map[string]cpuPrev), tracked: make(map[string]bool)}
+
+	tests := []struct {
+		name string
+		mode os.FileMode
+	}{
+		{"0660", 0660},
+		{"0666", 0666},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ss := NewSocketServer(hub, s, dc, nil, 7, "test")
+			path := filepath.Join(t.TempDir(), "test.sock")
+			if err := ss.Start(path, tt.mode); err != nil {
+				t.Fatal(err)
+			}
+			defer ss.Stop()
+
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Socket type bit is set; mask it off to compare permissions.
+			got := info.Mode().Perm()
+			if got != tt.mode {
+				t.Errorf("socket mode = %#o, want %#o", got, tt.mode)
+			}
+		})
+	}
+}
+
 func TestSocketFileCleanedUpOnStop(t *testing.T) {
 	s := testStore(t)
 	hub := NewHub()
@@ -1359,7 +1393,7 @@ func TestSocketFileCleanedUpOnStop(t *testing.T) {
 	ss := NewSocketServer(hub, s, dc, nil, 7, "test")
 
 	path := filepath.Join(t.TempDir(), "test.sock")
-	if err := ss.Start(path); err != nil {
+	if err := ss.Start(path, 0666); err != nil {
 		t.Fatal(err)
 	}
 

@@ -248,6 +248,7 @@ retention_days = 7
 
 [socket]
 path = "/run/tori/tori.sock"
+# mode = "0660"                  # "0660" (default, tori group) or "0666" (compose)
 
 [host]
 proc = "/proc"
@@ -490,7 +491,7 @@ For client-only installs, just remove the binary (`~/.local/bin/tori` or `/usr/l
 
 **Docker socket access:** tori requires read-only access to the Docker socket (`/var/run/docker.sock`) for container monitoring. This is the same trust model as lazydocker, ctop, and other Docker monitoring tools. The socket is always mounted `:ro` — tori never writes to Docker.
 
-**Unix socket permissions:** The tori socket at `/run/tori/tori.sock` is the only way to interact with the agent. The default file mode is `0666` because SSH is the real auth gate — anyone who can reach the socket already has shell access to the server. tori doesn't expand the attack surface.
+**Unix socket permissions:** The tori socket at `/run/tori/tori.sock` defaults to mode `0660`, so only the `tori` group can connect. Add users with `usermod -aG tori <user>` (the install script does this for `$SUDO_USER`). Docker compose deployments set `mode = "0666"` explicitly because the container runs as root and can't manage host groups.
 
 **Config file:** The agent config contains SMTP credentials and webhook URLs. Permissions should be `0600` owned by the user running the agent.
 
