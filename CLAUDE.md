@@ -27,10 +27,10 @@ go test -run TestFunctionName ./...    # run a single test
 
 ## Architecture
 
-Single Go binary with two modes: `tori agent` (server daemon) and `tori [user@host]` (TUI client).
+Single Go binary with two modes: `tori agent` (server daemon) and `tori [user@host]` (TUI client). `tori version` prints the build version and checks GitHub for newer releases (3s timeout, silently ignored on failure, skipped for dev builds).
 
 ```
-cmd/tori/main.go          — single entry point, `agent` subcommand and default TUI client mode
+cmd/tori/main.go          — single entry point, `agent` subcommand, `version` subcommand, and default TUI client mode
 internal/agent/            — collector, alerter, storage, socket server (flat package — no sub-packages)
 internal/tui/              — bubbletea views and components
 internal/protocol/         — shared message types, msgpack encoding
@@ -196,6 +196,7 @@ The alerter receives the same data already collected — no additional I/O.
 - Two patterns: streaming (ID=0, agent pushes) and request-response (ID>0, client initiates).
 - `protocol.WriteMsg`/`ReadMsg` handle framing. `EncodeBody`/`DecodeBody` for the body field.
 - `MaxMessageSize` = 16MB. Both sides enforce this.
+- **Version handshake:** Client sends `HelloReq` with `ProtocolVersion` (int, incremented on breaking changes) and `Version` (build string) as its first message. Agent responds with its own. `versionWarning()` checks protocol mismatch first, then version string mismatch (skipped if either is `"dev"`). Warning is displayed in the dashboard status bar in `Warning` color. Connection is never blocked — informational only. Old agents that don't support hello return an unknown-type error, which the client silently ignores (nil response, no warning).
 - Hub fans out streaming messages by topic (`metrics`, `logs`, `alerts`, `containers`). Clients subscribe/unsubscribe.
 - Socket server limits concurrent connections (configurable). Each client gets its own read/write goroutines.
 - Validation: all string fields (container ID, rule name) are length-bounded and sanitized server-side.
