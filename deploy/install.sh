@@ -227,6 +227,7 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 
+UMask=0077
 RuntimeDirectory=tori
 RuntimeDirectoryMode=0750
 
@@ -295,6 +296,9 @@ CONFIG
 else
     warn "config already exists at ${CONFIG_DIR}/config.toml, not overwriting"
 fi
+
+# Ensure config is not world-readable (may contain SMTP/webhook credentials).
+chmod 0600 "${CONFIG_DIR}/config.toml"
 
 # --- Done ---
 

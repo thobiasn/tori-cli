@@ -12,6 +12,7 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 
+UMask=0077
 RuntimeDirectory=tori
 RuntimeDirectoryMode=0750
 
