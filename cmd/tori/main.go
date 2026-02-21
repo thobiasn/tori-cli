@@ -3,14 +3,17 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -28,16 +31,17 @@ func main() {
 		return
 	}
 
-	if len(os.Args) >= 2 && os.Args[1] == "--version" {
-		fmt.Println("tori " + version)
-		return
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "version", "--version":
+			runVersion()
+			return
+		case "agent":
+			runAgent(os.Args[2:])
+			return
+		}
 	}
-
-	if len(os.Args) >= 2 && os.Args[1] == "agent" {
-		runAgent(os.Args[2:])
-	} else {
-		runClient(os.Args[1:])
-	}
+	runClient(os.Args[1:])
 }
 
 // runAskpass is the SSH_ASKPASS helper mode. SSH invokes the tori binary with
@@ -62,6 +66,44 @@ func runAskpass(sock string) {
 		fmt.Print(scanner.Text())
 	} else {
 		os.Exit(1)
+	}
+}
+
+func runVersion() {
+	fmt.Println("tori " + version)
+
+	if version == "dev" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/repos/thobiasn/tori-cli/releases/latest", nil)
+	if err != nil {
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return
+	}
+
+	latest := strings.TrimPrefix(release.TagName, "v")
+	if latest != "" && latest != version {
+		fmt.Printf("\nA newer version is available: %s → %s\n", version, latest)
+		fmt.Println("https://github.com/thobiasn/tori-cli/releases/latest")
 	}
 }
 
