@@ -427,7 +427,7 @@ func (s *Store) CountLogMatches(ctx context.Context, pattern string, isRegex boo
 
 	if isRegex {
 		query = `SELECT container_id, COUNT(*) FROM logs WHERE timestamp >= ? AND timestamp <= ? AND message REGEXP ? GROUP BY container_id`
-		args = []any{start, end, "(?i)" + pattern}
+		args = []any{start, end, "(?i)(?:" + pattern + ")"}
 	} else {
 		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(pattern)
 		query = `SELECT container_id, COUNT(*) FROM logs WHERE timestamp >= ? AND timestamp <= ? AND message LIKE ? ESCAPE '\' GROUP BY container_id`
@@ -477,7 +477,7 @@ func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) 
 	if f.Search != "" {
 		if f.SearchIsRegex {
 			query += ` AND message REGEXP ?`
-			args = append(args, "(?i)"+f.Search)
+			args = append(args, "(?i)(?:"+f.Search+")")
 		} else {
 			query += ` AND message LIKE ? ESCAPE '\'`
 			escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(f.Search)

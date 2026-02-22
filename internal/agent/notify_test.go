@@ -126,6 +126,183 @@ func TestWebhookCustomTemplate(t *testing.T) {
 	}
 }
 
+func TestWebhookTemplateJSONEscape(t *testing.T) {
+	tmpl := `{"title":"{{.Subject}}","text":"{{.Body}}","sev":"{{.Severity}}","status":"{{.Status}}"}`
+
+	tests := []struct {
+		name     string
+		subject  string
+		body     string
+		severity string
+		status   string
+	}{
+		{
+			name:     "log alert with quoted match pattern",
+			subject:  "Alert: mem_killed",
+			body:     `[critical] mem_killed: log matches for "OOM|out of memory"`,
+			severity: "critical",
+			status:   "firing",
+		},
+		{
+			name:     "host alert plain text",
+			subject:  "Alert: high_cpu",
+			body:     "[warning] high_cpu: host.cpu_percent",
+			severity: "warning",
+			status:   "firing",
+		},
+		{
+			name:     "resolved alert",
+			subject:  "Resolved: high_cpu",
+			body:     "[warning] high_cpu: host.cpu_percent",
+			severity: "warning",
+			status:   "resolved",
+		},
+		{
+			name:     "test notification",
+			subject:  "Test: high_cpu",
+			body:     "Test notification for rule 'high_cpu'.",
+			severity: "critical",
+			status:   "test",
+		},
+		{
+			name:     "container label with special chars",
+			subject:  "Alert: exited",
+			body:     `[critical] exited: container.state (my-app/web "v2")`,
+			severity: "critical",
+			status:   "firing",
+		},
+		{
+			name:     "backslashes in pattern",
+			subject:  "Alert: path_error",
+			body:     `[warning] path_error: log matches for "C:\Users\test"`,
+			severity: "warning",
+			status:   "firing",
+		},
+		{
+			name:     "newlines and tabs in body",
+			subject:  "Alert: multiline",
+			body:     "[critical] multiline: log matches for \"line1\nline2\ttab\"",
+			severity: "critical",
+			status:   "firing",
+		},
+		{
+			name:     "unicode and emoji",
+			subject:  "Alert: disk_full",
+			body:     "[warning] disk_full: host.disk_percent (mount: /données)",
+			severity: "warning",
+			status:   "firing",
+		},
+		{
+			name:     "empty severity and status",
+			subject:  "Manual notification",
+			body:     "Something happened",
+			severity: "",
+			status:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotBody string
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				gotBody = string(b)
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+
+			n := NewNotifier(&NotifyConfig{
+				Webhooks: []WebhookConfig{{
+					Enabled:  true,
+					URL:      srv.URL,
+					Template: tmpl,
+				}},
+			})
+
+			n.SendAlert(tt.subject, tt.body, tt.severity, tt.status)
+			n.Stop()
+
+			// Every payload must be valid JSON.
+			var parsed map[string]any
+			if err := json.Unmarshal([]byte(gotBody), &parsed); err != nil {
+				t.Fatalf("invalid JSON: %v\npayload: %s", err, gotBody)
+			}
+
+			// Verify the decoded values match the original inputs.
+			if parsed["title"] != tt.subject {
+				t.Errorf("title = %q, want %q", parsed["title"], tt.subject)
+			}
+			if parsed["text"] != tt.body {
+				t.Errorf("text = %q, want %q", parsed["text"], tt.body)
+			}
+			if parsed["sev"] != tt.severity {
+				t.Errorf("sev = %q, want %q", parsed["sev"], tt.severity)
+			}
+			if parsed["status"] != tt.status {
+				t.Errorf("status = %q, want %q", parsed["status"], tt.status)
+			}
+		})
+	}
+}
+
+func TestWebhookSlackAttachmentTemplate(t *testing.T) {
+	// Real-world Slack attachment template — the format that triggered the original bug.
+	tmpl := `{"attachments":[{"color":"{{if eq .Status "resolved"}}#2ecc71{{else if eq .Severity "critical"}}#e74c3c{{else}}#f39c12{{end}}","title":"{{.Subject}}","text":"{{.Body}} | {{.Severity}} · {{.Status}}"}]}`
+
+	tests := []struct {
+		name     string
+		subject  string
+		body     string
+		severity string
+		status   string
+	}{
+		{
+			name:     "log alert firing",
+			subject:  "Alert: mem_killed",
+			body:     `[critical] mem_killed: log matches for "OOM|out of memory" (my-app/worker)`,
+			severity: "critical",
+			status:   "firing",
+		},
+		{
+			name:     "resolved",
+			subject:  "Resolved: high_cpu",
+			body:     "[warning] high_cpu: host.cpu_percent",
+			severity: "warning",
+			status:   "resolved",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotBody string
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				gotBody = string(b)
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer srv.Close()
+
+			n := NewNotifier(&NotifyConfig{
+				Webhooks: []WebhookConfig{{
+					Enabled:  true,
+					URL:      srv.URL,
+					Template: tmpl,
+				}},
+			})
+
+			n.SendAlert(tt.subject, tt.body, tt.severity, tt.status)
+			n.Stop()
+
+			var parsed map[string]any
+			if err := json.Unmarshal([]byte(gotBody), &parsed); err != nil {
+				t.Fatalf("invalid JSON: %v\npayload: %s", err, gotBody)
+			}
+		})
+	}
+}
+
 func TestMultipleWebhooks(t *testing.T) {
 	var mu sync.Mutex
 	var called []string

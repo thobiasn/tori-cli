@@ -235,6 +235,15 @@ type webhookData struct {
 	Status   string
 }
 
+// jsonEscape escapes a string for safe embedding inside a JSON string value.
+// It uses json.Marshal to handle all special characters, then strips the
+// surrounding quotes that Marshal adds.
+func jsonEscape(s string) string {
+	b, _ := json.Marshal(s)
+	// Strip surrounding quotes: "foo" → foo
+	return string(b[1 : len(b)-1])
+}
+
 func newWebhookChannel(cfg WebhookConfig) *webhookChannel {
 	wc := &webhookChannel{cfg: cfg}
 	if cfg.Template != "" {
@@ -249,10 +258,10 @@ func (w *webhookChannel) Send(ctx context.Context, n notification) error {
 	if w.tmpl != nil {
 		var buf bytes.Buffer
 		data := webhookData{
-			Subject:  n.subject,
-			Body:     n.body,
-			Severity: n.severity,
-			Status:   n.status,
+			Subject:  jsonEscape(n.subject),
+			Body:     jsonEscape(n.body),
+			Severity: jsonEscape(n.severity),
+			Status:   jsonEscape(n.status),
 		}
 		if err := w.tmpl.Execute(&buf, data); err != nil {
 			return fmt.Errorf("template execute: %w", err)
