@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/smtp"
+	"strconv"
 	"strings"
 	"sync"
 	"text/template"
@@ -156,11 +158,13 @@ func sendWithRetry(ctx context.Context, ch Channel, msg notification) {
 
 // emailChannel sends notifications via SMTP.
 type emailChannel struct {
-	cfg EmailConfig
+	cfg       EmailConfig
+	tlsConfig *tls.Config // nil = use default (ServerName from cfg.SMTPHost); injectable for tests
 }
 
 func (e *emailChannel) Send(ctx context.Context, n notification) error {
-	addr := net.JoinHostPort(e.cfg.SMTPHost, fmt.Sprintf("%d", e.cfg.SMTPPort))
+	host := e.cfg.SMTPHost
+	addr := net.JoinHostPort(host, strconv.Itoa(e.cfg.SMTPPort))
 
 	// Sanitize header values to prevent SMTP header injection.
 	from := sanitizeHeader(e.cfg.From)
@@ -175,9 +179,24 @@ func (e *emailChannel) Send(ctx context.Context, n notification) error {
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\n\r\n%s",
 		from, toHeader, subject, time.Now().Format(time.RFC1123Z), body)
 
-	// Use a context-aware dialer so SMTP respects cancellation.
-	dialer := net.Dialer{Timeout: 10 * time.Second}
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	tlsCfg := e.tlsConfig
+	if tlsCfg == nil {
+		tlsCfg = &tls.Config{ServerName: host}
+	}
+
+	var conn net.Conn
+	var err error
+
+	switch e.cfg.TLS {
+	case "tls":
+		// Implicit TLS (port 465): TLS from the start.
+		d := tls.Dialer{Config: tlsCfg, NetDialer: &net.Dialer{Timeout: 10 * time.Second}}
+		conn, err = d.DialContext(ctx, "tcp", addr)
+	default:
+		// Plaintext connect (starttls upgrades later, none stays plaintext).
+		d := net.Dialer{Timeout: 10 * time.Second}
+		conn, err = d.DialContext(ctx, "tcp", addr)
+	}
 	if err != nil {
 		return fmt.Errorf("smtp connect: %w", err)
 	}
@@ -186,30 +205,43 @@ func (e *emailChannel) Send(ctx context.Context, n notification) error {
 		return fmt.Errorf("smtp deadline: %w", err)
 	}
 
-	c, err := smtp.NewClient(conn, e.cfg.SMTPHost)
+	c, err := smtp.NewClient(conn, host)
 	if err != nil {
 		conn.Close()
 		return fmt.Errorf("smtp client: %w", err)
 	}
 	defer c.Close()
 
+	if e.cfg.TLS == "starttls" {
+		if err := c.StartTLS(tlsCfg); err != nil {
+			return fmt.Errorf("smtp starttls: %w", err)
+		}
+	}
+
+	if e.cfg.Username != "" {
+		auth := smtp.PlainAuth("", e.cfg.Username, e.cfg.Password, host)
+		if err := c.Auth(auth); err != nil {
+			return fmt.Errorf("smtp auth: %w", err)
+		}
+	}
+
 	if err := c.Mail(from); err != nil {
-		return err
+		return fmt.Errorf("smtp mail: %w", err)
 	}
 	for _, t := range to {
 		if err := c.Rcpt(t); err != nil {
-			return err
+			return fmt.Errorf("smtp rcpt: %w", err)
 		}
 	}
 	w, err := c.Data()
 	if err != nil {
-		return err
+		return fmt.Errorf("smtp data: %w", err)
 	}
 	if _, err := w.Write([]byte(msg)); err != nil {
-		return err
+		return fmt.Errorf("smtp write: %w", err)
 	}
 	if err := w.Close(); err != nil {
-		return err
+		return fmt.Errorf("smtp data close: %w", err)
 	}
 	return c.Quit()
 }

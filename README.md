@@ -308,6 +308,9 @@ smtp_host = "smtp.example.com"
 smtp_port = 587
 from = "tori@example.com"
 to = ["you@example.com"]
+username = "tori@example.com"
+password = "app-password-here"
+tls = "starttls"
 
 [[notify.webhooks]]
 enabled = true
@@ -317,6 +320,8 @@ url = "https://hooks.slack.com/services/..."
 ```
 
 Webhook template fields: `{{.Subject}}`, `{{.Body}}`, `{{.Severity}}` (warning/critical), `{{.Status}}` (firing/resolved/test).
+
+**Email TLS modes:** `starttls` (port 587, upgrades to TLS after connect), `tls` (port 465, implicit TLS), or omit for local relay (no encryption). Authentication (`username`/`password`) requires TLS.
 
 ### Alert reference
 
