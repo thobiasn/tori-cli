@@ -59,6 +59,9 @@ type EmailConfig struct {
 	SMTPPort int      `toml:"smtp_port"`
 	From     string   `toml:"from"`
 	To       []string `toml:"to"`
+	Username string   `toml:"username"`
+	Password string   `toml:"password"`
+	TLS      string   `toml:"tls"` // "starttls", "tls", "none", or "" (same as "none")
 }
 
 type WebhookConfig struct {
@@ -176,14 +179,25 @@ func validateEmail(e *EmailConfig) error {
 	if e.SMTPHost == "" {
 		return fmt.Errorf("email: smtp_host is required when enabled")
 	}
-	if e.SMTPPort <= 0 {
-		return fmt.Errorf("email: smtp_port must be > 0 when enabled")
+	if e.SMTPPort <= 0 || e.SMTPPort > 65535 {
+		return fmt.Errorf("email: smtp_port must be between 1 and 65535, got %d", e.SMTPPort)
 	}
 	if e.From == "" {
 		return fmt.Errorf("email: from is required when enabled")
 	}
 	if len(e.To) == 0 {
 		return fmt.Errorf("email: at least one recipient (to) required when enabled")
+	}
+	switch e.TLS {
+	case "", "none", "starttls", "tls":
+	default:
+		return fmt.Errorf("email: tls must be \"starttls\", \"tls\", or \"none\", got %q", e.TLS)
+	}
+	if (e.Username != "") != (e.Password != "") {
+		return fmt.Errorf("email: username and password must both be set or both be empty")
+	}
+	if e.Username != "" && e.TLS != "starttls" && e.TLS != "tls" {
+		return fmt.Errorf("email: auth requires tls to be \"starttls\" or \"tls\"")
 	}
 	return nil
 }

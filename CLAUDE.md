@@ -169,6 +169,9 @@ Code is a liability, not an asset. Every line we write is a line we have to main
 - Webhook config: `URL`, `Headers` (custom, sanitized against CRLF injection), `Template` (Go template for custom payload body).
 - Default webhook payload if no template: `{"text": "*Subject*\nBody"}`.
 - `Notifier.Send()` errors are logged, not fatal — collect loop continues.
+- `EmailConfig` supports optional SMTP auth (`username`/`password`) and TLS (`tls`: `"starttls"`, `"tls"`, or `"none"`).
+- Auth requires TLS — validation rejects credentials when `tls` is `"none"` or unset.
+- Uses `smtp.PlainAuth` (stdlib). Go's implementation refuses to send credentials without TLS.
 
 ### Networking gotchas
 
