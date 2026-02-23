@@ -1,14 +1,27 @@
 package agent
 
 import (
+	"bufio"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
+	"fmt"
 	"io"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestSendNoChannels(t *testing.T) {
@@ -339,5 +352,324 @@ func TestWebhookTemplateSeverityEmpty(t *testing.T) {
 	want := `{"sev":"","status":"","msg":"test"}`
 	if gotBody != want {
 		t.Errorf("body = %q, want %q", gotBody, want)
+	}
+}
+
+// selfSignedCert generates a self-signed TLS certificate for testing.
+func selfSignedCert(t *testing.T) tls.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert
+}
+
+// smtpSession records what a fake SMTP server saw.
+type smtpSession struct {
+	gotSTARTTLS bool
+	gotAuth     string // AUTH argument (e.g. "PLAIN ...")
+	mailFrom    string
+	rcptTo      []string
+	data        string
+	err         error
+}
+
+// runFakeSMTP speaks enough SMTP protocol to verify TLS, AUTH, and envelope.
+// It handles one connection then sends the session record on the result channel.
+// Errors are captured in smtpSession.err instead of calling t.Fatal from a goroutine.
+func runFakeSMTP(conn net.Conn, tlsCfg *tls.Config) smtpSession {
+	defer conn.Close()
+	var s smtpSession
+	rw := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
+
+	write := func(line string) {
+		fmt.Fprintf(rw, "%s\r\n", line)
+		rw.Flush()
+	}
+
+	write("220 localhost ESMTP fake")
+
+	for {
+		line, err := rw.ReadString('\n')
+		if err != nil {
+			s.err = fmt.Errorf("read: %w", err)
+			return s
+		}
+		line = strings.TrimRight(line, "\r\n")
+		cmd := strings.ToUpper(line)
+		if len(cmd) > 4 {
+			cmd = cmd[:4]
+		}
+
+		switch {
+		case strings.HasPrefix(strings.ToUpper(line), "EHLO"):
+			write("250-localhost")
+			if tlsCfg != nil && !s.gotSTARTTLS {
+				write("250-STARTTLS")
+			}
+			write("250-AUTH PLAIN")
+			write("250 OK")
+		case strings.HasPrefix(strings.ToUpper(line), "STARTTLS"):
+			write("220 Ready to start TLS")
+			tlsConn := tls.Server(conn, tlsCfg)
+			if err := tlsConn.Handshake(); err != nil {
+				s.err = fmt.Errorf("tls handshake: %w", err)
+				return s
+			}
+			conn = tlsConn
+			rw = bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
+			s.gotSTARTTLS = true
+		case strings.HasPrefix(strings.ToUpper(line), "AUTH "):
+			s.gotAuth = line[5:]
+			write("235 Authentication successful")
+		case strings.HasPrefix(strings.ToUpper(line), "MAIL FROM:"):
+			s.mailFrom = line[10:]
+			write("250 OK")
+		case strings.HasPrefix(strings.ToUpper(line), "RCPT TO:"):
+			s.rcptTo = append(s.rcptTo, line[8:])
+			write("250 OK")
+		case cmd == "DATA":
+			write("354 Go ahead")
+			var dataLines []string
+			for {
+				dl, err := rw.ReadString('\n')
+				if err != nil {
+					s.err = fmt.Errorf("read data: %w", err)
+					return s
+				}
+				dl = strings.TrimRight(dl, "\r\n")
+				if dl == "." {
+					break
+				}
+				dataLines = append(dataLines, dl)
+			}
+			s.data = strings.Join(dataLines, "\n")
+			write("250 OK")
+		case cmd == "QUIT":
+			write("221 Bye")
+			return s
+		default:
+			write("500 Unknown command")
+		}
+	}
+}
+
+func testCertPool(t *testing.T, cert tls.Certificate) *x509.CertPool {
+	t.Helper()
+	parsed, err := x509.ParseCertificate(cert.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(parsed)
+	return pool
+}
+
+func TestEmailSendSTARTTLS(t *testing.T) {
+	cert := selfSignedCert(t)
+	serverTLS := &tls.Config{Certificates: []tls.Certificate{cert}}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+
+	result := make(chan smtpSession, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		result <- runFakeSMTP(conn, serverTLS)
+	}()
+
+	portNum, err := strconv.Atoi(port)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ch := &emailChannel{
+		cfg: EmailConfig{
+			Enabled:  true,
+			SMTPHost: "127.0.0.1",
+			SMTPPort: portNum,
+			From:     "from@test.com",
+			To:       []string{"to@test.com"},
+			Username: "user",
+			Password: "pass",
+			TLS:      "starttls",
+		},
+		tlsConfig: &tls.Config{RootCAs: testCertPool(t, cert), ServerName: "127.0.0.1"},
+	}
+
+	if err := ch.Send(context.Background(), notification{subject: "test", body: "hello"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	select {
+	case s := <-result:
+		if s.err != nil {
+			t.Fatalf("fake smtp: %v", s.err)
+		}
+		if !s.gotSTARTTLS {
+			t.Error("expected STARTTLS")
+		}
+		if s.gotAuth == "" {
+			t.Error("expected AUTH")
+		}
+		if !strings.Contains(s.mailFrom, "from@test.com") {
+			t.Errorf("mailFrom = %q", s.mailFrom)
+		}
+		if len(s.rcptTo) != 1 || !strings.Contains(s.rcptTo[0], "to@test.com") {
+			t.Errorf("rcptTo = %v", s.rcptTo)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for fake SMTP session")
+	}
+}
+
+func TestEmailSendImplicitTLS(t *testing.T) {
+	cert := selfSignedCert(t)
+	serverTLS := &tls.Config{Certificates: []tls.Certificate{cert}}
+
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", serverTLS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+
+	result := make(chan smtpSession, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		result <- runFakeSMTP(conn, nil)
+	}()
+
+	portNum, err := strconv.Atoi(port)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ch := &emailChannel{
+		cfg: EmailConfig{
+			Enabled:  true,
+			SMTPHost: "127.0.0.1",
+			SMTPPort: portNum,
+			From:     "from@test.com",
+			To:       []string{"to@test.com"},
+			Username: "user",
+			Password: "pass",
+			TLS:      "tls",
+		},
+		tlsConfig: &tls.Config{RootCAs: testCertPool(t, cert), ServerName: "127.0.0.1"},
+	}
+
+	if err := ch.Send(context.Background(), notification{subject: "test", body: "hello"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	select {
+	case s := <-result:
+		if s.err != nil {
+			t.Fatalf("fake smtp: %v", s.err)
+		}
+		if s.gotSTARTTLS {
+			t.Error("implicit TLS should not use STARTTLS")
+		}
+		if s.gotAuth == "" {
+			t.Error("expected AUTH")
+		}
+		if !strings.Contains(s.mailFrom, "from@test.com") {
+			t.Errorf("mailFrom = %q", s.mailFrom)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for fake SMTP session")
+	}
+}
+
+func TestEmailSendNoAuth(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+
+	result := make(chan smtpSession, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		result <- runFakeSMTP(conn, nil)
+	}()
+
+	portNum, err := strconv.Atoi(port)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ch := &emailChannel{cfg: EmailConfig{
+		Enabled:  true,
+		SMTPHost: "127.0.0.1",
+		SMTPPort: portNum,
+		From:     "from@test.com",
+		To:       []string{"to@test.com", "to2@test.com"},
+	}}
+
+	if err := ch.Send(context.Background(), notification{subject: "test subj", body: "body text"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	select {
+	case s := <-result:
+		if s.err != nil {
+			t.Fatalf("fake smtp: %v", s.err)
+		}
+		if s.gotSTARTTLS {
+			t.Error("no TLS configured, should not STARTTLS")
+		}
+		if s.gotAuth != "" {
+			t.Errorf("no auth expected, got %q", s.gotAuth)
+		}
+		if !strings.Contains(s.mailFrom, "from@test.com") {
+			t.Errorf("mailFrom = %q", s.mailFrom)
+		}
+		if len(s.rcptTo) != 2 {
+			t.Errorf("expected 2 recipients, got %d", len(s.rcptTo))
+		}
+		if !strings.Contains(s.data, "test subj") {
+			t.Error("data should contain subject")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for fake SMTP session")
 	}
 }

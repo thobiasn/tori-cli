@@ -440,6 +440,127 @@ to = ["admin@example.com"]
 `,
 			wantErr: true,
 		},
+		{
+			name: "valid starttls with auth",
+			config: `
+[notify.email]
+enabled = true
+smtp_host = "smtp.example.com"
+smtp_port = 587
+from = "alerts@example.com"
+to = ["admin@example.com"]
+username = "user@example.com"
+password = "secret"
+tls = "starttls"
+`,
+		},
+		{
+			name: "valid implicit tls with auth",
+			config: `
+[notify.email]
+enabled = true
+smtp_host = "smtp.example.com"
+smtp_port = 465
+from = "alerts@example.com"
+to = ["admin@example.com"]
+username = "user@example.com"
+password = "secret"
+tls = "tls"
+`,
+		},
+		{
+			name: "valid no auth no tls",
+			config: `
+[notify.email]
+enabled = true
+smtp_host = "localhost"
+smtp_port = 25
+from = "alerts@example.com"
+to = ["admin@example.com"]
+`,
+		},
+		{
+			name: "valid starttls without auth",
+			config: `
+[notify.email]
+enabled = true
+smtp_host = "smtp.example.com"
+smtp_port = 587
+from = "alerts@example.com"
+to = ["admin@example.com"]
+tls = "starttls"
+`,
+		},
+		{
+			name: "invalid tls value",
+			config: `
+[notify.email]
+enabled = true
+smtp_host = "smtp.example.com"
+smtp_port = 587
+from = "alerts@example.com"
+to = ["admin@example.com"]
+tls = "auto"
+`,
+			wantErr: true,
+		},
+		{
+			name: "username without password",
+			config: `
+[notify.email]
+enabled = true
+smtp_host = "smtp.example.com"
+smtp_port = 587
+from = "alerts@example.com"
+to = ["admin@example.com"]
+username = "user@example.com"
+tls = "starttls"
+`,
+			wantErr: true,
+		},
+		{
+			name: "password without username",
+			config: `
+[notify.email]
+enabled = true
+smtp_host = "smtp.example.com"
+smtp_port = 587
+from = "alerts@example.com"
+to = ["admin@example.com"]
+password = "secret"
+tls = "starttls"
+`,
+			wantErr: true,
+		},
+		{
+			name: "auth without tls",
+			config: `
+[notify.email]
+enabled = true
+smtp_host = "smtp.example.com"
+smtp_port = 587
+from = "alerts@example.com"
+to = ["admin@example.com"]
+username = "user@example.com"
+password = "secret"
+`,
+			wantErr: true,
+		},
+		{
+			name: "auth with tls none",
+			config: `
+[notify.email]
+enabled = true
+smtp_host = "smtp.example.com"
+smtp_port = 587
+from = "alerts@example.com"
+to = ["admin@example.com"]
+username = "user@example.com"
+password = "secret"
+tls = "none"
+`,
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
