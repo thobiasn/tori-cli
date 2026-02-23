@@ -286,6 +286,9 @@ if [ ! -f "${CONFIG_DIR}/config.toml" ]; then
 # smtp_port = 587
 # from = "tori@example.com"
 # to = ["you@example.com"]
+# username = ""
+# password = ""
+# tls = "starttls"              # "starttls", "tls", or "none"
 
 # [[notify.webhooks]]
 # enabled = false
