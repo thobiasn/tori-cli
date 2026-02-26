@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>tori – Lightweight Docker Server Monitoring CLI</title>
-  <meta name="description" content="Open-source terminal UI for monitoring Docker hosts over SSH. Host metrics, container stats, logs, and alerts from a single binary. A self-hosted alternative to Prometheus.">
+  <meta name="description" content="Open-source terminal UI for monitoring Docker hosts over SSH. Host metrics, container stats, logs, and alerts from a single binary. For people who don't need Prometheus.">
   <meta name="keywords" content="server monitoring, Docker monitoring, CLI, TUI, terminal, lightweight, self-hosted, SSH, Linux, VPS, open source, Prometheus alternative, container monitoring">
   <link rel="canonical" href="https://toricli.sh/">
   <meta property="og:title" content="tori – Lightweight Docker Server Monitoring CLI">
@@ -18,7 +18,7 @@
   <meta name="twitter:description" content="Open-source terminal UI for monitoring Docker hosts over SSH. A single binary, no infrastructure.">
   <meta name="twitter:image" content="https://toricli.sh/og-image.png">
   <meta name="theme-color" content="#0a0a0b">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐦</text></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text x='50' y='56' font-size='80' font-family='monospace' text-anchor='middle' dominant-baseline='middle' fill='%233ce8a0'>•</text></svg>">
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -112,7 +112,7 @@
         <div class="feature-card">
           <div class="feature-icon">📋</div>
           <h3>Log Tailing</h3>
-          <p>Stream container logs with regex search, log level filtering, match highlighting, and date/time ranges.</p>
+          <p>Tail logs across a compose project or a single container. Regex search, log level filtering, match highlighting, and date/time ranges.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">🔔</div>
@@ -147,11 +147,11 @@
             </div>
             <div class="hiw-point">
               <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
-              <div><h3 class="hiw-heading">SSH native</h3><p>All communication over SSH tunnels to a Unix socket. No HTTP server, no API keys, no TLS certs to manage.</p></div>
+              <div><h3 class="hiw-heading">Lightweight footprint</h3><p>Pure Go, no runtime overhead. The agent typically uses under 50 MB of RAM — even with dozens of containers.</p></div>
             </div>
             <div class="hiw-point">
               <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
-              <div><h3 class="hiw-heading">SQLite storage</h3><p>Metrics and logs stored locally with configurable retention. No external database.</p></div>
+              <div><h3 class="hiw-heading">SSH native</h3><p>Connects over your existing SSH setup. No new ports, no new auth, no new certs — if you can SSH in, you can monitor it.</p></div>
             </div>
             <div class="hiw-point">
               <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
@@ -159,11 +159,11 @@
             </div>
             <div class="hiw-point">
               <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
-              <div><h3 class="hiw-heading">Opt-in tracking</h3><p>Nothing tracked by default. Press <span class="kbd">t</span> to start collecting for any container or compose group.</p></div>
+              <div><h3 class="hiw-heading">SQLite storage</h3><p>Metrics and logs stored locally with configurable retention. No external database.</p></div>
             </div>
             <div class="hiw-point">
               <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
-              <div><h3 class="hiw-heading">Terminal native</h3><p>ANSI colors that inherit your terminal theme. No Electron app, no browser tab.</p></div>
+              <div><h3 class="hiw-heading">Matches your terminal</h3><p>ANSI colors that inherit your terminal theme out of the box. Override individual colors with 256-palette or hex values.</p></div>
             </div>
           </div>
         </div>
@@ -399,11 +399,11 @@
   <section class="cta">
     <div class="container reveal">
       <h2>Open source server monitoring<br>for your terminal</h2>
-      <p>Free and MIT licensed. A self-hosted, lightweight alternative to Prometheus and Datadog for people who want visibility without the overhead.</p>
+      <p>Free and MIT licensed. For people who don't need Prometheus or Datadog but still want visibility into what their servers are doing.</p>
       <div class="cta-buttons">
         <a href="https://github.com/thobiasn/tori-cli" class="btn-primary" rel="noopener">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-          Read the Docs on GitHub
+          Get Started
         </a>
       </div>
     </div>

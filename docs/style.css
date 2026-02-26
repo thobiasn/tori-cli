@@ -702,9 +702,9 @@ h2 {
 .cta::before {
   content: '';
   position: absolute;
-  bottom: 0;
+  top: 50%;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   width: 600px;
   height: 300px;
   background: radial-gradient(ellipse, var(--accent-glow) 0%, transparent 70%);
