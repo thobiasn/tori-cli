@@ -147,8 +147,8 @@ nav .container {
 .github-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 14px;
+  gap: 0;
+  padding: 0;
   border-radius: 8px;
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -167,19 +167,37 @@ nav .container {
 }
 
 .github-btn svg {
-  opacity: 0.9;
   flex-shrink: 0;
+  display: block;
+}
+
+.github-btn .gh-logo {
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  border-right: 1px solid var(--border);
+  opacity: 0.9;
+}
+
+.github-btn .gh-stars {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
 }
 
 .star-icon {
   color: #e3b341;
+  transform: translateY(1px);
 }
 
 .star-count {
   color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: 13px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 500;
   line-height: 1;
+  display: block;
 }
 
 /* ── Hero ─────────────────────────────────────────────────────── */
