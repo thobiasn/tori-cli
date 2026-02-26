@@ -10,7 +10,7 @@
   --border-subtle: #1a1a1d;
   --text: #ededef;
   --text-secondary: #7e7e85;
-  --text-tertiary: #53535a;
+  --text-tertiary: #6e6e76;
   --accent: #3ce8a0;
   --accent-dim: rgba(60, 232, 160, 0.08);
   --accent-glow: rgba(60, 232, 160, 0.15);
@@ -327,7 +327,8 @@ h1 .highlight {
   justify-content: center;
 }
 
-.demo-body img {
+.demo-body img,
+.demo-body video {
   max-width: 100%;
   height: auto;
   display: block;
@@ -464,7 +465,7 @@ h2 {
   flex-shrink: 0;
 }
 
-.hiw-point h4 {
+.hiw-point .hiw-heading {
   font-size: 15px;
   font-weight: 600;
   margin-bottom: 2px;
@@ -777,12 +778,15 @@ footer .container {
 
 .footer-left a {
   color: var(--text-secondary);
-  text-decoration: none;
-  transition: color 0.2s;
+  text-decoration: underline;
+  text-decoration-color: var(--border);
+  text-underline-offset: 2px;
+  transition: color 0.2s, text-decoration-color 0.2s;
 }
 
 .footer-left a:hover {
   color: var(--accent);
+  text-decoration-color: var(--accent);
 }
 
 .footer-right {
@@ -793,12 +797,15 @@ footer .container {
 .footer-right a {
   font-size: 13px;
   color: var(--text-tertiary);
-  text-decoration: none;
-  transition: color 0.2s;
+  text-decoration: underline;
+  text-decoration-color: var(--border);
+  text-underline-offset: 2px;
+  transition: color 0.2s, text-decoration-color 0.2s;
 }
 
 .footer-right a:hover {
   color: var(--text);
+  text-decoration-color: currentColor;
 }
 
 /* ── Animations ───────────────────────────────────────────────── */

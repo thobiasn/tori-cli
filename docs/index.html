@@ -36,8 +36,9 @@
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Satoshi:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Satoshi:wght@400;500;700;900&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="style.css">
+  <link rel="preload" as="video" href="tori-preview.webm" type="video/webm">
 </head>
 <body>
 
@@ -80,7 +81,10 @@
           <span class="demo-title">tori</span>
         </div>
         <div class="demo-body">
-          <img src="tori-preview.gif" alt="tori terminal UI demo — dashboard showing host metrics, Docker container stats, log tailing, and alerts" loading="lazy">
+          <video autoplay loop muted playsinline poster="tori-preview-poster.png" width="772" height="802">
+            <source src="tori-preview.webm" type="video/webm">
+            <source src="tori-preview.mp4" type="video/mp4">
+          </video>
         </div>
       </div>
       <p class="demo-hint">uses ANSI colors — inherits your terminal theme</p>
@@ -139,27 +143,27 @@
           <div class="hiw-points">
             <div class="hiw-point">
               <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
-              <div><h4>Single binary</h4><p>Agent and client in one static binary. No runtime, no containers needed. Install and go.</p></div>
+              <div><h3 class="hiw-heading">Single binary</h3><p>Agent and client in one static binary. No runtime, no containers needed. Install and go.</p></div>
             </div>
             <div class="hiw-point">
               <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
-              <div><h4>SSH native</h4><p>All communication over SSH tunnels to a Unix socket. No HTTP server, no API keys, no TLS certs to manage.</p></div>
+              <div><h3 class="hiw-heading">SSH native</h3><p>All communication over SSH tunnels to a Unix socket. No HTTP server, no API keys, no TLS certs to manage.</p></div>
             </div>
             <div class="hiw-point">
               <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
-              <div><h4>SQLite storage</h4><p>Metrics and logs stored locally with configurable retention. No external database.</p></div>
+              <div><h3 class="hiw-heading">SQLite storage</h3><p>Metrics and logs stored locally with configurable retention. No external database.</p></div>
             </div>
             <div class="hiw-point">
               <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
-              <div><h4>Always-on alerting</h4><p>Rules evaluated on the agent 24/7. Get notified via email or webhook even when the TUI isn't open.</p></div>
+              <div><h3 class="hiw-heading">Always-on alerting</h3><p>Rules evaluated on the agent 24/7. Get notified via email or webhook even when the TUI isn't open.</p></div>
             </div>
             <div class="hiw-point">
               <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
-              <div><h4>Opt-in tracking</h4><p>Nothing tracked by default. Press <span class="kbd">t</span> to start collecting for any container or compose group.</p></div>
+              <div><h3 class="hiw-heading">Opt-in tracking</h3><p>Nothing tracked by default. Press <span class="kbd">t</span> to start collecting for any container or compose group.</p></div>
             </div>
             <div class="hiw-point">
               <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
-              <div><h4>Terminal native</h4><p>ANSI colors that inherit your terminal theme. No Electron app, no browser tab.</p></div>
+              <div><h3 class="hiw-heading">Terminal native</h3><p>ANSI colors that inherit your terminal theme. No Electron app, no browser tab.</p></div>
             </div>
           </div>
         </div>
