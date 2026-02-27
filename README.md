@@ -1,6 +1,6 @@
 # tori ─(•)>
 
-Server monitoring without the infrastructure. A single binary and an SSH connection — metrics, logs, and alerts for your Docker hosts.
+Remote server monitoring without the infrastructure. A single binary and an SSH connection — metrics, logs, and alerts for your Docker hosts.
 
 **[toricli.sh](https://toricli.sh)** · [Releases](https://github.com/thobiasn/tori-cli/releases) · [Issues](https://github.com/thobiasn/tori-cli/issues)
 
@@ -10,16 +10,16 @@ Server monitoring without the infrastructure. A single binary and an SSH connect
 
 - Host metrics — CPU, memory, disk, network, swap, load averages
 - Docker container monitoring — status, stats, health checks, restart tracking
-- Container log tailing with regex search, log level filtering, match highlighting, and date/time filtering
+- Remote log tailing with regex search, log level filtering, match highlighting, and date/time filtering
 - Alerting with configurable rules, email (SMTP), and webhook notifications
 - SQLite storage with configurable retention
-- Multi-server support — monitor multiple hosts from one terminal
+- Multi-server support — monitor multiple remote hosts from one terminal
 - Single binary, zero runtime dependencies
 - No exposed ports — all communication over SSH
 
 ## How It Works
 
-tori has two parts. The **agent** runs on your server collecting metrics, tailing logs, and evaluating alerts 24/7. The **client** runs on your machine and connects through an SSH tunnel to a Unix socket — no HTTP server, no open ports.
+tori has two parts. The **agent** runs on your server collecting metrics, tailing logs, and evaluating alerts 24/7. The **client** runs on your machine and connects to the remote agent through an SSH tunnel to a Unix socket — no HTTP server, no open ports.
 
 ```
 ┌─────────────────────────────────────────────┐
