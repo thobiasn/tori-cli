@@ -3,18 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>tori – Lightweight Docker Server Monitoring CLI</title>
-  <meta name="description" content="Open-source terminal UI for monitoring Docker hosts over SSH. Host metrics, container stats, logs, and alerts from a single binary. For people who don't need Prometheus.">
+  <title>tori – Lightweight Remote Docker Server Monitoring CLI</title>
+  <meta name="description" content="Open-source terminal UI for monitoring remote Docker hosts over SSH. Host metrics, container stats, logs, and alerts from a single binary. For people who don't need Prometheus.">
   <link rel="canonical" href="https://toricli.sh">
-  <meta property="og:title" content="tori – Lightweight Docker Server Monitoring CLI">
-  <meta property="og:description" content="Open-source terminal UI for monitoring Docker hosts over SSH. CPU, memory, containers, logs, and alerts from a single binary.">
+  <meta property="og:title" content="tori – Lightweight Remote Docker Server Monitoring CLI">
+  <meta property="og:description" content="Open-source terminal UI for monitoring remote Docker hosts over SSH. CPU, memory, containers, logs, and alerts from a single binary.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://toricli.sh">
   <meta property="og:site_name" content="tori">
   <meta property="og:image" content="https://toricli.sh/og-image.png">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="tori – Lightweight Docker Server Monitoring CLI">
-  <meta name="twitter:description" content="Open-source terminal UI for monitoring Docker hosts over SSH. A single binary, no infrastructure.">
+  <meta name="twitter:title" content="tori – Lightweight Remote Docker Server Monitoring CLI">
+  <meta name="twitter:description" content="Open-source terminal UI for monitoring remote Docker hosts over SSH. A single binary, no infrastructure.">
   <meta name="twitter:image" content="https://toricli.sh/og-image.png">
   <meta name="robots" content="index, follow">
   <meta name="theme-color" content="#0a0a0b">
@@ -24,7 +24,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "tori",
-    "description": "Lightweight, open-source server monitoring CLI for Docker environments. Terminal UI over SSH.",
+    "description": "Lightweight, open-source remote server monitoring CLI for Docker environments. Terminal UI over SSH.",
     "url": "https://toricli.sh",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Linux, macOS, Windows (WSL)",
@@ -68,8 +68,8 @@
 
   <section class="hero">
     <div class="container">
-      <h1>Lightweight Docker server monitoring<br><span class="highlight">in your terminal</span></h1>
-      <p class="hero-sub">A single binary and an SSH connection. Host metrics, container stats, log tailing, and alerts — no monitoring stack to maintain.</p>
+      <h1>Lightweight remote Docker server monitoring<br><span class="highlight">in your terminal</span></h1>
+      <p class="hero-sub">A single binary and an SSH connection. Remote host metrics, container stats, log tailing, and alerts — no monitoring stack to maintain.</p>
       <div class="hero-cta">
         <a href="#quickstart" class="hero-link">Get running in under a minute <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></a>
       </div>
@@ -100,7 +100,7 @@
       <div class="features-header reveal">
         <div class="section-label">Features</div>
         <h2>Host metrics, containers, logs, and alerts</h2>
-        <p class="section-desc">Built for people who SSH into their Linux servers and VPSs and just want to know what's going on. No Prometheus stack to deploy, no Grafana dashboards to maintain — just install and connect.</p>
+        <p class="section-desc">Built for people who SSH into their remote Linux servers and VPSs and just want to know what's going on. No Prometheus stack to deploy, no Grafana dashboards to maintain — just install and connect.</p>
       </div>
       <div class="features-grid reveal">
         <div class="feature-card">
@@ -126,7 +126,7 @@
         <div class="feature-card">
           <div class="feature-icon">🖥️</div>
           <h3>Multi-Server</h3>
-          <p>Monitor multiple hosts from one terminal. Concurrent connections, instant switching between servers.</p>
+          <p>Monitor multiple remote hosts from one terminal. Concurrent connections, instant switching between servers.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">🔒</div>
@@ -142,8 +142,8 @@
       <div class="hiw-layout">
         <div class="reveal">
           <div class="section-label">How it works</div>
-          <h2>A single Go binary to<br>monitor Docker over SSH</h2>
-          <p class="section-desc">The agent runs on your server collecting metrics and evaluating alerts 24/7. The CLI connects through an SSH tunnel to a Unix socket — no open ports, nothing else to set up.</p>
+          <h2>A single Go binary to<br>monitor remote Docker hosts over SSH</h2>
+          <p class="section-desc">The agent runs on your remote server collecting metrics and evaluating alerts 24/7. The CLI connects through an SSH tunnel to a Unix socket — no open ports, nothing else to set up.</p>
           <div class="hiw-points">
             <div class="hiw-point">
               <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
