@@ -2,6 +2,8 @@
 
 Server monitoring without the infrastructure. A single binary and an SSH connection — metrics, logs, and alerts for your Docker hosts.
 
+**[toricli.sh](https://toricli.sh)** · [Releases](https://github.com/thobiasn/tori-cli/releases) · [Issues](https://github.com/thobiasn/tori-cli/issues)
+
 ![tori demo](https://github.com/user-attachments/assets/e0183dc7-9b0e-4358-a7ed-dfd508b2e5e0)
 
 ## Features
