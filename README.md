@@ -524,3 +524,7 @@ For client-only installs, just remove the binary (`~/.local/bin/tori` or `/usr/l
 - Docker (for container monitoring)
 - SSH access to the server (for remote connections)
 - Go 1.25+ (build from source only)
+
+## Author
+
+Built by [thobiasn](https://thobiasn.dev)
