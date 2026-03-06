@@ -4,6 +4,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -192,6 +193,337 @@ func TestReadNetwork(t *testing.T) {
 	}
 	if eth0.TxErrors != 1 {
 		t.Errorf("tx_errors = %d, want 1", eth0.TxErrors)
+	}
+}
+
+func TestReadDiskFiltersVirtualFSTypes(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create real directories that statfs can succeed on. We use the temp
+	// dir itself as a stand-in for all mountpoints (statfs will return the
+	// same values, but we're testing filtering, not arithmetic).
+	mp := filepath.Join(dir, "mnt")
+	os.MkdirAll(mp, 0755)
+
+	// Build a mounts file with a mix of real and virtual mounts.
+	// The device must start with /dev/ to pass the first filter.
+	// We point all mountpoints at our real temp dir so os.Stat succeeds.
+	mounts := strings.Join([]string{
+		"/dev/sda1 " + mp + " ext4 rw,relatime 0 0",
+		"/dev/loop0 " + mp + " squashfs ro,nodev,relatime 0 0",
+		"/dev/loop1 " + mp + " squashfs ro,nodev,relatime 0 0",
+		"/dev/sr0 " + mp + " iso9660 ro,relatime 0 0",
+		"/dev/sr1 " + mp + " udf ro,relatime 0 0",
+		"tmpfs /tmp tmpfs rw 0 0",
+		"proc /proc proc rw 0 0",
+	}, "\n") + "\n"
+
+	writeFakeProc(t, dir, map[string]string{
+		"mounts": mounts,
+	})
+
+	h := NewHostCollector(&HostConfig{Proc: dir, Sys: dir})
+	disks, err := h.readDisk()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Only /dev/sda1 (ext4) should survive filtering.
+	if len(disks) != 1 {
+		var got []string
+		for _, d := range disks {
+			got = append(got, d.Device)
+		}
+		t.Fatalf("got %d disks %v, want 1 (only /dev/sda1)", len(disks), got)
+	}
+	if disks[0].Device != "/dev/sda1" {
+		t.Errorf("device = %q, want /dev/sda1", disks[0].Device)
+	}
+}
+
+func TestReadDiskShortestMountpointWins(t *testing.T) {
+	dir := t.TempDir()
+
+	root := filepath.Join(dir, "root")
+	sub := filepath.Join(dir, "root", "sub")
+	os.MkdirAll(sub, 0755)
+
+	mounts := strings.Join([]string{
+		"/dev/sda1 " + sub + " ext4 rw 0 0",
+		"/dev/sda1 " + root + " ext4 rw 0 0",
+	}, "\n") + "\n"
+
+	writeFakeProc(t, dir, map[string]string{
+		"mounts": mounts,
+	})
+
+	h := NewHostCollector(&HostConfig{Proc: dir, Sys: dir})
+	disks, err := h.readDisk()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(disks) != 1 {
+		t.Fatalf("got %d disks, want 1 (deduplicated by device)", len(disks))
+	}
+	if disks[0].Mountpoint != root {
+		t.Errorf("mountpoint = %q, want %q (shortest)", disks[0].Mountpoint, root)
+	}
+}
+
+func TestReadDiskSkipsNonDirectories(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a file (not a directory) to act as a bind-mount target.
+	filePath := filepath.Join(dir, "afile")
+	os.WriteFile(filePath, []byte("x"), 0644)
+
+	mounts := "/dev/sda1 " + filePath + " ext4 rw 0 0\n"
+
+	writeFakeProc(t, dir, map[string]string{
+		"mounts": mounts,
+	})
+
+	h := NewHostCollector(&HostConfig{Proc: dir, Sys: dir})
+	disks, err := h.readDisk()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(disks) != 0 {
+		t.Errorf("got %d disks, want 0 (file mount should be skipped)", len(disks))
+	}
+}
+
+func TestReadDiskMultipleRealDevices(t *testing.T) {
+	dir := t.TempDir()
+
+	mp1 := filepath.Join(dir, "root")
+	mp2 := filepath.Join(dir, "boot")
+	os.MkdirAll(mp1, 0755)
+	os.MkdirAll(mp2, 0755)
+
+	mounts := strings.Join([]string{
+		"/dev/sda2 " + mp1 + " ext4 rw 0 0",
+		"/dev/sda1 " + mp2 + " vfat rw 0 0",
+	}, "\n") + "\n"
+
+	writeFakeProc(t, dir, map[string]string{
+		"mounts": mounts,
+	})
+
+	h := NewHostCollector(&HostConfig{Proc: dir, Sys: dir})
+	disks, err := h.readDisk()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(disks) != 2 {
+		t.Fatalf("got %d disks, want 2", len(disks))
+	}
+	// Sorted by mountpoint.
+	if disks[0].Device != "/dev/sda1" || disks[1].Device != "/dev/sda2" {
+		t.Errorf("devices = [%q, %q], want [/dev/sda1, /dev/sda2]",
+			disks[0].Device, disks[1].Device)
+	}
+}
+
+func TestReadDiskEmptyMounts(t *testing.T) {
+	dir := t.TempDir()
+	writeFakeProc(t, dir, map[string]string{
+		"mounts": "",
+	})
+
+	h := NewHostCollector(&HostConfig{Proc: dir, Sys: dir})
+	disks, err := h.readDisk()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(disks) != 0 {
+		t.Errorf("got %d disks, want 0", len(disks))
+	}
+}
+
+func TestReadDiskDeviceMapperAndNVMe(t *testing.T) {
+	dir := t.TempDir()
+
+	mp1 := filepath.Join(dir, "root")
+	mp2 := filepath.Join(dir, "home")
+	mp3 := filepath.Join(dir, "boot")
+	os.MkdirAll(mp1, 0755)
+	os.MkdirAll(mp2, 0755)
+	os.MkdirAll(mp3, 0755)
+
+	mounts := strings.Join([]string{
+		"/dev/mapper/vg-root " + mp1 + " ext4 rw 0 0",
+		"/dev/dm-1 " + mp2 + " xfs rw 0 0",
+		"/dev/nvme0n1p1 " + mp3 + " vfat rw 0 0",
+	}, "\n") + "\n"
+
+	writeFakeProc(t, dir, map[string]string{
+		"mounts": mounts,
+	})
+
+	h := NewHostCollector(&HostConfig{Proc: dir, Sys: dir})
+	disks, err := h.readDisk()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(disks) != 3 {
+		var got []string
+		for _, d := range disks {
+			got = append(got, d.Device)
+		}
+		t.Fatalf("got %d disks %v, want 3", len(disks), got)
+	}
+}
+
+func TestReadDiskMetricsPopulated(t *testing.T) {
+	dir := t.TempDir()
+	mp := filepath.Join(dir, "mnt")
+	os.MkdirAll(mp, 0755)
+
+	mounts := "/dev/sda1 " + mp + " ext4 rw 0 0\n"
+	writeFakeProc(t, dir, map[string]string{
+		"mounts": mounts,
+	})
+
+	h := NewHostCollector(&HostConfig{Proc: dir, Sys: dir})
+	disks, err := h.readDisk()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(disks) != 1 {
+		t.Fatalf("got %d disks, want 1", len(disks))
+	}
+	d := disks[0]
+	if d.Device != "/dev/sda1" {
+		t.Errorf("device = %q, want /dev/sda1", d.Device)
+	}
+	if d.Mountpoint != mp {
+		t.Errorf("mountpoint = %q, want %q", d.Mountpoint, mp)
+	}
+	// statfs on a real temp dir should return nonzero values.
+	if d.Total == 0 {
+		t.Error("total = 0, want nonzero")
+	}
+	if d.Percent <= 0 || d.Percent > 100 {
+		t.Errorf("percent = %f, want 0 < pct <= 100", d.Percent)
+	}
+	if d.Used == 0 {
+		t.Error("used = 0, want nonzero")
+	}
+}
+
+func TestReadDiskOctalMountpointIntegration(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create a directory with a space in the name.
+	mp := filepath.Join(dir, "my disk")
+	os.MkdirAll(mp, 0755)
+
+	// In /proc/mounts, the space is encoded as \040.
+	escapedMp := strings.ReplaceAll(mp, " ", `\040`)
+	mounts := "/dev/sda1 " + escapedMp + " ext4 rw 0 0\n"
+
+	writeFakeProc(t, dir, map[string]string{
+		"mounts": mounts,
+	})
+
+	h := NewHostCollector(&HostConfig{Proc: dir, Sys: dir})
+	disks, err := h.readDisk()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(disks) != 1 {
+		t.Fatalf("got %d disks, want 1 (octal-escaped mountpoint should resolve)", len(disks))
+	}
+	if disks[0].Mountpoint != mp {
+		t.Errorf("mountpoint = %q, want %q", disks[0].Mountpoint, mp)
+	}
+}
+
+func TestReadDiskFallbackToProcMounts(t *testing.T) {
+	dir := t.TempDir()
+	mp := filepath.Join(dir, "root")
+	os.MkdirAll(mp, 0755)
+
+	// Only create <proc>/mounts, NOT <proc>/1/mounts — triggers fallback.
+	mounts := "/dev/sda1 " + mp + " ext4 rw 0 0\n"
+	writeFakeProc(t, dir, map[string]string{
+		"mounts": mounts,
+	})
+
+	h := NewHostCollector(&HostConfig{Proc: dir, Sys: dir})
+	disks, err := h.readDisk()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(disks) != 1 {
+		t.Fatalf("got %d disks, want 1", len(disks))
+	}
+	if disks[0].Device != "/dev/sda1" {
+		t.Errorf("device = %q, want /dev/sda1", disks[0].Device)
+	}
+}
+
+func TestReadDiskPrefersProc1Mounts(t *testing.T) {
+	dir := t.TempDir()
+	mp := filepath.Join(dir, "root")
+	os.MkdirAll(mp, 0755)
+
+	// Create both /proc/mounts and /proc/1/mounts with different content.
+	selfMounts := "/dev/sdb1 " + mp + " ext4 rw 0 0\n"
+	pid1Mounts := "/dev/sda1 " + mp + " btrfs rw 0 0\n"
+
+	writeFakeProc(t, dir, map[string]string{
+		"mounts":   selfMounts,
+		"1/mounts": pid1Mounts,
+	})
+
+	h := NewHostCollector(&HostConfig{Proc: dir, Sys: dir})
+	disks, err := h.readDisk()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(disks) != 1 {
+		t.Fatalf("got %d disks, want 1", len(disks))
+	}
+	// Should use /proc/1/mounts, not /proc/mounts.
+	if disks[0].Device != "/dev/sda1" {
+		t.Errorf("device = %q, want /dev/sda1 (from /proc/1/mounts)", disks[0].Device)
+	}
+}
+
+func TestUnescapeOctal(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"/mnt/normal", "/mnt/normal"},
+		{`/mnt/my\040disk`, "/mnt/my disk"},
+		{`/mnt/tab\011here`, "/mnt/tab\there"},
+		{`/mnt/back\134slash`, `/mnt/back\slash`},
+		{`\040start`, " start"},
+		{`end\040`, "end "},
+		{`/mnt/multi\040word\040path`, "/mnt/multi word path"},
+		// Incomplete sequences left as-is.
+		{`/mnt/trail\04`, `/mnt/trail\04`},
+		{`/mnt/trail\0`, `/mnt/trail\0`},
+		{`/mnt/trail\`, `/mnt/trail\`},
+		// Non-octal digits left as-is.
+		{`/mnt/bad\890`, `/mnt/bad\890`},
+	}
+	for _, tt := range tests {
+		got := unescapeOctal(tt.in)
+		if got != tt.want {
+			t.Errorf("unescapeOctal(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }
 

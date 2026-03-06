@@ -145,14 +145,17 @@ func renderDashboard(a *App, s *Session, width, height int) string {
 		var parts []string
 		if len(s.Disks) > 0 {
 			var maxPct float64
+			var maxMount string
 			for _, d := range s.Disks {
 				if d.Percent > maxPct {
 					maxPct = d.Percent
+					maxMount = d.Mountpoint
 				}
 			}
 			diskColor := diskSeverityColor(maxPct, theme)
+			diskVal := lipgloss.NewStyle().Foreground(diskColor).Render(fmt.Sprintf("%.1f%%", maxPct))
 			parts = append(parts,
-				muted.Render("disk ")+lipgloss.NewStyle().Foreground(diskColor).Render(fmt.Sprintf("%.1f%%", maxPct)))
+				muted.Render("disk ")+diskVal+" "+muted.Render(maxMount))
 		}
 		loadColor := loadSeverityColor(s.Host.Load1, s.Host.CPUs, theme)
 		loadVals := fmt.Sprintf("%.2f %.2f %.2f", s.Host.Load1, s.Host.Load5, s.Host.Load15)

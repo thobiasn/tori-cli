@@ -205,6 +205,10 @@ func (h *HostCollector) readUptime(m *HostMetrics) error {
 // mounts, and calls statfs. File bind-mounts are skipped. When a device has
 // multiple directory mounts, the shortest path is kept.
 //
+// Filtering: only mounts with a /dev/ device AND a real disk filesystem type
+// are included. Read-only image types (squashfs, iso9660) are skipped — these
+// are used by snap packages and optical media and are always 100% full.
+//
 // When /proc/1/root is traversable (bare metal, or container with SYS_PTRACE),
 // mountpoints are resolved through it for correct host filesystem stats.
 // Otherwise mountpoints are accessed directly — inside a container this still
@@ -240,15 +244,20 @@ func (h *HostCollector) readDisk() ([]DiskMetrics, error) {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		if len(fields) < 2 {
+		if len(fields) < 3 {
 			continue
 		}
 		device := fields[0]
-		mountpoint := fields[1]
+		fstype := fields[2]
 
 		if !strings.HasPrefix(device, "/dev/") {
 			continue
 		}
+		if skipFSType(fstype) {
+			continue
+		}
+
+		mountpoint := unescapeOctal(fields[1])
 
 		// Resolve through /proc/1/root to access host paths.
 		resolvedPath := filepath.Join(rootPrefix, mountpoint)
@@ -293,6 +302,42 @@ func (h *HostCollector) readDisk() ([]DiskMetrics, error) {
 		return disks[i].Mountpoint < disks[j].Mountpoint
 	})
 	return disks, nil
+}
+
+// skipFSTypes lists read-only image filesystem types that mount on /dev/*
+// devices but don't represent real disk storage. These are always 100% full
+// by design (e.g. snap squashfs packages, CD-ROMs).
+var skipFSTypes = map[string]bool{
+	"squashfs": true,
+	"iso9660":  true,
+	"udf":      true,
+}
+
+func skipFSType(fstype string) bool {
+	return skipFSTypes[fstype]
+}
+
+// unescapeOctal decodes octal escape sequences in /proc/mounts paths.
+// The kernel encodes space (\040), tab (\011), newline (\012), and
+// backslash (\134) as octal escapes.
+func unescapeOctal(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+3 < len(s) {
+			o1, o2, o3 := s[i+1]-'0', s[i+2]-'0', s[i+3]-'0'
+			if o1 <= 7 && o2 <= 7 && o3 <= 7 {
+				b.WriteByte(o1*64 + o2*8 + o3)
+				i += 3
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 // readNetwork parses /proc/net/dev for per-interface counters.
