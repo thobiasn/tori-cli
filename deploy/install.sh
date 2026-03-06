@@ -153,6 +153,12 @@ if [ "$CLIENT_ONLY" = true ]; then
         *) warn "${INSTALL_DIR} is not in your PATH — add it to your shell profile" ;;
     esac
 
+    # Check for shadowing binary.
+    OTHER=$(command -v tori 2>/dev/null || true)
+    if [ -n "$OTHER" ] && [ "$OTHER" != "${INSTALL_DIR}/tori" ]; then
+        warn "another tori binary exists at ${OTHER} and may take precedence — consider removing it"
+    fi
+
     echo ""
     info "client installation complete!"
     echo ""
@@ -179,6 +185,12 @@ chmod 755 "${INSTALL_DIR}/tori"
 rm -f "$TMP_CHECKSUMS"
 trap - EXIT
 info "installed binary to ${INSTALL_DIR}/tori"
+
+# Check for shadowing binary.
+OTHER=$(command -v tori 2>/dev/null || true)
+if [ -n "$OTHER" ] && [ "$OTHER" != "${INSTALL_DIR}/tori" ]; then
+    warn "another tori binary exists at ${OTHER} and may take precedence — consider removing it"
+fi
 
 # --- Create system user ---
 
