@@ -9,16 +9,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Avoid flattery that feels like unnecessary praise
 - Don’t anthropomorphize yourself
 
-## Release Notes for v0.2.7
-
-The socket permissions change (`feature/socket-permissions` branch) is a **breaking change** that must be called out prominently in release notes. The default socket mode changed from `0666` to `0660`, which means:
-
-- **Bare metal users who only swap the binary** (without re-running `install.sh`) will get `permission denied` when the TUI client tries to connect. Fix: `sudo usermod -aG tori $USER` then re-login, or add `mode = "0666"` under `[socket]` in `/etc/tori/config.toml`.
-- **Docker compose users who only pull the new image** (without updating their `TORI_CONFIG`) will get the same error because the container runs as root and the socket becomes `root:root 0660`. Fix: add `mode = "0666"` under `[socket]` in their compose environment config.
-- **Users who re-run `install.sh`** or **adopt the updated `docker-compose.yml`** are unaffected — the script adds `$SUDO_USER` to the `tori` group, and the compose file sets `mode = "0666"`.
-
-Remove this section after the v0.2.7 release.
-
 ## Project Overview
 
 Tori is a lightweight server monitoring tool for Docker environments. A persistent agent collects metrics, watches containers, tails logs, and fires alerts. A TUI client connects over SSH to view everything in the terminal.
