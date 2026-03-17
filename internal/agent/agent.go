@@ -41,12 +41,12 @@ func New(cfg *Config, cfgPath string, version string) (*Agent, error) {
 	}
 
 	// Load persisted tracking state. Non-fatal if it fails.
-	tracked, err := store.LoadTracking(context.Background())
+	trackingState, err := store.LoadTracking(context.Background())
 	if err != nil {
 		slog.Warn("failed to load tracking state", "error", err)
-	} else if len(tracked) > 0 {
-		docker.LoadTrackingState(tracked)
-		slog.Info("loaded tracking state", "containers", len(tracked))
+	} else if len(trackingState) > 0 {
+		docker.LoadTrackingState(trackingState)
+		slog.Info("loaded tracking state", "containers", len(trackingState))
 	}
 
 	hub := NewHub()
@@ -181,11 +181,12 @@ func (a *Agent) applyConfig(ctx context.Context, newCfg *Config) {
 	// Reloadable fields.
 	a.cfg.Storage.RetentionDays = newCfg.Storage.RetentionDays
 	a.cfg.Collect.Interval = newCfg.Collect.Interval
+	a.cfg.Docker.DefaultTrack = newCfg.Docker.DefaultTrack
 	a.cfg.Docker.Include = newCfg.Docker.Include
 	a.cfg.Docker.Exclude = newCfg.Docker.Exclude
 
 	// Docker filters.
-	a.docker.SetFilters(newCfg.Docker.Include, newCfg.Docker.Exclude)
+	a.docker.SetFilters(newCfg.Docker.DefaultTrack, newCfg.Docker.Include, newCfg.Docker.Exclude)
 	a.socket.SetRetentionDays(newCfg.Storage.RetentionDays)
 
 	// Rebuild alerter + notifier if alert/notify config changed.

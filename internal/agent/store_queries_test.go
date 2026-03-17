@@ -624,18 +624,29 @@ func TestSaveAndLoadTracking(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 
-	// Save tracking state.
-	if err := s.SaveTracking(ctx, []string{"web", "api"}); err != nil {
+	state := map[string]bool{"web": true, "api": true, "db": false}
+	if err := s.SaveTracking(ctx, state); err != nil {
 		t.Fatal(err)
 	}
 
-	// Load it back.
-	containers, err := s.LoadTracking(ctx)
+	loaded, err := s.LoadTracking(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(containers) != 2 {
-		t.Errorf("containers = %d, want 2", len(containers))
+	if len(loaded) != 3 {
+		t.Errorf("entries = %d, want 3", len(loaded))
+	}
+	if !loaded["web"] {
+		t.Error("web should be tracked")
+	}
+	if !loaded["api"] {
+		t.Error("api should be tracked")
+	}
+	if loaded["db"] {
+		t.Error("db should be untracked")
+	}
+	if _, exists := loaded["db"]; !exists {
+		t.Error("db should be present in map as explicitly untracked")
 	}
 }
 
@@ -643,20 +654,18 @@ func TestSaveTrackingOverwrites(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 
-	// Save initial state.
-	s.SaveTracking(ctx, []string{"web", "api"})
+	s.SaveTracking(ctx, map[string]bool{"web": true, "api": true})
 
-	// Overwrite with different state.
-	if err := s.SaveTracking(ctx, []string{"db"}); err != nil {
+	if err := s.SaveTracking(ctx, map[string]bool{"db": true}); err != nil {
 		t.Fatal(err)
 	}
 
-	containers, err := s.LoadTracking(ctx)
+	loaded, err := s.LoadTracking(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(containers) != 1 || containers[0] != "db" {
-		t.Errorf("containers = %v, want [db]", containers)
+	if len(loaded) != 1 || !loaded["db"] {
+		t.Errorf("loaded = %v, want {db: true}", loaded)
 	}
 }
 
@@ -664,12 +673,12 @@ func TestLoadTrackingEmpty(t *testing.T) {
 	s := testStore(t)
 	ctx := context.Background()
 
-	containers, err := s.LoadTracking(ctx)
+	loaded, err := s.LoadTracking(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(containers) != 0 {
-		t.Errorf("containers = %v, want empty", containers)
+	if len(loaded) != 0 {
+		t.Errorf("loaded = %v, want empty", loaded)
 	}
 }
 

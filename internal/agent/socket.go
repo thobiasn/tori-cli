@@ -788,8 +788,8 @@ func (c *connState) setTracking(env *protocol.Envelope) {
 	c.ss.docker.SetTracking(name, project, req.Tracked)
 
 	// Persist tracking state. Best-effort — log error but don't fail the request.
-	containers := c.ss.docker.GetTrackingState()
-	if err := c.ss.store.SaveTracking(c.ctx, containers); err != nil {
+	state := c.ss.docker.GetTrackingState()
+	if err := c.ss.store.SaveTracking(c.ctx, state); err != nil {
 		slog.Warn("failed to persist tracking state", "error", err)
 	}
 
@@ -797,13 +797,20 @@ func (c *connState) setTracking(env *protocol.Envelope) {
 }
 
 func (c *connState) queryTracking(env *protocol.Envelope) {
-	containers := c.ss.docker.GetTrackingState()
-	resp := protocol.QueryTrackingResp{
-		TrackedContainers: containers,
-		TrackedProjects:   []string{}, // no longer used, kept for wire compat
+	state := c.ss.docker.GetTrackingState()
+	// Extract only tracked containers for the protocol response.
+	var tracked []string
+	for name, isTracked := range state {
+		if isTracked {
+			tracked = append(tracked, name)
+		}
 	}
-	if resp.TrackedContainers == nil {
-		resp.TrackedContainers = []string{}
+	if tracked == nil {
+		tracked = []string{}
+	}
+	resp := protocol.QueryTrackingResp{
+		TrackedContainers: tracked,
+		TrackedProjects:   []string{}, // no longer used, kept for wire compat
 	}
 	c.sendResponse(env.ID, &resp)
 }

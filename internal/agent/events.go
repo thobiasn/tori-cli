@@ -169,11 +169,7 @@ func (ew *EventWatcher) handleEvent(ctx context.Context, msg events.Message) {
 	project := truncate(attrs["com.docker.compose.project"], maxLabelLen)
 	service := truncate(attrs["com.docker.compose.service"], maxLabelLen)
 
-	if !ew.docker.MatchFilter(name) {
-		return
-	}
-
-	// Publish event to hub.
+	// Publish event to hub for all containers (TUI needs real-time updates).
 	publishState := state
 	if isDestroy {
 		publishState = "destroyed"
@@ -193,8 +189,8 @@ func (ew *EventWatcher) handleEvent(ctx context.Context, msg events.Message) {
 	}
 	ew.hub.Publish(TopicContainers, event)
 
-	// Trigger alert evaluation for state/health changes.
-	if !isDestroy {
+	// Trigger alert evaluation for state/health changes on tracked containers only.
+	if !isDestroy && ew.docker.IsTracked(name) {
 		ew.alerterMu.RLock()
 		alerter := ew.alerter
 		ew.alerterMu.RUnlock()

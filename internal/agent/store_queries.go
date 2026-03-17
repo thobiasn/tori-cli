@@ -560,7 +560,8 @@ func (s *Store) AckAlert(ctx context.Context, id int64) error {
 }
 
 // SaveTracking persists the current tracking state (full snapshot).
-func (s *Store) SaveTracking(ctx context.Context, containers []string) error {
+// The map contains both tracked (true) and explicitly-untracked (false) entries.
+func (s *Store) SaveTracking(ctx context.Context, state map[string]bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -571,14 +572,18 @@ func (s *Store) SaveTracking(ctx context.Context, containers []string) error {
 		return err
 	}
 
-	stmt, err := tx.PrepareContext(ctx, "INSERT INTO tracking_state (kind, name) VALUES (?, ?)")
+	stmt, err := tx.PrepareContext(ctx, "INSERT INTO tracking_state (kind, name, tracked) VALUES (?, ?, ?)")
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
-	for _, name := range containers {
-		if _, err := stmt.ExecContext(ctx, "container", name); err != nil {
+	for name, tracked := range state {
+		val := 0
+		if tracked {
+			val = 1
+		}
+		if _, err := stmt.ExecContext(ctx, "container", name, val); err != nil {
 			return err
 		}
 	}
@@ -586,22 +591,24 @@ func (s *Store) SaveTracking(ctx context.Context, containers []string) error {
 }
 
 // LoadTracking loads the persisted tracking state.
-func (s *Store) LoadTracking(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT name FROM tracking_state WHERE kind = 'container'")
+// Returns a map of container name → tracked (true/false).
+func (s *Store) LoadTracking(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT name, tracked FROM tracking_state WHERE kind = 'container'")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var containers []string
+	state := make(map[string]bool)
 	for rows.Next() {
 		var name string
-		if err := rows.Scan(&name); err != nil {
+		var tracked int
+		if err := rows.Scan(&name, &tracked); err != nil {
 			return nil, err
 		}
-		containers = append(containers, name)
+		state[name] = tracked != 0
 	}
-	return containers, rows.Err()
+	return state, rows.Err()
 }
 
 // pruneBatchSize limits the number of rows deleted per batch to avoid long-running

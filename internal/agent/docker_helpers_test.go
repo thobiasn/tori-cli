@@ -195,29 +195,33 @@ func TestContainerName(t *testing.T) {
 	}
 }
 
-func TestMatchFilter(t *testing.T) {
+func TestShouldAutoTrack(t *testing.T) {
 	tests := []struct {
-		name    string
-		include []string
-		exclude []string
-		input   string
-		want    bool
+		name         string
+		defaultTrack bool
+		include      []string
+		exclude      []string
+		input        string
+		want         bool
 	}{
-		{"no filters", nil, nil, "web", true},
-		{"include match", []string{"web-*"}, nil, "web-app", true},
-		{"include no match", []string{"web-*"}, nil, "api-server", false},
-		{"exclude match", nil, []string{"test-*"}, "test-runner", false},
-		{"exclude no match", nil, []string{"test-*"}, "web", true},
-		{"include+exclude", []string{"web-*"}, []string{"web-test"}, "web-test", false},
-		{"include+exclude pass", []string{"web-*"}, []string{"web-test"}, "web-prod", true},
+		{"default false no filters", false, nil, nil, "web", false},
+		{"default false include match", false, []string{"web-*"}, nil, "web-app", true},
+		{"default false include no match", false, []string{"web-*"}, nil, "api-server", false},
+		{"default false include+exclude hit", false, []string{"web-*"}, []string{"web-test"}, "web-test", false},
+		{"default false include+exclude pass", false, []string{"web-*"}, []string{"web-test"}, "web-prod", true},
+		{"default true no filters", true, nil, nil, "anything", true},
+		{"default true exclude match", true, nil, []string{"noisy-*"}, "noisy-logs", false},
+		{"default true exclude no match", true, nil, []string{"noisy-*"}, "web", true},
+		{"default true include+exclude", true, []string{"web-*"}, []string{"web-test"}, "web-test", false},
+		{"default true include+exclude pass", true, []string{"web-*"}, []string{"web-test"}, "web-prod", true},
+		{"default true include no match", true, []string{"web-*"}, nil, "api-server", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := &DockerCollector{include: tt.include, exclude: tt.exclude}
-			got := d.matchFilter(tt.input)
+			got := shouldAutoTrack(tt.input, tt.defaultTrack, tt.include, tt.exclude)
 			if got != tt.want {
-				t.Errorf("matchFilter(%q) = %v, want %v", tt.input, got, tt.want)
+				t.Errorf("shouldAutoTrack(%q) = %v, want %v", tt.input, got, tt.want)
 			}
 		})
 	}

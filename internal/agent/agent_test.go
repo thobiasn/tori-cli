@@ -155,14 +155,19 @@ func TestApplyConfigUpdatesFields(t *testing.T) {
 	if a.cfg.Collect.Interval.Duration != 30*time.Second {
 		t.Errorf("interval = %s, want 30s", a.cfg.Collect.Interval.Duration)
 	}
-	// Verify filters were updated.
-	if !docker.MatchFilter("api-test") {
+	// Verify filters were updated via shouldAutoTrack.
+	docker.mu.RLock()
+	inc := docker.include
+	exc := docker.exclude
+	dt := docker.defaultTrack
+	docker.mu.RUnlock()
+	if !shouldAutoTrack("api-test", dt, inc, exc) {
 		t.Error("api-test should match new include pattern")
 	}
-	if docker.MatchFilter("web-app") {
+	if shouldAutoTrack("web-app", dt, inc, exc) {
 		t.Error("web-app should no longer match after filter update")
 	}
-	if docker.MatchFilter("test-runner") {
+	if shouldAutoTrack("test-runner", dt, inc, exc) {
 		t.Error("test-runner should be excluded")
 	}
 }

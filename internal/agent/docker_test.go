@@ -164,10 +164,20 @@ func TestGetTrackingState(t *testing.T) {
 
 	d.SetTracking("web", "", true)
 	d.SetTracking("api", "", true)
+	d.SetTracking("db", "", false)
 
-	containers := d.GetTrackingState()
-	if len(containers) != 2 {
-		t.Errorf("tracked containers = %d, want 2", len(containers))
+	state := d.GetTrackingState()
+	if len(state) != 3 {
+		t.Errorf("tracking state entries = %d, want 3", len(state))
+	}
+	if !state["web"] {
+		t.Error("web should be tracked")
+	}
+	if !state["api"] {
+		t.Error("api should be tracked")
+	}
+	if state["db"] {
+		t.Error("db should be untracked")
 	}
 }
 
@@ -177,7 +187,7 @@ func TestLoadTrackingState(t *testing.T) {
 		tracked: make(map[string]bool),
 	}
 
-	d.LoadTrackingState([]string{"web", "api"})
+	d.LoadTrackingState(map[string]bool{"web": true, "api": true, "db": false})
 
 	if !d.IsTracked("web") {
 		t.Error("web should be tracked after load")
@@ -186,53 +196,53 @@ func TestLoadTrackingState(t *testing.T) {
 		t.Error("api should be tracked after load")
 	}
 	if d.IsTracked("db") {
-		t.Error("db should still be untracked")
+		t.Error("db should be untracked after load")
+	}
+	state := d.GetTrackingState()
+	if _, seen := state["db"]; !seen {
+		t.Error("db should be present in tracking state as explicitly untracked")
 	}
 }
 
 func TestSetFilters(t *testing.T) {
 	d := &DockerCollector{
-		include: []string{"web-*"},
-		exclude: nil,
+		defaultTrack: false,
+		include:      []string{"web-*"},
+		exclude:      nil,
+		tracked:      make(map[string]bool),
 	}
 
-	if !d.MatchFilter("web-app") {
-		t.Error("web-app should match initial include")
-	}
-	if d.MatchFilter("api-server") {
-		t.Error("api-server should not match initial include")
-	}
+	d.SetFilters(true, []string{"api-*"}, []string{"api-test"})
 
-	// Swap filters at runtime.
-	d.SetFilters([]string{"api-*"}, []string{"api-test"})
-
-	if d.MatchFilter("web-app") {
-		t.Error("web-app should no longer match after SetFilters")
+	d.mu.RLock()
+	if !d.defaultTrack {
+		t.Error("defaultTrack should be true after SetFilters")
 	}
-	if !d.MatchFilter("api-server") {
-		t.Error("api-server should match new include")
+	if len(d.include) != 1 || d.include[0] != "api-*" {
+		t.Errorf("include = %v, want [api-*]", d.include)
 	}
-	if d.MatchFilter("api-test") {
-		t.Error("api-test should be excluded")
+	if len(d.exclude) != 1 || d.exclude[0] != "api-test" {
+		t.Errorf("exclude = %v, want [api-test]", d.exclude)
 	}
-
-	// Clear all filters.
-	d.SetFilters(nil, nil)
-	if !d.MatchFilter("anything") {
-		t.Error("everything should match with no filters")
-	}
+	d.mu.RUnlock()
 }
 
-func TestMatchFilterExported(t *testing.T) {
-	d := &DockerCollector{include: []string{"web-*"}, exclude: []string{"web-test"}}
-	if !d.MatchFilter("web-prod") {
-		t.Error("web-prod should match")
+func TestSetTrackingStoresFalse(t *testing.T) {
+	d := &DockerCollector{
+		prevCPU: make(map[string]cpuPrev),
+		tracked: make(map[string]bool),
 	}
-	if d.MatchFilter("web-test") {
-		t.Error("web-test should be excluded")
+
+	d.SetTracking("web", "", true)
+	d.SetTracking("web", "", false)
+
+	state := d.GetTrackingState()
+	tracked, exists := state["web"]
+	if !exists {
+		t.Error("web should still be in tracking state after untrack")
 	}
-	if d.MatchFilter("api") {
-		t.Error("api should not match include")
+	if tracked {
+		t.Error("web should be false (untracked)")
 	}
 }
 

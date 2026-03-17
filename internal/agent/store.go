@@ -131,8 +131,9 @@ CREATE INDEX IF NOT EXISTS idx_alerts_fired ON alerts(fired_at);
 CREATE INDEX IF NOT EXISTS idx_alerts_unresolved ON alerts(fired_at) WHERE resolved_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS tracking_state (
-	kind TEXT NOT NULL,
-	name TEXT NOT NULL,
+	kind    TEXT    NOT NULL,
+	name    TEXT    NOT NULL,
+	tracked INTEGER NOT NULL DEFAULT 1,
 	UNIQUE(kind, name)
 );
 `
@@ -454,6 +455,7 @@ func (s *Store) ensureColumns() {
 		"ALTER TABLE logs ADD COLUMN service TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE logs ADD COLUMN level TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE logs ADD COLUMN display_msg TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE tracking_state ADD COLUMN tracked INTEGER NOT NULL DEFAULT 1",
 	}
 	indexes := []string{
 		"CREATE INDEX IF NOT EXISTS idx_logs_svc ON logs(project, service, timestamp)",

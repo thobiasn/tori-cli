@@ -98,13 +98,9 @@ func serviceIdentity(project, service, name string) (identProject, identService 
 	return "", name
 }
 
-// matchFilter checks if a container name matches include/exclude patterns.
-func (d *DockerCollector) matchFilter(name string) bool {
-	d.mu.RLock()
-	include := d.include
-	exclude := d.exclude
-	d.mu.RUnlock()
-
+// shouldAutoTrack determines whether a newly-discovered container should be
+// auto-tracked based on default_track, include, and exclude settings.
+func shouldAutoTrack(name string, defaultTrack bool, include, exclude []string) bool {
 	if len(include) > 0 {
 		matched := false
 		for _, pattern := range include {
@@ -116,6 +112,8 @@ func (d *DockerCollector) matchFilter(name string) bool {
 		if !matched {
 			return false
 		}
+	} else if !defaultTrack {
+		return false
 	}
 
 	for _, pattern := range exclude {

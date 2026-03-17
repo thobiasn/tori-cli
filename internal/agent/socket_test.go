@@ -1084,12 +1084,12 @@ func TestSocketSetTracking(t *testing.T) {
 
 	// Verify persisted to DB.
 	ctx := t.Context()
-	containers, err := s.LoadTracking(ctx)
+	state, err := s.LoadTracking(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(containers) != 1 || containers[0] != "web" {
-		t.Errorf("persisted containers = %v, want [web]", containers)
+	if !state["web"] {
+		t.Errorf("persisted state = %v, want web=true", state)
 	}
 }
 

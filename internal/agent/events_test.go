@@ -165,7 +165,7 @@ func TestEventDestroy(t *testing.T) {
 	}
 }
 
-func TestEventFiltered(t *testing.T) {
+func TestEventAllContainersPublished(t *testing.T) {
 	ew, _, hub, src := testEventWatcher(t, nil, []string{"internal-*"})
 
 	_, ch := hub.Subscribe(TopicContainers)
@@ -175,26 +175,31 @@ func TestEventFiltered(t *testing.T) {
 
 	go ew.watch(ctx)
 
-	// Send event for excluded container.
+	// Send event for untracked container — should still be published to hub.
 	src.msgCh <- events.Message{
 		Action: events.ActionStart,
 		Actor:  events.Actor{ID: "xyz", Attributes: map[string]string{"name": "internal-monitor", "image": "prom"}},
 	}
 
-	// Send event for allowed container so we can verify ordering.
+	// Send event for tracked container.
 	src.msgCh <- events.Message{
 		Action: events.ActionStart,
 		Actor:  events.Actor{ID: "abc", Attributes: map[string]string{"name": "web", "image": "nginx"}},
 	}
 
-	select {
-	case msg := <-ch:
-		event := msg.(*protocol.ContainerEvent)
-		if event.ContainerID != "abc" {
-			t.Errorf("expected abc (allowed), got %s", event.ContainerID)
+	// Both events should arrive at the hub (no visibility filtering).
+	var received []string
+	for i := 0; i < 2; i++ {
+		select {
+		case msg := <-ch:
+			event := msg.(*protocol.ContainerEvent)
+			received = append(received, event.ContainerID)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timeout after receiving %d events", i)
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout")
+	}
+	if len(received) != 2 {
+		t.Errorf("expected 2 events, got %d", len(received))
 	}
 }
 
