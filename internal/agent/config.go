@@ -104,10 +104,9 @@ type HostConfig struct {
 }
 
 type DockerConfig struct {
-	Socket       string   `toml:"socket"`
-	TrackByDefault bool     `toml:"track_by_default"`
-	Include      []string `toml:"include"`
-	Exclude      []string `toml:"exclude"`
+	Socket  string   `toml:"socket"`
+	Include []string `toml:"include"`
+	Exclude []string `toml:"exclude"`
 }
 
 type CollectConfig struct {

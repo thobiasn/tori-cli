@@ -14,10 +14,9 @@ import (
 
 // DockerCollector monitors containers via the Docker API.
 type DockerCollector struct {
-	client       *client.Client
-	trackByDefault bool
-	include      []string
-	exclude      []string
+	client  *client.Client
+	include []string
+	exclude []string
 
 	// Previous CPU readings per container for delta calculation.
 	prevCPU   map[string]cpuPrev
@@ -36,7 +35,7 @@ type DockerCollector struct {
 	tracked map[string]bool
 
 	// Periodic container disk size collection (Size: true is expensive).
-	sizeCollectN int            // counter for periodic size requests
+	sizeCollectN int              // counter for periodic size requests
 	cachedSizes  map[string]int64 // container ID → SizeRw (writable layer bytes)
 }
 
@@ -45,8 +44,8 @@ type inspectResult struct {
 	startedAt    int64
 	restartCount int
 	exitCode     int
-	cpuLimit     float64   // configured CPU limit in cores (0 = no limit)
-	memLimit     int64     // configured memory limit in bytes (0 = no limit)
+	cpuLimit     float64 // configured CPU limit in cores (0 = no limit)
+	memLimit     int64   // configured memory limit in bytes (0 = no limit)
 	cachedAt     time.Time
 }
 
@@ -66,7 +65,6 @@ func NewDockerCollector(cfg *DockerConfig) (*DockerCollector, error) {
 	}
 	return &DockerCollector{
 		client:       c,
-		trackByDefault: cfg.TrackByDefault,
 		include:      cfg.Include,
 		exclude:      cfg.Exclude,
 		prevCPU:      make(map[string]cpuPrev),
@@ -164,11 +162,10 @@ type Container struct {
 	ExitCode     int
 }
 
-// SetFilters updates the include/exclude filter lists and track_by_default at runtime.
-func (d *DockerCollector) SetFilters(trackByDefault bool, include, exclude []string) {
+// SetTrackingPolicy updates the auto-tracking policy at runtime.
+func (d *DockerCollector) SetTrackingPolicy(include, exclude []string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.trackByDefault = trackByDefault
 	d.include = include
 	d.exclude = exclude
 }
@@ -190,10 +187,10 @@ const statsWorkers = 4
 
 // statsWork describes a running container that needs stats fetched.
 type statsWork struct {
-	id, name, image     string
-	project, service    string
-	ir                  inspectResult
-	diskUsage           uint64
+	id, name, image  string
+	project, service string
+	ir               inspectResult
+	diskUsage        uint64
 }
 
 func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Container, error) {
@@ -258,10 +255,9 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 		_, seen := d.tracked[name]
 		inc := d.include
 		exc := d.exclude
-		dt := d.trackByDefault
 		d.mu.RUnlock()
 		if !seen {
-			autoTrack := shouldAutoTrack(name, dt, inc, exc)
+			autoTrack := shouldAutoTrack(name, inc, exc)
 			d.mu.Lock()
 			if _, seen2 := d.tracked[name]; !seen2 {
 				d.tracked[name] = autoTrack
@@ -316,7 +312,7 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 				m, err := d.containerStats(ctx, w.id, w.name, w.image, "running")
 				if err != nil {
 					slog.Warn("failed to get container stats", "container", w.name, "error", err)
-				m = &ContainerMetrics{
+					m = &ContainerMetrics{
 						ID: w.id, Name: w.name, Image: w.image, State: "running",
 					}
 				}

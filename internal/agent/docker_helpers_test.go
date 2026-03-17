@@ -197,29 +197,25 @@ func TestContainerName(t *testing.T) {
 
 func TestShouldAutoTrack(t *testing.T) {
 	tests := []struct {
-		name         string
-		trackByDefault bool
-		include      []string
-		exclude      []string
-		input        string
-		want         bool
+		name    string
+		include []string
+		exclude []string
+		input   string
+		want    bool
 	}{
-		{"default false no filters", false, nil, nil, "web", false},
-		{"default false include match", false, []string{"web-*"}, nil, "web-app", true},
-		{"default false include no match", false, []string{"web-*"}, nil, "api-server", false},
-		{"default false include+exclude hit", false, []string{"web-*"}, []string{"web-test"}, "web-test", false},
-		{"default false include+exclude pass", false, []string{"web-*"}, []string{"web-test"}, "web-prod", true},
-		{"default true no filters", true, nil, nil, "anything", true},
-		{"default true exclude match", true, nil, []string{"noisy-*"}, "noisy-logs", false},
-		{"default true exclude no match", true, nil, []string{"noisy-*"}, "web", true},
-		{"default true include+exclude", true, []string{"web-*"}, []string{"web-test"}, "web-test", false},
-		{"default true include+exclude pass", true, []string{"web-*"}, []string{"web-test"}, "web-prod", true},
-		{"default true include no match", true, []string{"web-*"}, nil, "api-server", false},
+		{"no filters", nil, nil, "web", false},
+		{"include match", []string{"web-*"}, nil, "web-app", true},
+		{"include no match", []string{"web-*"}, nil, "api-server", false},
+		{"include+exclude hit", []string{"web-*"}, []string{"web-test"}, "web-test", false},
+		{"include+exclude pass", []string{"web-*"}, []string{"web-test"}, "web-prod", true},
+		{"wildcard tracks all", []string{"*"}, nil, "anything", true},
+		{"wildcard with exclude", []string{"*"}, []string{"noisy-*"}, "noisy-logs", false},
+		{"wildcard exclude no match", []string{"*"}, []string{"noisy-*"}, "web", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := shouldAutoTrack(tt.input, tt.trackByDefault, tt.include, tt.exclude)
+			got := shouldAutoTrack(tt.input, tt.include, tt.exclude)
 			if got != tt.want {
 				t.Errorf("shouldAutoTrack(%q) = %v, want %v", tt.input, got, tt.want)
 			}

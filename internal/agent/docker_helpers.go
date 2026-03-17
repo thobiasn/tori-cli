@@ -99,20 +99,21 @@ func serviceIdentity(project, service, name string) (identProject, identService 
 }
 
 // shouldAutoTrack determines whether a newly-discovered container should be
-// auto-tracked based on track_by_default, include, and exclude settings.
-func shouldAutoTrack(name string, trackByDefault bool, include, exclude []string) bool {
-	if len(include) > 0 {
-		matched := false
-		for _, pattern := range include {
-			if ok, _ := filepath.Match(pattern, name); ok {
-				matched = true
-				break
-			}
+// auto-tracked based on include and exclude patterns. If no include patterns
+// are set, nothing is auto-tracked. Use include = ["*"] to track everything.
+func shouldAutoTrack(name string, include, exclude []string) bool {
+	if len(include) == 0 {
+		return false
+	}
+
+	matched := false
+	for _, pattern := range include {
+		if ok, _ := filepath.Match(pattern, name); ok {
+			matched = true
+			break
 		}
-		if !matched {
-			return false
-		}
-	} else if !trackByDefault {
+	}
+	if !matched {
 		return false
 	}
 
