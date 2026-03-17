@@ -105,7 +105,7 @@ type HostConfig struct {
 
 type DockerConfig struct {
 	Socket       string   `toml:"socket"`
-	DefaultTrack bool     `toml:"default_track"`
+	TrackByDefault bool     `toml:"track_by_default"`
 	Include      []string `toml:"include"`
 	Exclude      []string `toml:"exclude"`
 }

@@ -159,7 +159,7 @@ func TestApplyConfigUpdatesFields(t *testing.T) {
 	docker.mu.RLock()
 	inc := docker.include
 	exc := docker.exclude
-	dt := docker.defaultTrack
+	dt := docker.trackByDefault
 	docker.mu.RUnlock()
 	if !shouldAutoTrack("api-test", dt, inc, exc) {
 		t.Error("api-test should match new include pattern")

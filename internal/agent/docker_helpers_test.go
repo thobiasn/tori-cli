@@ -198,7 +198,7 @@ func TestContainerName(t *testing.T) {
 func TestShouldAutoTrack(t *testing.T) {
 	tests := []struct {
 		name         string
-		defaultTrack bool
+		trackByDefault bool
 		include      []string
 		exclude      []string
 		input        string
@@ -219,7 +219,7 @@ func TestShouldAutoTrack(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := shouldAutoTrack(tt.input, tt.defaultTrack, tt.include, tt.exclude)
+			got := shouldAutoTrack(tt.input, tt.trackByDefault, tt.include, tt.exclude)
 			if got != tt.want {
 				t.Errorf("shouldAutoTrack(%q) = %v, want %v", tt.input, got, tt.want)
 			}

@@ -76,7 +76,7 @@ Connect:
 tori
 ```
 
-No containers are tracked yet — press `t` on a container or compose group to start collecting metrics, logs, and alerts for it. You can also set `default_track = true` in the agent config or use `include`/`exclude` patterns to auto-track containers on discovery. Tracking state is persisted and survives agent restarts.
+No containers are tracked yet — press `t` on a container or compose group to start collecting metrics, logs, and alerts for it. You can also set `track_by_default = true` in the agent config or use `include`/`exclude` patterns to auto-track containers on discovery. Tracking state is persisted and survives agent restarts.
 
 ## Installation
 
@@ -263,7 +263,7 @@ sys = "/sys"
 
 [docker]
 socket = "/var/run/docker.sock"
-# default_track = false    # set to true to track all containers by default
+# track_by_default = false    # set to true to track all containers by default
 # include = ["myapp-*"]    # auto-track containers matching these patterns
 # exclude = ["tori-*"]     # never auto-track containers matching these patterns
 

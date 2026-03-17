@@ -206,7 +206,7 @@ func TestLoadTrackingState(t *testing.T) {
 
 func TestSetFilters(t *testing.T) {
 	d := &DockerCollector{
-		defaultTrack: false,
+		trackByDefault: false,
 		include:      []string{"web-*"},
 		exclude:      nil,
 		tracked:      make(map[string]bool),
@@ -215,8 +215,8 @@ func TestSetFilters(t *testing.T) {
 	d.SetFilters(true, []string{"api-*"}, []string{"api-test"})
 
 	d.mu.RLock()
-	if !d.defaultTrack {
-		t.Error("defaultTrack should be true after SetFilters")
+	if !d.trackByDefault {
+		t.Error("trackByDefault should be true after SetFilters")
 	}
 	if len(d.include) != 1 || d.include[0] != "api-*" {
 		t.Errorf("include = %v, want [api-*]", d.include)

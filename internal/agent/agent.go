@@ -181,12 +181,12 @@ func (a *Agent) applyConfig(ctx context.Context, newCfg *Config) {
 	// Reloadable fields.
 	a.cfg.Storage.RetentionDays = newCfg.Storage.RetentionDays
 	a.cfg.Collect.Interval = newCfg.Collect.Interval
-	a.cfg.Docker.DefaultTrack = newCfg.Docker.DefaultTrack
+	a.cfg.Docker.TrackByDefault = newCfg.Docker.TrackByDefault
 	a.cfg.Docker.Include = newCfg.Docker.Include
 	a.cfg.Docker.Exclude = newCfg.Docker.Exclude
 
 	// Docker filters.
-	a.docker.SetFilters(newCfg.Docker.DefaultTrack, newCfg.Docker.Include, newCfg.Docker.Exclude)
+	a.docker.SetFilters(newCfg.Docker.TrackByDefault, newCfg.Docker.Include, newCfg.Docker.Exclude)
 	a.socket.SetRetentionDays(newCfg.Storage.RetentionDays)
 
 	// Rebuild alerter + notifier if alert/notify config changed.

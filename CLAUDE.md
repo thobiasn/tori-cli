@@ -256,9 +256,9 @@ The alerter receives the same data already collected — no additional I/O.
 
 ### Docker runtime tracking
 
-- **No containers are tracked by default** unless `default_track = true` is set in `[docker]` config.
+- **No containers are tracked by default** unless `track_by_default = true` is set in `[docker]` config.
 - `DockerCollector` has `tracked map[string]bool` keyed by container name. Presence = seen, value = tracked/untracked.
-- **Auto-tracking**: `shouldAutoTrack(name, defaultTrack, include, exclude)` fires once per container on first discovery during `Collect()`. If `include` is set, only matching names are auto-tracked; otherwise `default_track` is the baseline. `exclude` always vetoes. Manual toggles (`SetTracking`) override and persist across restarts.
+- **Auto-tracking**: `shouldAutoTrack(name, defaultTrack, include, exclude)` fires once per container on first discovery during `Collect()`. If `include` is set, only matching names are auto-tracked; otherwise `track_by_default` is the baseline. `exclude` always vetoes. Manual toggles (`SetTracking`) override and persist across restarts.
 - `SetTracking(name, project, tracked)` — stores both `true` (tracked) and `false` (explicitly untracked) entries. Never deletes from the map, so auto-tracking doesn't re-trigger.
 - `GetTrackingState()` returns `map[string]bool` (both tracked and untracked entries). `SaveTracking`/`LoadTracking` persist the `tracked` column (0 or 1) in `tracking_state`.
 - `Collect()` publishes all containers to `lastContainers` (TUI visibility) but only returns tracked containers for log sync/alert eval. Stale tracking entries for destroyed containers are pruned each cycle.

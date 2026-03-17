@@ -15,7 +15,7 @@ import (
 // DockerCollector monitors containers via the Docker API.
 type DockerCollector struct {
 	client       *client.Client
-	defaultTrack bool
+	trackByDefault bool
 	include      []string
 	exclude      []string
 
@@ -66,7 +66,7 @@ func NewDockerCollector(cfg *DockerConfig) (*DockerCollector, error) {
 	}
 	return &DockerCollector{
 		client:       c,
-		defaultTrack: cfg.DefaultTrack,
+		trackByDefault: cfg.TrackByDefault,
 		include:      cfg.Include,
 		exclude:      cfg.Exclude,
 		prevCPU:      make(map[string]cpuPrev),
@@ -164,11 +164,11 @@ type Container struct {
 	ExitCode     int
 }
 
-// SetFilters updates the include/exclude filter lists and default_track at runtime.
-func (d *DockerCollector) SetFilters(defaultTrack bool, include, exclude []string) {
+// SetFilters updates the include/exclude filter lists and track_by_default at runtime.
+func (d *DockerCollector) SetFilters(trackByDefault bool, include, exclude []string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.defaultTrack = defaultTrack
+	d.trackByDefault = trackByDefault
 	d.include = include
 	d.exclude = exclude
 }
@@ -258,7 +258,7 @@ func (d *DockerCollector) Collect(ctx context.Context) ([]ContainerMetrics, []Co
 		_, seen := d.tracked[name]
 		inc := d.include
 		exc := d.exclude
-		dt := d.defaultTrack
+		dt := d.trackByDefault
 		d.mu.RUnlock()
 		if !seen {
 			autoTrack := shouldAutoTrack(name, dt, inc, exc)
