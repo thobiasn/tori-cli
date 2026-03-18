@@ -11,6 +11,4 @@ coverage:
 
 flags:
   core:
-    paths:
-      - internal/agent/
-      - internal/protocol/
+    carryforward: true
