@@ -1,14 +1,13 @@
+flag_management:
+  default_rules:
+    carryforward: true
+  individual_flags:
+    - name: core
+      carryforward: true
+      statuses:
+        - type: project
+          target: auto
+
 coverage:
   status:
-    project:
-      default:
-        target: auto
-      core:
-        flags:
-          - core
-        target: auto
     patch: off
-
-flags:
-  core:
-    carryforward: true
