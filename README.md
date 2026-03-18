@@ -5,9 +5,9 @@
 [![GitHub Release](https://img.shields.io/github/v/release/thobiasn/tori-cli)](https://github.com/thobiasn/tori-cli/releases)
 [![License](https://img.shields.io/github/license/thobiasn/tori-cli)](LICENSE)
 
-Docker server monitoring without the stack. Metrics, logs, and alerts — single binary, minimal footprint, zero exposed ports, SSH-only.
+Docker server monitoring without the stack. Metrics, logs, and alerts. Single binary, minimal footprint, zero exposed ports, SSH-only.
 
-If you're running Docker and a full monitoring stack feels like overkill, tori gives you metrics, logs, and alerts in a single binary that uses less memory than most of the containers it watches. Install on your server, add a notification channel, and you're covered — tori watches your containers 24/7 and alerts you when something breaks, even when you're not connected. No web dashboards to host, no ports to open, no extra attack surface.
+If you're running Docker and a full monitoring stack feels like overkill, tori gives you metrics, logs, and alerts in a single binary that uses less memory than most of the containers it watches. Install on your server, add a notification channel, and you're covered. tori watches your containers 24/7 and alerts you when something breaks, even when you're not connected. No web dashboards to host, no ports to open, no extra attack surface.
 
 **[toricli.sh](https://toricli.sh)** · [Releases](https://github.com/thobiasn/tori-cli/releases) · [Issues](https://github.com/thobiasn/tori-cli/issues)
 
@@ -120,7 +120,7 @@ curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/insta
 To install a specific version:
 
 ```bash
-sudo sh install.sh --version v1.0.0
+curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sudo sh -s -- --version v1.0.0
 ```
 
 After installation:
