@@ -953,10 +953,10 @@ func TestQueryLogsRegexSearch(t *testing.T) {
 	}{
 		{"literal match", "connection refused", false, 1},
 		{"regex alternation", "error|warning", true, 2},
-		{"regex digit pattern", "\\d+s", true, 1},           // matches "30s"
-		{"regex port pattern", "port \\d{4}", true, 1},      // matches "port 8080"
-		{"case insensitive", "ERROR", true, 1},               // (?i) prefix applied in QueryLogs
-		{"regex anchored", "^info:", true, 1},                // matches line starting with info:
+		{"regex digit pattern", "\\d+s", true, 1},      // matches "30s"
+		{"regex port pattern", "port \\d{4}", true, 1}, // matches "port 8080"
+		{"case insensitive", "ERROR", true, 1},         // (?i) prefix applied in QueryLogs
+		{"regex anchored", "^info:", true, 1},          // matches line starting with info:
 		{"no match", "foobar", false, 0},
 		{"dot star", "error.*refused", true, 1},
 	}
@@ -1588,5 +1588,52 @@ func TestLogStorageScaling(t *testing.T) {
 		bytesPerEntry := float64(dbSize) / float64(target)
 		t.Logf("%5d entries: DB = %d bytes (%.2f MB), %.0f bytes/entry",
 			target, dbSize, float64(dbSize)/(1024*1024), bytesPerEntry)
+	}
+}
+
+func TestQueryContainerMetricsGrouped(t *testing.T) {
+	s := testStore(t)
+	ctx := context.Background()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Insert metrics for two services across 10 timestamps.
+	for i := 0; i < 10; i++ {
+		s.InsertContainerMetrics(ctx, ts.Add(time.Duration(i)*time.Second), []ContainerMetrics{
+			{ID: "a", Name: "web-1", Project: "app", Service: "web", CPUPercent: float64(i * 10)},
+			{ID: "b", Name: "api-1", Project: "app", Service: "api", CPUPercent: float64(i * 5)},
+		})
+	}
+
+	start := ts.Unix()
+	end := ts.Add(9 * time.Second).Unix()
+
+	// 2 buckets of 5 seconds each.
+	results, err := s.QueryContainerMetricsGrouped(ctx, start, end, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected results")
+	}
+
+	// Verify we get results for both services.
+	services := make(map[string]bool)
+	for _, r := range results {
+		services[r.Service] = true
+	}
+	if !services["web"] || !services["api"] {
+		t.Errorf("expected both web and api services, got %v", services)
+	}
+
+	// With project filter.
+	results2, err := s.QueryContainerMetricsGrouped(ctx, start, end, 5, ContainerMetricsFilter{Project: "app", Service: "web"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range results2 {
+		if r.Service != "web" {
+			t.Errorf("filter should only return web, got %q", r.Service)
+		}
 	}
 }

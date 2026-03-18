@@ -2,6 +2,7 @@ package agent
 
 import (
 	"math"
+	"sync"
 	"testing"
 
 	"github.com/docker/docker/api/types/container"
@@ -192,6 +193,70 @@ func TestContainerName(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("containerName(%v) = %q, want %q", tt.names, got, tt.want)
 		}
+	}
+}
+
+func TestServiceIdentity(t *testing.T) {
+	tests := []struct {
+		name        string
+		project     string
+		service     string
+		cname       string
+		wantProject string
+		wantService string
+	}{
+		{"both set", "myapp", "web", "web-1", "myapp", "web"},
+		{"no project", "", "web", "web-1", "", "web-1"},
+		{"no service", "myapp", "", "web-1", "", "web-1"},
+		{"neither", "", "", "standalone", "", "standalone"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotP, gotS := serviceIdentity(tt.project, tt.service, tt.cname)
+			if gotP != tt.wantProject || gotS != tt.wantService {
+				t.Errorf("serviceIdentity(%q, %q, %q) = (%q, %q), want (%q, %q)",
+					tt.project, tt.service, tt.cname, gotP, gotS, tt.wantProject, tt.wantService)
+			}
+		})
+	}
+}
+
+func TestCalcCPUPercentMethod(t *testing.T) {
+	dc := &DockerCollector{
+		prevCPU:   make(map[string]cpuPrev),
+		prevCPUMu: sync.Mutex{},
+	}
+
+	// First call — no previous, uses PreCPUStats.
+	stats := &container.StatsResponse{
+		CPUStats: container.CPUStats{
+			CPUUsage:    container.CPUUsage{TotalUsage: 500_000_000},
+			SystemUsage: 2_000_000_000,
+			OnlineCPUs:  2,
+		},
+		PreCPUStats: container.CPUStats{
+			CPUUsage:    container.CPUUsage{TotalUsage: 0},
+			SystemUsage: 1_000_000_000,
+		},
+	}
+	got := dc.calcCPUPercent("test1", stats)
+	// (500M / 1000M) * 2 * 100 = 100
+	if math.Abs(got-100.0) > 0.1 {
+		t.Errorf("first call = %f, want ~100.0", got)
+	}
+
+	// Second call — uses stored previous values.
+	stats2 := &container.StatsResponse{
+		CPUStats: container.CPUStats{
+			CPUUsage:    container.CPUUsage{TotalUsage: 1_000_000_000},
+			SystemUsage: 4_000_000_000,
+			OnlineCPUs:  2,
+		},
+	}
+	got2 := dc.calcCPUPercent("test1", stats2)
+	// (500M / 2000M) * 2 * 100 = 50
+	if math.Abs(got2-50.0) > 0.1 {
+		t.Errorf("second call = %f, want ~50.0", got2)
 	}
 }
 
