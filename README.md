@@ -21,6 +21,55 @@ If you're running Docker and a full monitoring stack feels like overkill, tori g
 - Log tailing with regex search, level filtering, match highlighting, and date/time range filters
 - Multi-server support — monitor multiple hosts from one terminal, switch instantly
 
+## Quick Start
+
+### On your server
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sudo sh
+```
+
+Edit `/etc/tori/config.toml` to get notified when something breaks:
+
+```toml
+[docker]
+# include = ["myapp-*"]    # auto-track containers matching a pattern
+# include = ["*"]          # auto-track all containers
+
+[alerts.container_down]
+condition = "container.state == 'exited'"
+for = "30s"
+severity = "critical"
+actions = ["notify"]
+
+# add [notify.email] or [[notify.webhooks]] — see Configuration below
+```
+
+Start the agent:
+
+```bash
+sudo systemctl enable --now tori
+```
+
+tori is now collecting host metrics and watching all your containers.
+
+### On your machine
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client
+tori user@your-server.com
+```
+
+Or add servers to `~/.config/tori/config.toml` for persistent config:
+
+```toml
+[servers.prod]
+host = "user@prod.example.com"
+```
+
+> [!TIP]
+> All containers are visible by default, but tracking is opt-in. Press `t` on any container or compose group to track it — this enables metrics history, log storage, and alert evaluation. Tracking persists across agent restarts. For automatic tracking, set `include` patterns in the agent config (e.g. `include = ["myapp-*"]`).
+
 ## How It Works
 
 tori has two parts. The **agent** runs on your server collecting metrics, tailing logs, and evaluating alerts 24/7. The **client** runs on your machine and connects to the remote agent through an SSH tunnel to a Unix socket — no HTTP server, no open ports.
@@ -51,54 +100,6 @@ tori has two parts. The **agent** runs on your server collecting metrics, tailin
 │  Docker socket    /proc, /sys               │
 └─────────────────────────────────────────────┘
 ```
-
-## Quick Start
-
-### On your server
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sudo sh
-```
-
-Edit `/etc/tori/config.toml` to track all containers and get notified when something breaks:
-
-```toml
-[docker]
-include = ["*"]    # track everything (or use patterns like "myapp-*")
-
-[alerts.container_down]
-condition = "container.state == 'exited'"
-for = "30s"
-severity = "critical"
-actions = ["notify"]
-
-# add [notify.email] or [[notify.webhooks]] — see Configuration below
-```
-
-Start the agent:
-
-```bash
-sudo systemctl enable --now tori
-```
-
-That's it. tori is now collecting metrics, tailing logs, and alerting on your containers — even when you're not connected.
-
-### On your machine
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client
-tori user@your-server.com
-```
-
-Or add servers to `~/.config/tori/config.toml` for persistent config:
-
-```toml
-[servers.prod]
-host = "user@prod.example.com"
-```
-
-> [!TIP]
-> You can also selectively track containers from the TUI — press `t` on any container or compose group. Tracking state persists across agent restarts.
 
 ## Installation
 
