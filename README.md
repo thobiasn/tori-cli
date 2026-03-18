@@ -145,6 +145,17 @@ sudo systemctl reload tori
 </details>
 
 <details>
+<summary><b>Arch Linux (AUR)</b></summary>
+
+```bash
+yay -S tori-cli-bin
+```
+
+Installs the binary, systemd service, and creates the tori user and directories.
+
+</details>
+
+<details>
 <summary><b>Docker Compose</b></summary>
 
 A ready-to-use Docker Compose file is provided at [`deploy/docker-compose.yml`](deploy/docker-compose.yml) with sensible defaults including alert rules:
@@ -210,17 +221,6 @@ curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/insta
 ```
 
 Installs to `~/.local/bin/tori` (or `/usr/local/bin/tori` if run as root).
-
-</details>
-
-<details>
-<summary><b>Arch Linux (AUR)</b></summary>
-
-```bash
-yay -S tori-cli-bin
-```
-
-This installs the full package (binary + systemd service). For client-only installs, use the install script above instead.
 
 </details>
 
