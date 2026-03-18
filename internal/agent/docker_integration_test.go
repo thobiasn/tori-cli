@@ -679,6 +679,12 @@ func TestIntegrationFullPipeline(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Warm up the Docker client's API version negotiation before starting
+	// concurrent access. WithAPIVersionNegotiation() causes a lazy write on
+	// first request, which races if EventWatcher.Run() and Collect() hit the
+	// client simultaneously.
+	dc.Collect(ctx)
+
 	// Start event watcher.
 	go ew.Run(ctx)
 
