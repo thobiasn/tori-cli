@@ -9,17 +9,17 @@ import (
 )
 
 func TestAgentLifecycle(t *testing.T) {
-	if os.Getenv("TORI_TEST_DOCKER") != "1" {
-		t.Skip("set TORI_TEST_DOCKER=1 to run Docker integration tests")
-	}
+	skipIfNoDocker(t)
 
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 	cfgPath := filepath.Join(dir, "config.toml")
 	os.WriteFile(cfgPath, []byte(""), 0644)
 
+	socketPath := filepath.Join(dir, "tori.sock")
 	cfg := &Config{
 		Storage: StorageConfig{Path: dbPath, RetentionDays: 7},
+		Socket:  SocketConfig{Path: socketPath, Mode: FileMode{0660}},
 		Host:    HostConfig{Proc: "/proc", Sys: "/sys"},
 		Docker:  DockerConfig{Socket: "/var/run/docker.sock"},
 		Collect: CollectConfig{Interval: Duration{Duration: 1 * time.Second}},
@@ -144,7 +144,7 @@ func TestApplyConfigUpdatesFields(t *testing.T) {
 		Docker:  DockerConfig{Include: []string{"api-*"}, Exclude: []string{"test-*"}},
 	}
 
-	a.applyConfig(context.Background(),newCfg)
+	a.applyConfig(context.Background(), newCfg)
 
 	if a.cfg.Storage.RetentionDays != 14 {
 		t.Errorf("retention = %d, want 14", a.cfg.Storage.RetentionDays)
@@ -220,7 +220,7 @@ func TestApplyConfigRebuildsAlerter(t *testing.T) {
 		},
 	}
 
-	a.applyConfig(context.Background(),newCfg)
+	a.applyConfig(context.Background(), newCfg)
 
 	if a.alerter == nil {
 		t.Fatal("alerter should be set after reload with alert rules")
@@ -235,7 +235,7 @@ func TestApplyConfigRebuildsAlerter(t *testing.T) {
 		Collect: CollectConfig{Interval: Duration{Duration: 10 * time.Second}},
 	}
 
-	a.applyConfig(context.Background(),noAlertCfg)
+	a.applyConfig(context.Background(), noAlertCfg)
 
 	if a.alerter != nil {
 		t.Error("alerter should be nil after reload without alert rules")
