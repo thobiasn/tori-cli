@@ -255,6 +255,24 @@ func TestIntegrationCollectStoppedContainer(t *testing.T) {
 		t.Fatal("timeout waiting for container exit")
 	}
 
+	// ContainerWait can return before ContainerList reflects the new state.
+	// Poll inspect until the state is confirmed.
+	deadline := time.After(10 * time.Second)
+	for {
+		inspect, err := cli.ContainerInspect(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inspect.State != nil && !inspect.State.Running {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timeout waiting for container inspect to show exited")
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+
 	dc, err := NewDockerCollector(&DockerConfig{
 		Socket:  "/var/run/docker.sock",
 		Include: []string{"tori-test-*"},
