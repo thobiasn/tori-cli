@@ -11,6 +11,28 @@ If you're running Docker and a full monitoring stack feels like overkill, tori g
 
 ![tori demo](https://github.com/user-attachments/assets/e0183dc7-9b0e-4358-a7ed-dfd508b2e5e0)
 
+## Table of Contents
+
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [How It Works](#how-it-works)
+- [Installation](#installation)
+  - [Agent (server)](#agent-server)
+  - [Client (your machine)](#client-your-machine)
+  - [Connecting](#connecting)
+  - [Updating](#updating)
+  - [Uninstalling](#uninstalling)
+- [Configuration](#configuration)
+  - [Agent config](#agent-config)
+  - [Alert reference](#alert-reference)
+  - [Client config](#client-config)
+- [Keybindings](#keybindings)
+- [Usage Notes](#usage-notes)
+  - [Security](#security)
+  - [Storage](#storage)
+  - [Troubleshooting](#troubleshooting)
+- [Requirements](#requirements)
+
 ## Features
 
 - **No exposed ports** — all communication over SSH to a Unix socket. No HTTP server, nothing to firewall
@@ -103,7 +125,7 @@ tori has two parts. The **agent** runs on your server collecting metrics, tailin
 
 ## Installation
 
-### Step 1 — Agent (server)
+### Agent (server)
 
 The agent runs on Linux only (it reads from `/proc` and `/sys`).
 
@@ -210,7 +232,7 @@ sudo ./tori agent --config /etc/tori/config.toml
 
 </details>
 
-### Step 2 — Client (your machine)
+### Client (your machine)
 
 <details>
 <summary><b>Linux</b></summary>
@@ -250,7 +272,7 @@ go build -o tori ./cmd/tori
 
 </details>
 
-## Connecting
+### Connecting
 
 ```bash
 # Connect to all configured servers
@@ -273,6 +295,32 @@ tori --socket /run/tori/tori.sock
 ```
 
 When connected to multiple servers, use `S` to open the servers dialog, then `j`/`k` and `Enter` to switch. Each server has isolated data — switching is instant since all sessions receive data concurrently.
+
+### Updating
+
+Re-run the same install command to update to the latest version. Existing configs are preserved.
+
+```bash
+# Agent (then restart the service)
+curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sudo sh
+sudo systemctl restart tori
+
+# Client
+curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client
+```
+
+### Uninstalling
+
+```bash
+sudo systemctl disable --now tori
+sudo rm /usr/local/bin/tori
+sudo rm /etc/systemd/system/tori.service
+sudo rm -rf /etc/tori /var/lib/tori /run/tori
+sudo userdel tori
+sudo groupdel tori 2>/dev/null   # may remain if other users were added to it
+```
+
+For client-only installs, just remove the binary (`~/.local/bin/tori` or `/usr/local/bin/tori`) and config (`~/.config/tori/`).
 
 ## Configuration
 
@@ -510,33 +558,9 @@ Because tori defaults to ANSI colors, it automatically inherits your terminal's 
 | `/` | Open filter dialog (regex search, date/time range) |
 | `i` | Toggle info overlay |
 
-## Updating
+## Usage Notes
 
-Re-run the same install command to update to the latest version. Existing configs are preserved.
-
-```bash
-# Agent (then restart the service)
-curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sudo sh
-sudo systemctl restart tori
-
-# Client
-curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client
-```
-
-## Uninstall
-
-```bash
-sudo systemctl disable --now tori
-sudo rm /usr/local/bin/tori
-sudo rm /etc/systemd/system/tori.service
-sudo rm -rf /etc/tori /var/lib/tori /run/tori
-sudo userdel tori
-sudo groupdel tori 2>/dev/null   # may remain if other users were added to it
-```
-
-For client-only installs, just remove the binary (`~/.local/bin/tori` or `/usr/local/bin/tori`) and config (`~/.config/tori/`).
-
-## Security
+### Security
 
 **Docker socket access:** tori requires read-only access to the Docker socket (`/var/run/docker.sock`) for container monitoring. This is the same trust model as lazydocker, ctop, and other Docker monitoring tools. The socket is always mounted `:ro` — tori never writes to Docker.
 
@@ -548,13 +572,13 @@ For client-only installs, just remove the binary (`~/.local/bin/tori` or `/usr/l
 
 **Log contents:** tori stores container logs in SQLite. These may contain sensitive application data (tokens, user info, errors with PII). The database file at `/var/lib/tori/tori.db` should have restrictive permissions and the retention policy should be set appropriately.
 
-## Keeping Storage in Check
+### Storage
 
 All logs from tracked containers are stored in SQLite for the full `retention_days` window (default: 7 days). High-volume containers can grow the database significantly. If storage is a concern, reduce `retention_days` in the agent config. You can also be selective about which containers you track — the `t` key in the dashboard toggles tracking per-container, and only tracked containers have their logs stored.
 
 Log alert `window` values must be shorter than your `retention_days` — logs outside the retention window have been pruned and can't be counted. In practice, keep windows short (minutes to hours) for responsive alerting.
 
-## Troubleshooting
+### Troubleshooting
 
 <details>
 <summary><b>SSH connection fails with "connection lost" or "connection closed"</b></summary>
