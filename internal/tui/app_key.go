@@ -33,6 +33,46 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
+	// Server switcher captures all keys when active.
+	if a.switcher {
+		return a.handleSwitcherKey(key)
+	}
+
+	// Global view/server navigation (blocked by sub-modals).
+	if !a.hasActiveSubModal() {
+		switch key {
+		case "S":
+			if len(a.sessions) > 1 {
+				a.switcher = true
+				for i, name := range a.sessionOrder {
+					if name == a.activeSession {
+						a.switcherCursor = i
+						break
+					}
+				}
+			}
+			return a, nil
+		case "1":
+			a.pendingKey = ""
+			switch a.view {
+			case viewDetail:
+				a.leaveDetail()
+			case viewAlerts:
+				a.leaveAlerts()
+			}
+			return a, nil
+		case "2":
+			a.pendingKey = ""
+			if a.view == viewDetail {
+				a.leaveDetail()
+			}
+			if a.view != viewAlerts {
+				return a, a.enterAlerts()
+			}
+			return a, nil
+		}
+	}
+
 	// Detail view captures its own keys.
 	if a.view == viewDetail {
 		return a.handleDetailKey(msg)
@@ -53,11 +93,6 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Fall through to process key normally.
 	}
 
-	// Server switcher.
-	if a.switcher {
-		return a.handleSwitcherKey(key)
-	}
-
 	// Zoom time window.
 	if key == "+" || key == "=" || key == "-" {
 		if cmd := a.handleZoom(key); cmd != nil {
@@ -66,50 +101,23 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
-	switch key {
-	case "S":
-		if len(a.sessions) > 1 {
-			a.switcher = true
-			// Set switcher cursor to current active session.
-			for i, name := range a.sessionOrder {
-				if name == a.activeSession {
-					a.switcherCursor = i
-					break
-				}
-			}
-		}
-		return a, nil
+	items := buildSelectableItems(a.groups, a.collapsed)
 
+	switch key {
 	case "j", "down":
-		items := buildSelectableItems(a.groups, a.collapsed)
-		max := len(items) - 1
-		if max < 0 {
-			max = 0
-		}
-		if a.cursor < max {
-			a.cursor++
-		}
+		clampNav(&a.cursor, 1, len(items))
 		return a, nil
 
 	case "k", "up":
-		if a.cursor > 0 {
-			a.cursor--
-		}
+		clampNav(&a.cursor, -1, len(items))
 		return a, nil
 
 	case " ":
-		items := buildSelectableItems(a.groups, a.collapsed)
 		if a.cursor >= 0 && a.cursor < len(items) && items[a.cursor].isProject {
 			name := a.groups[items[a.cursor].groupIdx].name
 			a.collapsed[name] = !a.collapsed[name]
-			// Rebuild items after toggle and clamp cursor.
 			newItems := buildSelectableItems(a.groups, a.collapsed)
-			if a.cursor >= len(newItems) {
-				a.cursor = len(newItems) - 1
-			}
-			if a.cursor < 0 {
-				a.cursor = 0
-			}
+			clampNav(&a.cursor, 0, len(newItems))
 		}
 		return a, nil
 
@@ -118,14 +126,10 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case "G":
-		items := buildSelectableItems(a.groups, a.collapsed)
-		if last := len(items) - 1; last >= 0 {
-			a.cursor = last
-		}
+		a.cursor = max(len(items)-1, 0)
 		return a, nil
 
 	case "}":
-		items := buildSelectableItems(a.groups, a.collapsed)
 		found := false
 		for i := a.cursor + 1; i < len(items); i++ {
 			if items[i].isProject {
@@ -135,14 +139,11 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if !found {
-			if last := len(items) - 1; last >= 0 {
-				a.cursor = last
-			}
+			a.cursor = max(len(items)-1, 0)
 		}
 		return a, nil
 
 	case "{":
-		items := buildSelectableItems(a.groups, a.collapsed)
 		found := false
 		for i := a.cursor - 1; i >= 0; i-- {
 			if items[i].isProject {
@@ -157,29 +158,22 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case "ctrl+d":
-		items := buildSelectableItems(a.groups, a.collapsed)
-		max := len(items) - 1
-		if max < 0 {
-			return a, nil
-		}
-		half := a.height / 2
-		if half < 1 {
-			half = 1
-		}
-		a.cursor += half
-		if a.cursor > max {
-			a.cursor = max
-		}
+		clampNav(&a.cursor, halfPage(a.height), len(items))
 		return a, nil
 
 	case "ctrl+u":
-		half := a.height / 2
-		if half < 1 {
-			half = 1
-		}
-		a.cursor -= half
-		if a.cursor < 0 {
-			a.cursor = 0
+		clampNav(&a.cursor, -halfPage(a.height), len(items))
+		return a, nil
+
+	case "y":
+		if a.cursor >= 0 && a.cursor < len(items) {
+			item := items[a.cursor]
+			g := a.groups[item.groupIdx]
+			if item.isProject {
+				yankToClipboard(g.name)
+			} else {
+				yankToClipboard(g.containers[item.contIdx].Name)
+			}
 		}
 		return a, nil
 
@@ -189,14 +183,6 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		a.pendingKey = ""
 		return a.enterDetail()
-
-	case "1":
-		// Already on dashboard.
-		return a, nil
-
-	case "2":
-		a.pendingKey = ""
-		return a, a.enterAlerts()
 	}
 
 	return a, nil
@@ -205,15 +191,31 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (a *App) handleSwitcherKey(key string) (App, tea.Cmd) {
 	switch key {
 	case "j", "down":
-		if a.switcherCursor < len(a.sessionOrder)-1 {
-			a.switcherCursor++
-		}
+		clampNav(&a.switcherCursor, 1, len(a.sessionOrder))
 	case "k", "up":
-		if a.switcherCursor > 0 {
-			a.switcherCursor--
+		clampNav(&a.switcherCursor, -1, len(a.sessionOrder))
+	case "g":
+		if a.pendingKey == "g" {
+			a.pendingKey = ""
+			a.switcherCursor = 0
+		} else {
+			a.pendingKey = "g"
 		}
+	case "G":
+		a.pendingKey = ""
+		a.switcherCursor = len(a.sessionOrder) - 1
+	case "ctrl+d":
+		clampNav(&a.switcherCursor, halfPage(a.height), len(a.sessionOrder))
+	case "ctrl+u":
+		clampNav(&a.switcherCursor, -halfPage(a.height), len(a.sessionOrder))
 	case "enter":
 		name := a.sessionOrder[a.switcherCursor]
+		// Return to dashboard when switching servers from detail/alerts.
+		if a.view == viewDetail {
+			a.leaveDetail()
+		} else if a.view == viewAlerts {
+			a.leaveAlerts()
+		}
 		a.activeSession = name
 		// Rebuild groups for newly selected session.
 		if s := a.session(); s != nil {

@@ -321,12 +321,12 @@ func countUntrackedStubs(s *Session) int {
 
 func dashboardHelpBar(w int, theme *Theme) string {
 	return renderHelpBar([]helpBinding{
-		{"j/k", "navigate"},
 		{"enter", "detail"},
 		{"space", "expand"},
+		{"t", "track"},
+		{"y", "yank"},
 		{"2", "alerts"},
 		{"?", "help"},
-		{"q", "quit"},
 	}, w, theme)
 }
 

@@ -290,16 +290,22 @@ func renderHelpModal(a *App, _ *Session, width, height int) string {
 	dim := mutedStyle(theme)
 
 	type binding struct{ key, desc string }
-	var bindings []binding
 
+	nav := []binding{
+		{"j/k", "up/down"},
+		{"gg/G", "top/bottom"},
+		{"ctrl+d/u", "half-page"},
+		{"1/2", "switch view"},
+		{"S", "switch server"},
+		{"y", "yank to clipboard"},
+		{"q", "quit"},
+	}
+
+	var actions []binding
 	switch a.view {
 	case viewDetail:
-		bindings = []binding{
+		actions = []binding{
 			{"esc", "back to dashboard"},
-			{"j/k", "scroll logs"},
-			{"ctrl+d/u", "half-page scroll"},
-			{"gg", "jump to oldest"},
-			{"G", "jump to latest"},
 			{"h/l", "navigate filter fields"},
 			{"enter", "expand log entry"},
 			{"s", "cycle level filter"},
@@ -307,12 +313,10 @@ func renderHelpModal(a *App, _ *Session, width, height int) string {
 			{"+/-", "zoom time range"},
 			{"i", "toggle info overlay"},
 		}
-
 	case viewAlerts:
-		bindings = []binding{
+		actions = []binding{
+			{"esc", "back to dashboard"},
 			{"tab", "switch focus"},
-			{"j/k", "navigate"},
-			{"gg/G", "jump to top/bottom"},
 			{"h/l", "navigate modal"},
 			{"enter", "expand details"},
 			{"a", "acknowledge alert"},
@@ -320,35 +324,36 @@ func renderHelpModal(a *App, _ *Session, width, height int) string {
 			{"t", "test notification"},
 			{"r", "show/hide resolved"},
 			{"gd", "go to container"},
-			{"1", "dashboard view"},
-			{"q", "quit"},
 		}
-
 	default: // dashboard
-		bindings = []binding{
-			{"j/k", "navigate containers"},
-			{"gg/G", "jump to top/bottom"},
+		actions = []binding{
 			{"{/}", "jump project"},
-			{"ctrl+d/u", "half-page"},
 			{"enter", "open detail view"},
 			{"space", "expand/collapse project"},
 			{"t", "track container"},
 			{"+/-", "zoom time range"},
-			{"S", "switch server"},
-			{"2", "alerts view"},
-			{"q", "quit"},
 		}
 	}
 
 	const keyW = 12
-	var lines []string
-	for _, b := range bindings {
-		keyStr := b.key
-		for len(keyStr) < keyW {
-			keyStr += " "
+	formatBindings := func(bindings []binding) []string {
+		var out []string
+		for _, b := range bindings {
+			keyStr := b.key
+			for len(keyStr) < keyW {
+				keyStr += " "
+			}
+			out = append(out, fg.Render(keyStr)+dim.Render(b.desc))
 		}
-		lines = append(lines, fg.Render(keyStr)+dim.Render(b.desc))
+		return out
 	}
+
+	var lines []string
+	lines = append(lines, dim.Render("Navigation"))
+	lines = append(lines, formatBindings(nav)...)
+	lines = append(lines, "")
+	lines = append(lines, dim.Render("Actions"))
+	lines = append(lines, formatBindings(actions)...)
 
 	return (dialogLayout{
 		title: "help",

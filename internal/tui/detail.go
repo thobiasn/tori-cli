@@ -70,7 +70,6 @@ type logExpandModal struct {
 	project     string
 	serviceName string
 	scroll      int
-	yankStatus  string
 }
 
 type detailLogQueryMsg struct {

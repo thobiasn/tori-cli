@@ -192,7 +192,8 @@ func (a *App) hasActiveSubModal() bool {
 		return det.expandModal != nil || det.filterModal != nil || det.infoOverlay
 	}
 	if a.view == viewAlerts {
-		return s.AlertsView.silenceModal != nil
+		av := &s.AlertsView
+		return av.silenceModal != nil || av.alertDialog || av.ruleDialog
 	}
 	return a.switcher
 }
@@ -558,12 +559,6 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case testNotifyDoneMsg:
 		if s := a.sessions[msg.server]; s != nil && s.AlertsView.ruleDialog {
 			s.AlertsView.testNotifyStatus = msg.status
-		}
-		return a, nil
-
-	case yankDoneMsg:
-		if s := a.session(); s != nil && s.Detail.expandModal != nil {
-			s.Detail.expandModal.yankStatus = "Yanked to clipboard"
 		}
 		return a, nil
 

@@ -147,9 +147,6 @@ func renderExpandModal(m *logExpandModal, width, height int, theme *Theme, cfg D
 
 	// Footer tips (centered).
 	tipLine := dialogTips(theme, "y", "yank", "j/k", "next/prev", "esc", "close")
-	if m.yankStatus != "" {
-		tipLine += "  " + lipgloss.NewStyle().Foreground(theme.Healthy).Render(m.yankStatus)
-	}
 	tipPad := (innerW - lipgloss.Width(tipLine)) / 2
 	if tipPad < 1 {
 		tipPad = 1

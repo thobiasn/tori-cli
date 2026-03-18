@@ -1,15 +1,10 @@
 package tui
 
 import (
-	"encoding/base64"
-	"os"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
-
-// yankDoneMsg signals that a yank-to-clipboard operation completed.
-type yankDoneMsg struct{}
 
 // handleDetailKey handles keys when the detail view is active.
 func (a *App) handleDetailKey(msg tea.KeyMsg) (App, tea.Cmd) {
@@ -189,6 +184,13 @@ func (a *App) handleDetailKey(msg tea.KeyMsg) (App, tea.Cmd) {
 				det.logScroll++
 			}
 		}
+	case "y":
+		if det.logCursor >= 0 && len(data) > 0 {
+			idx := start + det.logCursor
+			if idx >= 0 && idx < len(data) {
+				yankToClipboard(data[idx].Message)
+			}
+		}
 	case "enter":
 		if det.logCursor >= 0 && len(data) > 0 {
 			idx := start + det.logCursor
@@ -319,19 +321,11 @@ func updateFilterModal(det *DetailState, s *Session, key string, cfg DisplayConf
 // updateExpandModal handles keys inside the log expand modal.
 func updateExpandModal(det *DetailState, a *App, s *Session, key string) tea.Cmd {
 	m := det.expandModal
-	if key != "y" {
-		m.yankStatus = ""
-	}
 	switch key {
 	case "esc", "enter":
 		det.expandModal = nil
 	case "y":
-		msg := m.entry.Message
-		return func() tea.Msg {
-			b64 := base64.StdEncoding.EncodeToString([]byte(msg))
-			os.Stderr.WriteString("\033]52;c;" + b64 + "\a")
-			return yankDoneMsg{}
-		}
+		yankToClipboard(m.entry.Message)
 	case "n":
 		m.scroll++
 	case "p":

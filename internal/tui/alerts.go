@@ -239,14 +239,6 @@ func (a *App) handleAlertsKey(msg tea.KeyMsg) (App, tea.Cmd) {
 		a.leaveAlerts()
 		return *a, nil
 
-	case "1":
-		a.pendingKey = ""
-		a.leaveAlerts()
-		return *a, nil
-
-	case "2":
-		return *a, nil // already here
-
 	case "tab":
 		if av.focus == sectionAlerts {
 			av.focus = sectionRules
@@ -261,6 +253,14 @@ func (a *App) handleAlertsKey(msg tea.KeyMsg) (App, tea.Cmd) {
 
 	case "k", "up":
 		a.alertsNavigate(-1)
+		return *a, nil
+
+	case "ctrl+d":
+		a.alertsNavigate(halfPage(a.height))
+		return *a, nil
+
+	case "ctrl+u":
+		a.alertsNavigate(-halfPage(a.height))
 		return *a, nil
 
 	case "r":
@@ -297,6 +297,19 @@ func (a *App) handleAlertsKey(msg tea.KeyMsg) (App, tea.Cmd) {
 	case "t":
 		if av.focus == sectionRules {
 			return a.testNotifyRule()
+		}
+		return *a, nil
+
+	case "y":
+		if av.focus == sectionAlerts {
+			items := buildAlertList(s.Alerts, av.resolved, av.showResolved)
+			if av.alertCursor >= 0 && av.alertCursor < len(items) {
+				yankToClipboard(items[av.alertCursor].message)
+			}
+		} else {
+			if av.ruleCursor >= 0 && av.ruleCursor < len(av.rules) {
+				yankToClipboard(av.rules[av.ruleCursor].Condition)
+			}
 		}
 		return *a, nil
 
@@ -561,29 +574,9 @@ func (a *App) alertsNavigate(delta int) {
 
 	if av.focus == sectionAlerts {
 		items := buildAlertList(s.Alerts, av.resolved, av.showResolved)
-		max := len(items) - 1
-		if max < 0 {
-			max = 0
-		}
-		av.alertCursor += delta
-		if av.alertCursor < 0 {
-			av.alertCursor = 0
-		}
-		if av.alertCursor > max {
-			av.alertCursor = max
-		}
+		clampNav(&av.alertCursor, delta, len(items))
 	} else {
-		max := len(av.rules) - 1
-		if max < 0 {
-			max = 0
-		}
-		av.ruleCursor += delta
-		if av.ruleCursor < 0 {
-			av.ruleCursor = 0
-		}
-		if av.ruleCursor > max {
-			av.ruleCursor = max
-		}
+		clampNav(&av.ruleCursor, delta, len(av.rules))
 	}
 }
 
@@ -595,12 +588,7 @@ func (a *App) clampAlertsCursor() {
 	}
 	av := &s.AlertsView
 	items := buildAlertList(s.Alerts, av.resolved, av.showResolved)
-	if av.alertCursor >= len(items) {
-		av.alertCursor = len(items) - 1
-	}
-	if av.alertCursor < 0 {
-		av.alertCursor = 0
-	}
+	clampNav(&av.alertCursor, 0, len(items))
 }
 
 // enterDetailByContainerID navigates to the detail view for a specific container.

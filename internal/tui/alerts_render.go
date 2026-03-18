@@ -286,11 +286,10 @@ func renderRuleRow(rule protocol.AlertRuleInfo, w int, now time.Time, theme *The
 func renderAlertsHelp(w int, theme *Theme) string {
 	return renderHelpBar([]helpBinding{
 		{"tab", "focus"},
-		{"j/k", "navigate"},
 		{"enter", "details"},
+		{"y", "yank"},
 		{"1", "dashboard"},
 		{"?", "help"},
-		{"q", "quit"},
 	}, w, theme)
 }
 
