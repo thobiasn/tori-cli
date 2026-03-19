@@ -145,3 +145,95 @@ func TestDownsampleContainers(t *testing.T) {
 		t.Errorf("svc nonzero = %d, want 3", svcNonZero)
 	}
 }
+
+func TestDownsampleHostEdgeCases(t *testing.T) {
+	// start == end → bucketDur <= 0, early return.
+	data := []protocol.TimedHostMetrics{{Timestamp: 5, HostMetrics: protocol.HostMetrics{CPUPercent: 10}}}
+	out := downsampleHost(data, 5, 10, 10)
+	if len(out) != 1 {
+		t.Errorf("same start/end: len = %d, want 1 (unchanged)", len(out))
+	}
+
+	// Data point well before start → idx clamped to 0.
+	before := []protocol.TimedHostMetrics{{Timestamp: -50, HostMetrics: protocol.HostMetrics{CPUPercent: 42}}}
+	out2 := downsampleHost(before, 5, 0, 100)
+	if out2[0].CPUPercent != 42 {
+		t.Errorf("before-start: bucket 0 CPU = %f, want 42", out2[0].CPUPercent)
+	}
+
+	// Multiple points in same bucket: verify all max fields are tracked independently.
+	multi := []protocol.TimedHostMetrics{
+		{Timestamp: 1, HostMetrics: protocol.HostMetrics{CPUPercent: 10, MemPercent: 80, MemUsed: 100, Load1: 0.5, Load5: 1.0, Load15: 2.0}},
+		{Timestamp: 2, HostMetrics: protocol.HostMetrics{CPUPercent: 5, MemPercent: 90, MemUsed: 200, Load1: 0.8, Load5: 0.5, Load15: 3.0}},
+		{Timestamp: 3, HostMetrics: protocol.HostMetrics{CPUPercent: 15, MemPercent: 70, MemUsed: 50, Load1: 1.0, Load5: 1.5, Load15: 1.0}},
+	}
+	// All 3 points in one bucket (bucket size = 10).
+	out3 := downsampleHost(multi, 1, 0, 10)
+	if out3[0].CPUPercent != 15 {
+		t.Errorf("merge: CPU = %f, want 15", out3[0].CPUPercent)
+	}
+	if out3[0].MemPercent != 90 {
+		t.Errorf("merge: MemPercent = %f, want 90", out3[0].MemPercent)
+	}
+	if out3[0].MemUsed != 200 {
+		t.Errorf("merge: MemUsed = %d, want 200", out3[0].MemUsed)
+	}
+	if out3[0].Load1 != 1.0 {
+		t.Errorf("merge: Load1 = %f, want 1.0", out3[0].Load1)
+	}
+	if out3[0].Load5 != 1.5 {
+		t.Errorf("merge: Load5 = %f, want 1.5", out3[0].Load5)
+	}
+	if out3[0].Load15 != 3.0 {
+		t.Errorf("merge: Load15 = %f, want 3.0", out3[0].Load15)
+	}
+}
+
+func TestDownsampleContainersEdgeCases(t *testing.T) {
+	// start == end → bucketDur <= 0, early return.
+	data := []protocol.TimedContainerMetrics{{Timestamp: 5, ContainerMetrics: protocol.ContainerMetrics{Service: "web"}}}
+	out := downsampleContainers(data, 5, 10, 10)
+	if len(out) != 1 {
+		t.Errorf("same start/end: len = %d, want 1", len(out))
+	}
+
+	// Data well before start in zero-fill path (len(series) <= n).
+	before := []protocol.TimedContainerMetrics{
+		{Timestamp: -50, ContainerMetrics: protocol.ContainerMetrics{Service: "web", CPUPercent: 42}},
+	}
+	out2 := downsampleContainers(before, 5, 0, 100)
+	if out2[0].CPUPercent != 42 {
+		t.Errorf("before-start: bucket 0 CPU = %f, want 42", out2[0].CPUPercent)
+	}
+
+	// Data after end in zero-fill path (len(series) <= n).
+	after := []protocol.TimedContainerMetrics{
+		{Timestamp: 200, ContainerMetrics: protocol.ContainerMetrics{Service: "web", CPUPercent: 77}},
+	}
+	out3 := downsampleContainers(after, 5, 0, 100)
+	if out3[4].CPUPercent != 77 {
+		t.Errorf("after-end: last bucket CPU = %f, want 77", out3[4].CPUPercent)
+	}
+
+	// Data before start in aggregation path (len(series) > n).
+	// Need more data points than buckets to trigger aggregation path.
+	var many []protocol.TimedContainerMetrics
+	many = append(many, protocol.TimedContainerMetrics{
+		Timestamp: -50, ContainerMetrics: protocol.ContainerMetrics{Service: "web", CPUPercent: 99},
+	})
+	for i := 0; i < 20; i++ {
+		many = append(many, protocol.TimedContainerMetrics{
+			Timestamp:        int64(i),
+			ContainerMetrics: protocol.ContainerMetrics{Service: "web", CPUPercent: float64(i), MemUsage: uint64(i * 100), MemPercent: float64(i)},
+		})
+	}
+	out4 := downsampleContainers(many, 5, 0, 20)
+	// First bucket should contain the clamped before-start point (CPU 99).
+	if out4[0].CPUPercent != 99 {
+		t.Errorf("agg before-start: bucket 0 CPU = %f, want 99", out4[0].CPUPercent)
+	}
+	// Verify MemPercent max is tracked in aggregation.
+	if out4[4].MemPercent != 19 {
+		t.Errorf("agg: last bucket MemPercent = %f, want 19", out4[4].MemPercent)
+	}
+}

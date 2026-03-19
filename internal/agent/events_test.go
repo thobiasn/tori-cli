@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -43,8 +44,8 @@ func testEventWatcher(t *testing.T, include, exclude []string) (*EventWatcher, *
 	t.Helper()
 
 	dc := &DockerCollector{
-		include:         include,
-		exclude:         exclude,
+		include: include,
+		exclude: exclude,
 		prevCPU: make(map[string]cpuPrev),
 		tracked: map[string]bool{"web": true},
 	}
@@ -531,5 +532,49 @@ func TestEventPausePublished(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout")
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	if got := truncate("hello", 10); got != "hello" {
+		t.Errorf("short: got %q, want hello", got)
+	}
+	if got := truncate("hello world", 5); got != "hello" {
+		t.Errorf("long: got %q, want hello", got)
+	}
+	if got := truncate("exact", 5); got != "exact" {
+		t.Errorf("exact: got %q, want exact", got)
+	}
+}
+
+func TestEventWatcherRunReconnect(t *testing.T) {
+	ew, _, _, src := testEventWatcher(t, nil, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go ew.Run(ctx)
+
+	// Send an error to trigger reconnect.
+	src.errCh <- fmt.Errorf("connection lost")
+
+	// Wait for reconnect (Run calls eventsFn again after backoff).
+	deadline := time.After(5 * time.Second)
+	for {
+		if src.callCount() >= 2 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for reconnect, calls = %d", src.callCount())
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+
+	cancel()
+	select {
+	case <-ew.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not exit after cancel")
 	}
 }
