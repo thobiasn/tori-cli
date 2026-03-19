@@ -4,6 +4,7 @@
 # Launch tori.
 Type "tori"
 Enter
+Sleep 3s
 Type "S"
 Sleep 3s
 Enter

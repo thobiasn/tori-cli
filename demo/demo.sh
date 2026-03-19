@@ -54,10 +54,13 @@ up() {
 }
 
 down() {
-    # Kill agents.
+    # Kill agents and wait for them to exit.
     if [ -f "$PID_FILE" ]; then
         for pid in $(cat "$PID_FILE"); do
             kill "$pid" 2>/dev/null || true
+        done
+        for pid in $(cat "$PID_FILE"); do
+            while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
         done
         rm -f "$PID_FILE"
     fi
