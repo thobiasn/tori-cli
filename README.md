@@ -7,8 +7,6 @@
 
 Docker server monitoring without the stack. Metrics, logs, and alerts from your terminal. Single binary, minimal footprint, zero exposed ports, SSH-only.
 
-If you're running Docker and a full monitoring stack feels like overkill, tori gives you metrics, logs, and alerts in a single binary that uses less memory than most of the containers it watches. Install on your server, add a notification channel, and you're covered. tori watches your containers 24/7 and alerts you when something breaks, even when you're not connected. When you want to look, everything is right there in your terminal.
-
 ![tori demo](https://github.com/user-attachments/assets/e3b8c171-f57b-4b1e-99bb-d2541b0125b0)
 
 ## Quick Start
