@@ -1,0 +1,7 @@
+[servers.prod]
+socket = "/tmp/tori-prod/tori.sock"
+auto_connect = true
+
+[servers.staging]
+socket = "/tmp/tori-staging/tori.sock"
+auto_connect = true

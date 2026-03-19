@@ -1,9 +1,12 @@
 [storage]
-path = "/tmp/tori/tori.db"
+path = "/tmp/tori-prod/tori.db"
 retention_days = 1
 
 [socket]
-path = "/tmp/tori/tori.sock"
+path = "/tmp/tori-prod/tori.sock"
+
+[docker]
+include = ["webapp-*", "proxy-*", "monitoring-*"]
 
 [collect]
 interval = "5s"
@@ -20,9 +23,9 @@ for = "30s"
 severity = "warning"
 actions = ["notify"]
 
-[alerts.error_spike]
-condition = "log.count > 10"
-match = "error"
-window = "5m"
-severity = "warning"
-actions = ["notify"]
+#[alerts.error_spike]
+#condition = "log.count > 10"
+#match = "error"
+#window = "5m"
+#severity = "warning"
+#actions = ["notify"]

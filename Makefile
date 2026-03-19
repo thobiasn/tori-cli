@@ -1,4 +1,4 @@
-.PHONY: build test vet clean
+.PHONY: build test vet clean demo-up demo-down demo-record
 
 VERSION ?= dev
 
@@ -13,3 +13,12 @@ vet:
 
 clean:
 	rm -f tori
+
+demo-up:
+	cd demo && ./demo.sh up
+
+demo-down:
+	cd demo && ./demo.sh down
+
+demo-record:
+	cd demo && ./demo.sh record $(THEME)

@@ -1,484 +1,412 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>tori – Lightweight Remote Docker Server Monitoring CLI</title>
-  <meta name="description" content="Open-source terminal UI for monitoring remote Docker hosts over SSH. Host metrics, container stats, logs, and alerts from a single binary. For people who don't need Prometheus.">
-  <link rel="canonical" href="https://toricli.sh">
-  <meta property="og:title" content="tori – Lightweight Remote Docker Server Monitoring CLI">
-  <meta property="og:description" content="Open-source terminal UI for monitoring remote Docker hosts over SSH. CPU, memory, containers, logs, and alerts from a single binary.">
-  <meta property="og:type" content="website">
-  <meta property="og:url" content="https://toricli.sh">
-  <meta property="og:site_name" content="tori">
-  <meta property="og:image" content="https://toricli.sh/og-image.png">
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="tori – Lightweight Remote Docker Server Monitoring CLI">
-  <meta name="twitter:description" content="Open-source terminal UI for monitoring remote Docker hosts over SSH. A single binary, no infrastructure.">
-  <meta name="twitter:image" content="https://toricli.sh/og-image.png">
-  <meta name="robots" content="index, follow">
-  <meta name="theme-color" content="#0a0a0b">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text x='50' y='56' font-size='80' font-family='monospace' text-anchor='middle' dominant-baseline='middle' fill='%233ce8a0'>•</text></svg>">
-  <script type="application/ld+json">
-  {
-    "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
-    "name": "tori",
-    "description": "Lightweight, open-source remote server monitoring CLI for Docker environments. Terminal UI over SSH.",
-    "url": "https://toricli.sh",
-    "applicationCategory": "DeveloperApplication",
-    "operatingSystem": "Linux, macOS, Windows (WSL)",
-    "license": "https://opensource.org/licenses/MIT",
-    "codeRepository": "https://github.com/thobiasn/tori-cli",
-    "programmingLanguage": "Go",
-    "softwareVersion": "0.3.0",
-    "screenshot": "https://toricli.sh/og-image.png",
-    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>tori - Docker monitoring that fits in an SSH connection</title>
+<meta name="description" content="Docker server monitoring that fits in an SSH connection. One binary, barely any memory. Metrics, logs, and alerts across all your hosts — runs 24/7, notifies you when things break.">
+<link rel="canonical" href="https://toricli.sh">
+<meta property="og:title" content="tori — Docker monitoring without the stack">
+<meta property="og:description" content="Metrics, logs, and alerts in a single binary. SSH only, no open ports, under 50 MB. For people who don't need Prometheus.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://toricli.sh">
+<meta property="og:site_name" content="tori">
+<meta property="og:image" content="https://toricli.sh/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="tori — Docker monitoring without the stack">
+<meta name="twitter:description" content="Metrics, logs, and alerts in a single binary. SSH only, no open ports, under 50 MB.">
+<meta name="twitter:image" content="https://toricli.sh/og-image.png">
+<meta name="robots" content="index, follow">
+<meta name="theme-color" content="#111111">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text x='50' y='56' font-size='80' font-family='monospace' text-anchor='middle' dominant-baseline='middle' fill='%236abf69'>•</text></svg>">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "tori",
+  "description": "Lightweight Docker server monitoring CLI. Metrics, logs, and alerts in a single binary over SSH.",
+  "url": "https://toricli.sh",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Linux, macOS, Windows (WSL)",
+  "license": "https://opensource.org/licenses/MIT",
+  "codeRepository": "https://github.com/thobiasn/tori-cli",
+  "programmingLanguage": "Go",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script async src="https://analytics.thobiasn.sh/analytics.js" data-site-id="toricli-mm4kcpan" data-server-url="https://analytics.thobiasn.sh/event"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #111;
+    color: #e2e2e2;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
   }
-  </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Satoshi:wght@400;500;700;900&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-  <link rel="stylesheet" href="style.css">
-  <link rel="preload" as="video" href="tori-preview.webm" type="video/webm">
-  <script async src="https://analytics.thobiasn.sh/analytics.js" data-site-id="toricli-mm4kcpan" data-server-url="https://analytics.thobiasn.sh/event"></script>
+
+  .page {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 4rem 1.5rem;
+  }
+
+  /* ── NAV ── */
+  nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #111;
+    padding: 1rem 0;
+    margin-bottom: 4rem;
+  }
+
+  .logo {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 1rem;
+    font-weight: 800;
+    color: #e2e2e2;
+    text-decoration: none;
+  }
+  .nav-bird {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1rem;
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+  .nav-bird .sep { color: #555; }
+  .nav-bird .eye { color: #fff; }
+
+  .nav-links { display: flex; gap: 1.5rem; }
+  .nav-links a {
+    font-size: 0.9rem;
+    color: #888;
+    text-decoration: none;
+  }
+  .nav-links a:hover { color: #e2e2e2; }
+
+  /* ── HERO ── */
+  h1 {
+    font-size: 2.25rem;
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    margin-bottom: 1.25rem;
+    color: #fff;
+  }
+
+  h1 s {
+    color: #555;
+    text-decoration-color: #c0392b;
+    text-decoration-thickness: 2px;
+  }
+
+  .sub {
+    font-size: 1rem;
+    color: #888;
+    margin-bottom: 2.5rem;
+    line-height: 1.7;
+  }
+
+  /* ── INSTALL ── */
+  .install-wrap { margin-bottom: 1rem; }
+
+  .install-label {
+    font-size: 0.9rem;
+    color: #e2e2e2;
+    font-weight: 500;
+    margin-bottom: 0.4rem;
+    margin-top: 1rem;
+  }
+
+  .install-label:first-child { margin-top: 0; }
+
+  .install-step {
+    color: #fff;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    margin-right: 0.4rem;
+  }
+
+  .install {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    padding: 0.85rem 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-bottom: 0.4rem;
+    transition: border-color 0.15s;
+  }
+  .install:hover { border-color: #444; }
+
+  .prompt {
+    font-family: 'JetBrains Mono', monospace;
+    color: #6abf69;
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  .cmd {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: #ccc;
+    flex: 1;
+    word-break: break-all;
+  }
+
+  .copy {
+    font-size: 0.75rem;
+    color: #555;
+    flex-shrink: 0;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .install:hover .copy { color: #888; }
+  .copy.ok { color: #6abf69 !important; }
+
+  .install-note {
+    font-size: 0.82rem;
+    color: #555;
+    margin-bottom: 1rem;
+  }
+
+  /* ── DEMO ── */
+  .demo {
+    margin-bottom: 0.5rem; 
+    overflow: hidden;
+  }
+
+  .demo video {
+    width: 100%;
+    display: block;
+    border-radius: 6px;
+    border: 1px solid #2a2a2a;
+  }
+
+  .demo-note {
+    font-size: 0.82rem;
+    color: #555;
+    margin-top: 0.5rem;
+  }
+
+  /* ── PITCH ── */
+  .pitch {
+    font-size: 0.95rem;
+    color: #888;
+    line-height: 1.7;
+    margin-top: 3.5rem;
+  }
+
+  /* ── FEATURES ── */
+  .features {
+    border-top: 1px solid #222;
+    margin-top: 2rem;
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    padding: 0.9rem 0;
+    border-bottom: 1px solid #222;
+    gap: 1.5rem;
+  }
+
+  .key {
+    font-size: 0.85rem;
+    color: #555;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .val {
+    font-size: 0.9rem;
+    color: #aaa;
+  }
+
+  .val b {
+    font-weight: 600;
+    color: #e2e2e2;
+  }
+
+  /* ── CONFIG ── */
+  .config {
+    margin-top: 3.5rem;
+  }
+
+  .config-block {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    padding: 1.25rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    line-height: 1.7;
+    overflow-x: auto;
+    color: #aaa;
+  }
+
+  .config-note {
+    font-size: 0.82rem;
+    color: #555;
+    margin-top: 0.5rem;
+  }
+
+  .config-note a { color: #777; text-underline-offset: 3px; }
+  .config-note a:hover { color: #aaa; }
+
+  .cm { color: #555; }
+  .sc { color: #e2e2e2; }
+  .ky { color: #ccc; }
+  .st { color: #6abf69; }
+
+  /* ── FOOTER ── */
+  footer {
+    margin-top: 4rem;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    font-size: 0.82rem;
+    color: #444;
+  }
+
+  footer a { color: #555; text-decoration: none; }
+  footer a:hover { color: #888; }
+
+  .footer-links { display: flex; gap: 1.25rem; }
+
+  @media (max-width: 500px) {
+    h1 { font-size: 1.6rem; }
+    .row { grid-template-columns: 1fr; gap: 0.2rem; }
+    .key { color: #666; }
+  }
+</style>
 </head>
 <body>
+<div class="page">
 
   <nav>
-    <div class="container">
-      <div class="nav-left">
-        <a href="/" class="logo">tori</a>
-        <a href="https://github.com/thobiasn/tori-cli/releases/tag/v0.3.0" class="version-badge" id="versionBadge" rel="noopener">v0.3.0</a>
-      </div>
-      <div class="nav-bird">─(<span class="bird-eye">•</span>)></div>
-      <div class="nav-right">
-        <a href="#features" class="nav-link">Features</a>
-        <a href="#quickstart" class="nav-link">Quick Start</a>
-        <a href="https://github.com/thobiasn/tori-cli#readme" class="nav-link" rel="noopener">Docs</a>
-        <a href="https://github.com/thobiasn/tori-cli" class="github-btn" rel="noopener">
-          <span class="gh-logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg></span>
-          <span class="gh-stars"><svg class="star-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M8 .25l1.941 3.94 4.341.63-3.141 3.06.741 4.33L8 10.01l-3.882 2.2.741-4.33L1.718 4.82l4.341-.63L8 .25z"/></svg><span class="star-count" id="starCount" style="display:none"></span></span>
-        </a>
-      </div>
+    <a class="logo" href="/">tori</a>
+    <span class="nav-bird"><span class="sep">─(<span class="eye">•</span>)></span></span>
+    <div class="nav-links">
+      <a href="https://github.com/thobiasn/tori-cli" target="_blank" rel="noopener">docs & github</a>
     </div>
   </nav>
 
-  <main>
+  <h1>Docker monitoring that fits<br>in an SSH connection.</h1>
 
-  <section class="hero">
-    <div class="container">
-      <h1>Lightweight remote Docker server monitoring<br><span class="highlight">in your terminal</span></h1>
-      <p class="hero-sub">A single binary and an SSH connection. Remote host metrics, container stats, log tailing, and alerts — no monitoring stack to maintain.</p>
-      <div class="hero-cta">
-        <a href="#quickstart" class="hero-link">Get running in under a minute <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></a>
-      </div>
+  <p class="sub">One binary, barely any memory. Metrics, logs, and alerts across all your hosts. Runs 24/7 on the server, notifies you when things break, whether you're connected or not.</p>
+
+  <div class="install-wrap">
+    <p class="install-label"><span class="install-step">1.</span> On your server</p>
+    <div class="install" onclick="copyCmd(this)">
+      <span class="cmd">curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sudo sh</span>
+      <span class="copy">copy</span>
     </div>
-  </section>
-
-  <section class="demo">
-    <div class="container">
-      <div class="demo-window reveal">
-        <div class="demo-header">
-          <span class="terminal-dot"></span><span class="terminal-dot"></span><span class="terminal-dot"></span>
-          <span class="demo-title">tori</span>
-        </div>
-        <div class="demo-body">
-          <video autoplay loop muted playsinline poster="tori-preview-poster.png" width="772" height="802" aria-label="tori terminal UI showing host metrics and container monitoring">
-            <source src="tori-preview.webm" type="video/webm">
-            <source src="tori-preview.mp4" type="video/mp4">
-          </video>
-          <noscript><img src="tori-preview-poster.png" alt="tori terminal UI showing host metrics, container stats, and log tailing over SSH" width="772" height="802"></noscript>
-        </div>
-      </div>
-      <p class="demo-hint">uses ANSI colors — inherits your terminal theme</p>
+    <p class="install-label"><span class="install-step">2.</span> On your machine</p>
+    <div class="install" onclick="copyCmd(this)">
+      <span class="cmd">curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client</span>
+      <span class="copy">copy</span>
     </div>
-  </section>
+    <p class="install-note">no root needed · linux, macOS, WSL</p>
+  </div>
 
-  <section class="features" id="features">
-    <div class="container">
-      <div class="features-header reveal">
-        <div class="section-label">Features</div>
-        <h2>Host metrics, containers, logs, and alerts</h2>
-        <p class="section-desc">Built for people who SSH into their remote Linux servers and VPSs and just want to know what's going on. No Prometheus stack to deploy, no Grafana dashboards to maintain — just install and connect.</p>
-      </div>
-      <div class="features-grid reveal">
-        <div class="feature-card">
-          <div class="feature-icon">📊</div>
-          <h3>Host Metrics</h3>
-          <p>CPU, memory, disk, network, swap, and load averages with time history and sparkline graphs.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">🐳</div>
-          <h3>Container Monitoring</h3>
-          <p>Status, resource usage, health checks, and restart tracking. Toggle tracking per container with a keypress.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">📋</div>
-          <h3>Log Tailing</h3>
-          <p>Tail logs across a compose project or a single container. Regex search, log level filtering, match highlighting, and date/time ranges.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">🔔</div>
-          <h3>Alerting</h3>
-          <p>Configurable rules for host metrics, container state, and log patterns. Email and webhook notifications.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">🖥️</div>
-          <h3>Multi-Server</h3>
-          <p>Monitor multiple remote hosts from one terminal. Concurrent connections, instant switching between servers.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">🔒</div>
-          <h3>Zero Attack Surface</h3>
-          <p>No HTTP server, no API, no open ports. Unix socket behind SSH. Your monitoring surface is your SSH surface.</p>
-        </div>
-      </div>
+  <div class="demo">
+    <video autoplay loop muted playsinline poster="tori-preview-poster.png">
+      <source src="tori-preview.webm" type="video/webm">
+      <source src="tori-preview.mp4" type="video/mp4">
+    </video>
+    <p class="demo-note">ANSI colors — inherits your terminal theme</p>
+  </div>
+
+  <p class="pitch">The agent runs on your server around the clock — collecting metrics, tailing logs, evaluating alert rules. It notifies you when something breaks via email or webhook, whether or not you're connected. The terminal UI is just for when you want to look.</p>
+
+  <div class="features">
+    <div class="row">
+      <span class="key">alerting</span>
+      <span class="val">email + webhooks, evaluated 24/7 on the server</span>
     </div>
-  </section>
-
-  <section class="howitworks" id="howitworks">
-    <div class="container">
-      <div class="hiw-layout">
-        <div class="reveal">
-          <div class="section-label">How it works</div>
-          <h2>A single Go binary to<br>monitor remote Docker hosts over SSH</h2>
-          <p class="section-desc">The agent runs on your remote server collecting metrics and evaluating alerts 24/7. The CLI connects through an SSH tunnel to a Unix socket — no open ports, nothing else to set up.</p>
-          <div class="hiw-points">
-            <div class="hiw-point">
-              <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
-              <div><h3 class="hiw-heading">Single binary</h3><p>Agent and client in one static binary. No runtime, no containers needed. Install and go.</p></div>
-            </div>
-            <div class="hiw-point">
-              <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
-              <div><h3 class="hiw-heading">Lightweight footprint</h3><p>Pure Go, no runtime overhead. The agent typically uses under 50 MB of RAM — even with dozens of containers.</p></div>
-            </div>
-            <div class="hiw-point">
-              <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
-              <div><h3 class="hiw-heading">SSH native</h3><p>Connects over your existing SSH setup. No new ports, no new auth, no new certs — if you can SSH in, you can monitor it.</p></div>
-            </div>
-            <div class="hiw-point">
-              <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
-              <div><h3 class="hiw-heading">Always-on alerting</h3><p>Rules evaluated on the agent 24/7. Get notified via email or webhook even when the TUI isn't open.</p></div>
-            </div>
-            <div class="hiw-point">
-              <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
-              <div><h3 class="hiw-heading">SQLite storage</h3><p>Metrics and logs stored locally with configurable retention. No external database.</p></div>
-            </div>
-            <div class="hiw-point">
-              <div class="hiw-point-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></div>
-              <div><h3 class="hiw-heading">Matches your terminal</h3><p>ANSI colors that inherit your terminal theme out of the box. Override individual colors with 256-palette or hex values.</p></div>
-            </div>
-          </div>
-        </div>
-        <div class="config-preview reveal">
-          <div class="config-preview-header">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-            <span>/etc/tori/config.toml</span>
-          </div>
-          <div class="config-preview-body"><span class="section">[collect]</span>
-<span class="key">interval</span> = <span class="str">"10s"</span>
-
-<span class="section">[storage]</span>
-<span class="key">retention_days</span> = <span class="val">7</span>
-
-<span class="section">[alerts.container_down]</span>
-<span class="key">condition</span> = <span class="str">"container.state == 'exited'"</span>
-<span class="key">for</span>       = <span class="str">"30s"</span>
-<span class="key">severity</span>  = <span class="str">"critical"</span>
-<span class="key">actions</span>   = [<span class="str">"notify"</span>]
-
-<span class="section">[alerts.high_cpu]</span>
-<span class="key">condition</span> = <span class="str">"host.cpu_percent > 90"</span>
-<span class="key">for</span>       = <span class="str">"2m"</span>
-<span class="key">actions</span>   = [<span class="str">"notify"</span>]
-
-<span class="section">[alerts.error_spike]</span>
-<span class="key">condition</span> = <span class="str">"log.count > 10"</span>
-<span class="key">match</span>     = <span class="str">"error"</span>
-<span class="key">window</span>    = <span class="str">"5m"</span>
-<span class="key">actions</span>   = [<span class="str">"notify"</span>]
-
-<span class="section">[[notify.webhooks]]</span>
-<span class="key">url</span>      = <span class="str">"https://hooks.slack.com/services/..."</span>
-<span class="key">headers</span>  = { <span class="key">Authorization</span> = <span class="str">"Bearer token"</span> }
-<span class="key">template</span> = <span class="str">'''
-{
-  "text": "<span class="val">{{.Subject}}</span>",
-  "severity": "<span class="val">{{.Severity}}</span>",
-  "status": "<span class="val">{{.Status}}</span>",
-  "body": "<span class="val">{{.Body}}</span>"
-}
-'''</span></div>
-        </div>
-      </div>
+    <div class="row">
+      <span class="key">containers</span>
+      <span class="val">stats, health, restarts, grouped by compose project</span>
     </div>
-  </section>
-
-  <section class="quickstart" id="quickstart">
-    <div class="container">
-      <div class="features-header reveal">
-        <div class="section-label">Quick Start</div>
-        <h2>Install Docker Server Monitoring in Under a Minute</h2>
-      </div>
-      <div class="tabs reveal">
-        <div class="tab-bar">
-          <button class="tab active" data-tab="script">Install Script</button>
-          <button class="tab" data-tab="compose">Docker Compose</button>
-          <button class="tab" data-tab="source">From Source</button>
-        </div>
-
-        <div class="tab-panel active" data-tab="script">
-          <div class="qs-columns">
-            <div class="qs-column">
-              <div class="qs-column-label">On your server</div>
-              <div class="steps-vertical">
-                <div class="step-v">
-                  <div class="step-v-marker"><span class="step-number">01</span><div class="step-v-line"></div></div>
-                  <div class="step-v-content">
-                    <h3>Install the agent</h3>
-                    <p>Sets up the binary, systemd service, and default config.</p>
-                    <div class="step-code"><span class="prompt">$</span> <span class="cmd">curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sudo sh</span></div>
-                  </div>
-                </div>
-                <div class="step-v">
-                  <div class="step-v-marker"><span class="step-number">02</span></div>
-                  <div class="step-v-content">
-                    <h3>Start it</h3>
-                    <div class="step-code"><span class="prompt">$</span> <span class="cmd">sudo systemctl enable --now tori</span></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="qs-column">
-              <div class="qs-column-label">On your machine</div>
-              <div class="steps-vertical">
-                <div class="step-v">
-                  <div class="step-v-marker"><span class="step-number">01</span><div class="step-v-line"></div></div>
-                  <div class="step-v-content">
-                    <h3>Install the client</h3>
-                    <p>No root required. Linux, macOS, and Windows (WSL).</p>
-                    <div class="step-code"><span class="prompt">$</span> <span class="cmd">curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client</span></div>
-                  </div>
-                </div>
-                <div class="step-v">
-                  <div class="step-v-marker"><span class="step-number">02</span><div class="step-v-line"></div></div>
-                  <div class="step-v-content">
-                    <h3>Add your server</h3>
-                    <div class="step-code"><span class="cm"># ~/.config/tori/config.toml</span>
-
-<span class="section">[servers.prod]</span>
-<span class="key">host</span> = <span class="str">"user@prod.example.com"</span></div>
-                  </div>
-                </div>
-                <div class="step-v">
-                  <div class="step-v-marker"><span class="step-number">03</span></div>
-                  <div class="step-v-content">
-                    <h3>Connect</h3>
-                    <div class="step-code"><span class="prompt">$</span> <span class="cmd">tori</span></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="tab-panel" data-tab="compose">
-          <div class="qs-columns">
-            <div class="qs-column">
-              <div class="qs-column-label">On your server</div>
-              <div class="steps-vertical">
-                <div class="step-v">
-                  <div class="step-v-marker"><span class="step-number">01</span><div class="step-v-line"></div></div>
-                  <div class="step-v-content">
-                    <h3>Download the compose file</h3>
-                    <p>Includes sensible defaults and example alert rules.</p>
-                    <div class="step-code"><span class="prompt">$</span> <span class="cmd">curl -O https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/docker-compose.yml</span></div>
-                  </div>
-                </div>
-                <div class="step-v">
-                  <div class="step-v-marker"><span class="step-number">02</span></div>
-                  <div class="step-v-content">
-                    <h3>Start the agent</h3>
-                    <p>Edit the TORI_CONFIG section to configure alerts and notifications.</p>
-                    <div class="step-code"><span class="prompt">$</span> <span class="cmd">docker compose up -d</span></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="qs-column">
-              <div class="qs-column-label">On your machine</div>
-              <div class="steps-vertical">
-                <div class="step-v">
-                  <div class="step-v-marker"><span class="step-number">01</span><div class="step-v-line"></div></div>
-                  <div class="step-v-content">
-                    <h3>Install the client</h3>
-                    <div class="step-code"><span class="prompt">$</span> <span class="cmd">curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client</span></div>
-                  </div>
-                </div>
-                <div class="step-v">
-                  <div class="step-v-marker"><span class="step-number">02</span><div class="step-v-line"></div></div>
-                  <div class="step-v-content">
-                    <h3>Add your server</h3>
-                    <div class="step-code"><span class="cm"># ~/.config/tori/config.toml</span>
-
-<span class="section">[servers.prod]</span>
-<span class="key">host</span> = <span class="str">"user@prod.example.com"</span></div>
-                  </div>
-                </div>
-                <div class="step-v">
-                  <div class="step-v-marker"><span class="step-number">03</span></div>
-                  <div class="step-v-content">
-                    <h3>Connect</h3>
-                    <div class="step-code"><span class="prompt">$</span> <span class="cmd">tori</span></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="tab-panel" data-tab="source">
-          <div class="qs-columns">
-            <div class="qs-column">
-              <div class="qs-column-label">On your server</div>
-              <div class="steps-vertical">
-                <div class="step-v">
-                  <div class="step-v-marker"><span class="step-number">01</span><div class="step-v-line"></div></div>
-                  <div class="step-v-content">
-                    <h3>Build the binary</h3>
-                    <p>Requires Go 1.25+.</p>
-                    <div class="step-code"><span class="prompt">$</span> <span class="cmd">git clone https://github.com/thobiasn/tori-cli.git</span>
-<span class="prompt">$</span> <span class="cmd">cd tori-cli</span>
-<span class="prompt">$</span> <span class="cmd">go build -o tori ./cmd/tori</span></div>
-                  </div>
-                </div>
-                <div class="step-v">
-                  <div class="step-v-marker"><span class="step-number">02</span></div>
-                  <div class="step-v-content">
-                    <h3>Run the agent</h3>
-                    <div class="step-code"><span class="prompt">$</span> <span class="cmd">sudo ./tori agent --config /etc/tori/config.toml</span></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div class="qs-column">
-              <div class="qs-column-label">On your machine</div>
-              <div class="steps-vertical">
-                <div class="step-v">
-                  <div class="step-v-marker"><span class="step-number">01</span><div class="step-v-line"></div></div>
-                  <div class="step-v-content">
-                    <h3>Build the binary</h3>
-                    <p>Same build step — single binary for both agent and client.</p>
-                    <div class="step-code"><span class="prompt">$</span> <span class="cmd">git clone https://github.com/thobiasn/tori-cli.git</span>
-<span class="prompt">$</span> <span class="cmd">cd tori-cli</span>
-<span class="prompt">$</span> <span class="cmd">go build -o tori ./cmd/tori</span></div>
-                  </div>
-                </div>
-                <div class="step-v">
-                  <div class="step-v-marker"><span class="step-number">02</span><div class="step-v-line"></div></div>
-                  <div class="step-v-content">
-                    <h3>Add your server</h3>
-                    <div class="step-code"><span class="cm"># ~/.config/tori/config.toml</span>
-
-<span class="section">[servers.prod]</span>
-<span class="key">host</span> = <span class="str">"user@prod.example.com"</span></div>
-                  </div>
-                </div>
-                <div class="step-v">
-                  <div class="step-v-marker"><span class="step-number">03</span></div>
-                  <div class="step-v-content">
-                    <h3>Connect</h3>
-                    <div class="step-code"><span class="prompt">$</span> <span class="cmd">./tori</span></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+    <div class="row">
+      <span class="key">host metrics</span>
+      <span class="val">cpu, memory, disk, network, load, swap from /proc</span>
     </div>
-  </section>
-
-  <section class="cta">
-    <div class="container reveal">
-      <h2>Self-hosted Docker monitoring<br>for your terminal</h2>
-      <p>Free and MIT licensed. For people who don't need Prometheus or Datadog but still want visibility into what their servers are doing.</p>
-      <div class="cta-buttons">
-        <a href="https://github.com/thobiasn/tori-cli" class="btn-primary" rel="noopener">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-          Read the Docs on GitHub
-        </a>
-      </div>
+    <div class="row">
+      <span class="key">log tailing</span>
+      <span class="val">regex search, level filter, date ranges, stored in SQLite</span>
     </div>
-  </section>
+    <div class="row">
+      <span class="key">multi-server</span>
+      <span class="val">all your hosts from one terminal, instant switching</span>
+    </div>
+    <div class="row">
+      <span class="key">no open ports</span>
+      <span class="val">unix socket behind SSH, nothing to expose or firewall</span>
+    </div>
+    <div class="row">
+      <span class="key">footprint</span>
+      <span class="val"><b>&lt; 50 MB</b>, single static binary, SQLite, no runtime deps</span>
+    </div>
+  </div>
 
-  </main>
+  <div class="config">
+    <pre class="config-block"><span class="cm"># /etc/tori/config.toml</span>
+
+<span class="sc">[alerts.container_down]</span>
+<span class="ky">condition</span> = <span class="st">"container.state == 'exited'"</span>
+<span class="ky">for</span>       = <span class="st">"30s"</span>
+<span class="ky">actions</span>   = [<span class="st">"notify"</span>]
+
+<span class="sc">[alerts.disk_space]</span>
+<span class="ky">condition</span> = <span class="st">"host.disk_percent > 90"</span>
+<span class="ky">actions</span>   = [<span class="st">"notify"</span>]
+
+<span class="sc">[[notify.webhooks]]</span>
+<span class="ky">url</span> = <span class="st">"https://hooks.slack.com/services/..."</span></pre>
+    <p class="config-note">container-down and disk alerts in 10 lines · <a href="https://github.com/thobiasn/tori-cli/blob/main/docs/configuration.md#alert-reference" target="_blank" rel="noopener">full alert reference →</a></p>
+  </div>
 
   <footer>
-    <div class="container">
-      <div class="footer-left">MIT License · Built by <a href="https://thobiasn.dev" rel="noopener">thobiasn</a></div>
-      <div class="footer-right">
-        <a href="https://github.com/thobiasn/tori-cli" rel="noopener">GitHub</a>
-        <a href="https://github.com/thobiasn/tori-cli/releases" rel="noopener">Releases</a>
-        <a href="https://github.com/thobiasn/tori-cli/issues" rel="noopener">Issues</a>
-      </div>
+    <span>MIT License · <a href="https://thobiasn.dev" target="_blank" rel="noopener">thobiasn</a></span>
+    <div class="footer-links">
+      <a href="https://github.com/thobiasn/tori-cli/releases" target="_blank" rel="noopener">releases</a>
+      <a href="https://github.com/thobiasn/tori-cli/issues" target="_blank" rel="noopener">issues</a>
     </div>
   </footer>
 
-  <script>
-    // Tabs
-    document.querySelectorAll('.tab').forEach(function(tab) {
-      tab.addEventListener('click', function() {
-        var target = this.getAttribute('data-tab');
-        this.closest('.tabs').querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
-        this.closest('.tabs').querySelectorAll('.tab-panel').forEach(function(p) { p.classList.remove('active'); });
-        this.classList.add('active');
-        this.closest('.tabs').querySelector('.tab-panel[data-tab="' + target + '"]').classList.add('active');
-      });
-    });
-
-    // Scroll reveal
-    var observer = new IntersectionObserver(function(entries) {
-      entries.forEach(function(entry) {
-        if (entry.isIntersecting) entry.target.classList.add('visible');
-      });
-    }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
-    document.querySelectorAll('.reveal').forEach(function(el) { observer.observe(el); });
-
-    // Fetch star count and latest release from GitHub API
-    fetch('https://api.github.com/repos/thobiasn/tori-cli')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.stargazers_count !== undefined) {
-          var el = document.getElementById('starCount');
-          var c = data.stargazers_count;
-          el.textContent = c >= 1000 ? (c / 1000).toFixed(1) + 'k' : c;
-          el.style.display = '';
-        }
-      }).catch(function() {});
-
-    fetch('https://api.github.com/repos/thobiasn/tori-cli/releases/latest')
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (data.tag_name) {
-          var badge = document.getElementById('versionBadge');
-          badge.textContent = data.tag_name;
-          badge.href = data.html_url;
-        }
-      }).catch(function() {});
-
-    // Bird blink
-    (function() {
-      var eye = document.querySelector('.bird-eye');
-      function blink() {
-        eye.textContent = '\u2013';
-        setTimeout(function() { eye.textContent = '\u2022'; }, 150);
-        setTimeout(blink, 2000 + Math.random() * 5000);
-      }
-      setTimeout(blink, 3000 + Math.random() * 4000);
-    })();
-  </script>
-
+</div>
+<script>
+function copyCmd(el) {
+  navigator.clipboard.writeText(el.querySelector('.cmd').textContent).then(function() {
+    var c = el.querySelector('.copy');
+    c.textContent = 'copied';
+    c.classList.add('ok');
+    setTimeout(function() { c.textContent = 'copy'; c.classList.remove('ok'); }, 1800);
+  });
+}
+(function() {
+  var eye = document.querySelector('.eye');
+  function blink() {
+    eye.textContent = '\u2013';
+    setTimeout(function() { eye.textContent = '\u2022'; }, 150);
+    setTimeout(blink, 2000 + Math.random() * 5000);
+  }
+  setTimeout(blink, 3000 + Math.random() * 4000);
+})();
+</script>
 </body>
 </html>

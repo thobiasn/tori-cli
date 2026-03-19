@@ -1,0 +1,14 @@
+
+[theme]
+fg = "#787c99"
+fg_dim = "#444b6a"
+fg_bright = "#acb0d0"
+border = "#444b6a"
+accent = "#7aa2f7"
+healthy = "#9ece6a"
+warning = "#e0af68"
+critical = "#f7768e"
+debug_level = "#444b6a"
+info_level = "#787c99"
+graph_cpu = "#7da6ff"
+graph_mem = "#bb9af7"

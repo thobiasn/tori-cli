@@ -25,6 +25,11 @@ config.toml
 *.swp
 *~
 
+# Demo recordings
+demo/*.gif
+demo/*.webm
+demo/*.mp4
+
 # OS
 .DS_Store
 Thumbs.db

@@ -1,0 +1,29 @@
+[storage]
+path = "/tmp/tori-staging/tori.db"
+retention_days = 1
+
+[socket]
+path = "/tmp/tori-staging/tori.sock"
+
+[docker]
+include = ["analytics-*", "jobs-*"]
+
+[collect]
+interval = "5s"
+
+[alerts.container_down]
+condition = "container.state == 'exited'"
+for = "10s"
+severity = "critical"
+actions = ["notify"]
+
+[alerts.unhealthy]
+condition = "container.health == 'unhealthy'"
+for = "20s"
+severity = "critical"
+actions = ["notify"]
+
+[alerts.restart_loop]
+condition = "container.restart_count > 3"
+severity = "critical"
+actions = ["notify"]
