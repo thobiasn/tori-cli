@@ -36,6 +36,7 @@ func TestInferLevel(t *testing.T) {
 		{"bare level no timestamp", "INFO starting up", ""},
 		{"bare error no timestamp", "ERROR connection refused", ""},
 		{"lowercase level no timestamp", "info starting up", ""},
+		{"timestamp then whitespace only", "2026/02/19 09:45:54   ", ""},
 		{"timestamp no level", "2026/02/19 09:45:54 starting server", ""},
 		{"no false positive in body", "the server reported an error", ""},
 		{"nginx style", "2026/02/19 09:45:54 [error] 123#0: *456 something", "ERR"},
@@ -67,6 +68,12 @@ func TestExtractDisplayMsg(t *testing.T) {
 		{"empty string", "", ""},
 		{"invalid json passthrough", `{"msg":"x"`, `{"msg":"x"`},
 		{"no message key in json", `{"level":"info","status":"ok"}`, `{"level":"info","status":"ok"}`},
+		{"json level only no msg field", `{"level":"error"}`, `{"level":"error"}`},
+		{"logfmt escaped quote", `level=info msg="hello \"world\""`, `hello \"world\"`},
+		{"logfmt key without equals", `badkey level=info msg=hi`, "hi"},
+		{"logfmt level no msg key", `level=error status=500`, `level=error status=500`},
+		{"plain level is entire msg", "2026/01/01 [INFO]", "2026/01/01 [INFO]"},
+		{"plain unbracket level only", "2026/01/01 INFO", "2026/01/01 INFO"},
 
 		// Plain text with positional level — displayMsg is content after the level.
 		{"slog displaymsg", "2026/02/19 09:45:54 INFO client disconnected remote=@", "client disconnected remote=@"},
