@@ -547,9 +547,9 @@ func TestSocketSilenceValidation(t *testing.T) {
 	_, _, path := testSocketServerWithAlerter(t, s, alerter)
 
 	tests := []struct {
-		name     string
-		req      protocol.SilenceAlertReq
-		wantErr  string
+		name    string
+		req     protocol.SilenceAlertReq
+		wantErr string
 	}{
 		{"negative duration", protocol.SilenceAlertReq{RuleName: "high_cpu", Duration: -1}, "duration"},
 		{"too long", protocol.SilenceAlertReq{RuleName: "high_cpu", Duration: maxSilenceDuration + 1}, "duration"},
@@ -943,9 +943,9 @@ func TestSocketConnectionLimit(t *testing.T) {
 	s := testStore(t)
 	hub := NewHub()
 	dc := &DockerCollector{
-		prevCPU:           make(map[string]cpuPrev),
-		lastContainers:    []Container{},
-		tracked: make(map[string]bool),
+		prevCPU:        make(map[string]cpuPrev),
+		lastContainers: []Container{},
+		tracked:        make(map[string]bool),
 	}
 	// Create a server with a small semaphore for testing.
 	ss := &SocketServer{
@@ -1538,5 +1538,280 @@ func TestSocketTestNotifyRateLimit(t *testing.T) {
 	}
 	if !strings.Contains(errResult.Error, "rate limited") {
 		t.Errorf("error = %q, want rate limited", errResult.Error)
+	}
+}
+
+func TestSocketQueryLogsWithCount(t *testing.T) {
+	s := testStore(t)
+	ctx := t.Context()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: ts, ContainerID: "abc", ContainerName: "web", Project: "myapp", Service: "web", Stream: "stdout", Message: "hello"},
+		{Timestamp: ts, ContainerID: "abc", ContainerName: "web", Project: "myapp", Service: "web", Stream: "stderr", Message: "world"},
+		{Timestamp: ts, ContainerID: "abc", ContainerName: "web", Project: "myapp", Service: "web", Stream: "stdout", Message: "error foo"},
+	})
+
+	_, _, path := testSocketServer(t, s)
+	conn := dial(t, path)
+
+	// Query with search filter — Total should reflect unfiltered count.
+	req := protocol.QueryLogsReq{Start: ts.Unix(), End: ts.Unix(), Search: "error"}
+	env, err := protocol.NewEnvelope(protocol.TypeQueryLogs, 1, &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs protocol.QueryLogsResp
+	if err := protocol.DecodeBody(resp.Body, &logs); err != nil {
+		t.Fatal(err)
+	}
+	if len(logs.Entries) != 1 {
+		t.Errorf("entries = %d, want 1 (filtered)", len(logs.Entries))
+	}
+	if logs.Total != 3 {
+		t.Errorf("total = %d, want 3 (unfiltered count)", logs.Total)
+	}
+}
+
+func TestSocketQueryLogsContainerIDs(t *testing.T) {
+	s := testStore(t)
+	ctx := t.Context()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: ts, ContainerID: "aaa", ContainerName: "web", Stream: "stdout", Message: "web log"},
+		{Timestamp: ts, ContainerID: "bbb", ContainerName: "api", Stream: "stdout", Message: "api log"},
+		{Timestamp: ts, ContainerID: "ccc", ContainerName: "db", Stream: "stdout", Message: "db log"},
+	})
+
+	_, _, path := testSocketServer(t, s)
+	conn := dial(t, path)
+
+	req := protocol.QueryLogsReq{
+		Start:        ts.Unix(),
+		End:          ts.Unix(),
+		ContainerIDs: []string{"aaa", "bbb"},
+	}
+	env, err := protocol.NewEnvelope(protocol.TypeQueryLogs, 1, &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs protocol.QueryLogsResp
+	if err := protocol.DecodeBody(resp.Body, &logs); err != nil {
+		t.Fatal(err)
+	}
+	if len(logs.Entries) != 2 {
+		t.Errorf("entries = %d, want 2 (filtered by container IDs)", len(logs.Entries))
+	}
+}
+
+func TestSocketQueryLogsByService(t *testing.T) {
+	s := testStore(t)
+	ctx := t.Context()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.InsertLogs(ctx, []LogEntry{
+		{Timestamp: ts, ContainerID: "aaa", ContainerName: "web", Project: "myapp", Service: "web", Stream: "stdout", Message: "web log"},
+		{Timestamp: ts, ContainerID: "bbb", ContainerName: "api", Project: "myapp", Service: "api", Stream: "stdout", Message: "api log"},
+	})
+
+	_, _, path := testSocketServer(t, s)
+	conn := dial(t, path)
+
+	req := protocol.QueryLogsReq{
+		Start:   ts.Unix(),
+		End:     ts.Unix(),
+		Project: "myapp",
+		Service: "web",
+	}
+	env, err := protocol.NewEnvelope(protocol.TypeQueryLogs, 1, &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs protocol.QueryLogsResp
+	if err := protocol.DecodeBody(resp.Body, &logs); err != nil {
+		t.Fatal(err)
+	}
+	if len(logs.Entries) != 1 {
+		t.Errorf("entries = %d, want 1 (filtered by service)", len(logs.Entries))
+	}
+}
+
+func TestSocketQueryMetricsDownsampledWithContainers(t *testing.T) {
+	s := testStore(t)
+	ctx := t.Context()
+
+	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 10; i++ {
+		ts := base.Add(time.Duration(i) * 10 * time.Second)
+		s.InsertHostMetrics(ctx, ts, &HostMetrics{CPUPercent: float64(i * 10)})
+		s.InsertContainerMetrics(ctx, ts, []ContainerMetrics{
+			{Name: "web", Project: "myapp", Service: "web", CPUPercent: float64(i * 5), MemUsage: uint64(i * 1000)},
+		})
+	}
+
+	_, _, path := testSocketServer(t, s)
+	conn := dial(t, path)
+
+	req := protocol.QueryMetricsReq{
+		Start:  base.Unix(),
+		End:    base.Add(90 * time.Second).Unix(),
+		Points: 5,
+	}
+	env, err := protocol.NewEnvelope(protocol.TypeQueryMetrics, 1, &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metrics protocol.QueryMetricsResp
+	if err := protocol.DecodeBody(resp.Body, &metrics); err != nil {
+		t.Fatal(err)
+	}
+	if len(metrics.Host) != 5 {
+		t.Errorf("host = %d, want 5", len(metrics.Host))
+	}
+	if len(metrics.Containers) == 0 {
+		t.Error("containers should have downsampled data")
+	}
+}
+
+func TestSocketQueryMetricsWithServiceFilter(t *testing.T) {
+	s := testStore(t)
+	ctx := t.Context()
+
+	ts := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.InsertContainerMetrics(ctx, ts, []ContainerMetrics{
+		{Name: "web", Project: "myapp", Service: "web", CPUPercent: 10},
+		{Name: "api", Project: "myapp", Service: "api", CPUPercent: 20},
+	})
+
+	_, _, path := testSocketServer(t, s)
+	conn := dial(t, path)
+
+	req := protocol.QueryMetricsReq{
+		Start:   ts.Unix(),
+		End:     ts.Unix(),
+		Project: "myapp",
+		Service: "web",
+	}
+	env, err := protocol.NewEnvelope(protocol.TypeQueryMetrics, 1, &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var metrics protocol.QueryMetricsResp
+	if err := protocol.DecodeBody(resp.Body, &metrics); err != nil {
+		t.Fatal(err)
+	}
+	if len(metrics.Containers) != 1 {
+		t.Errorf("containers = %d, want 1 (filtered by service)", len(metrics.Containers))
+	}
+}
+
+func TestSocketAckAlertNotFound(t *testing.T) {
+	s := testStore(t)
+	_, _, path := testSocketServer(t, s)
+	conn := dial(t, path)
+
+	req := protocol.AckAlertReq{AlertID: 99999}
+	env, err := protocol.NewEnvelope(protocol.TypeActionAckAlert, 1, &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Type != protocol.TypeError {
+		t.Fatalf("type = %q, want error", resp.Type)
+	}
+}
+
+func TestSocketTestNotifyNoChannels(t *testing.T) {
+	s := testStore(t)
+	alerter, err := NewAlerter(map[string]AlertConfig{
+		"test_rule": {Condition: "host.cpu_percent > 90", Severity: "warning", Actions: []string{"notify"}},
+	}, s, NewNotifier(&NotifyConfig{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer alerter.Stop()
+
+	_, _, path := testSocketServerWithAlerter(t, s, alerter)
+	conn := dial(t, path)
+
+	req := protocol.TestNotifyReq{RuleName: "test_rule"}
+	env, err := protocol.NewEnvelope(protocol.TypeActionTestNotify, 1, &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := protocol.WriteMsg(conn, env); err != nil {
+		t.Fatal(err)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp, err := protocol.ReadMsg(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// SendTestNotification returns error when no channels configured,
+	// which exercises the error path in testNotify (line 769-771).
+	if resp.Type != protocol.TypeError {
+		t.Fatalf("type = %q, want error", resp.Type)
+	}
+	var errResult protocol.ErrorResult
+	if err := protocol.DecodeBody(resp.Body, &errResult); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errResult.Error, "no notification channels") {
+		t.Errorf("error = %q, want 'no notification channels'", errResult.Error)
 	}
 }
