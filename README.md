@@ -16,6 +16,7 @@ tori is that tool. Single binary, SSH-only, no dashboards, no stack.
 ## When tori is a good fit
 
 - You run Docker on 1–10 servers
+- You care deeply about attack surface
 - You don’t want to maintain a big stack like Prometheus + Grafana
 - You want alerts when something goes wrong
 - You prefer terminal tools over dashboards
