@@ -5,9 +5,20 @@
 [![GitHub Release](https://img.shields.io/github/v/release/thobiasn/tori-cli)](https://github.com/thobiasn/tori-cli/releases)
 [![License](https://img.shields.io/github/license/thobiasn/tori-cli)](LICENSE)
 
-Docker server monitoring without the stack. Metrics, logs, and alerts from your terminal. Single binary, minimal footprint, zero exposed ports, SSH-only.
+Docker monitoring that fits in an SSH connection.
+
+Most Docker VPS setups don't need a full monitoring stack. Seeing your monitoring tool use more resources than the thing it's watching is painful when all you really need is just to be alerted when something breaks at 3am, or find that one log line during debugging.
+
+tori is that tool. Single binary, SSH-only, no dashboards, no stack.
 
 ![tori demo](https://github.com/user-attachments/assets/e3b8c171-f57b-4b1e-99bb-d2541b0125b0)
+
+## When tori is a good fit
+
+- You run Docker on 1–10 servers
+- You don’t want to maintain a big stack like Prometheus + Grafana
+- You want alerts when something goes wrong
+- You prefer terminal tools over dashboards
 
 ## Quick Start
 
