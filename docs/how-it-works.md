@@ -91,6 +91,15 @@ Restart the SSH service after editing. On Synology, toggle SSH off/on in Control
 </details>
 
 <details>
+<summary><b>Tailscale SSH: connection fails immediately</b></summary>
+
+tori requires Unix socket forwarding (`-L /local/path:/remote/path`) over SSH. Tailscale's built-in SSH server does not support this — it only handles TCP port forwarding. This is a [known Tailscale limitation](https://github.com/tailscale/tailscale/issues/6232).
+
+**Workaround:** Use standard `sshd` instead of Tailscale SSH. Connect using the Tailscale IP (e.g. `tori user@100.x.y.z`). The traffic still goes through Tailscale's WireGuard tunnel — OpenSSH just handles the forwarding.
+
+</details>
+
+<details>
 <summary><b>Docker: "Bind mount failed: '/run/tori' does not exist"</b></summary>
 
 The `/run/tori` directory must exist on the host before starting the container:
