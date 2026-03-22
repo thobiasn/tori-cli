@@ -85,11 +85,16 @@ host = "user@prod.example.com"
 - [Installation](#installation)
 - [Usage Notes](#usage-notes)
 - [Requirements](#requirements)
-- [Configuration](docs/configuration.md) — agent config, alert reference, client config, theming
-- [Connecting](docs/how-it-works.md#connecting) — CLI options, multi-server, SSH tunnels
-- [Security](docs/how-it-works.md#security) — socket permissions, Docker access, encryption
-- [How It Works](docs/how-it-works.md) — architecture, storage, troubleshooting
-- [Keybindings](docs/keybindings.md) — keyboard reference
+- [Configuration](docs/configuration.md)
+  - [Agent config](docs/configuration.md#agent-config)
+  - [Alert reference](docs/configuration.md#alert-reference)
+  - [Client config](docs/configuration.md#client-config)
+- [How It Works](docs/how-it-works.md)
+  - [Connecting](docs/how-it-works.md#connecting)
+  - [Security](docs/how-it-works.md#security)
+  - [Storage](docs/how-it-works.md#storage)
+  - [Troubleshooting](docs/how-it-works.md#troubleshooting)
+- [Keybindings](docs/keybindings.md)
 
 ## Installation
 
