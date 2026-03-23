@@ -56,6 +56,7 @@ type Config struct {
 type AlertConfig struct {
 	Condition      string   `toml:"condition"`
 	For            Duration `toml:"for"`
+	ResolveFor     Duration `toml:"resolve_for"`
 	Cooldown       Duration `toml:"cooldown"`
 	NotifyCooldown Duration `toml:"notify_cooldown"`
 	Severity       string   `toml:"severity"`
@@ -283,6 +284,9 @@ func validateAlert(name string, ac *AlertConfig) error {
 	}
 	if ac.For.Duration < 0 {
 		return fmt.Errorf("alert %q: for must not be negative", name)
+	}
+	if ac.ResolveFor.Duration < 0 {
+		return fmt.Errorf("alert %q: resolve_for must not be negative", name)
 	}
 	if ac.Cooldown.Duration < 0 {
 		return fmt.Errorf("alert %q: cooldown must not be negative", name)

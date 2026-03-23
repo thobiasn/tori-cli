@@ -140,6 +140,7 @@ Code is a liability, not an asset. Every line we write is a line we have to main
 - Field names are validated against a whitelist in `parseCondition`. String fields (`state`, `health`) only allow `==`/`!=`.
 - Alerter instances are keyed: `rulename` for host, `rulename:containerID` for container and log, `rulename:mountpoint` for disk.
 - State machine: inactive → pending (if `for > 0`) → firing → resolved → inactive. `for = 0` skips pending.
+- **`resolve_for` (resolve grace):** Optional. When set, resolution requires the condition to stay false for `resolve_for` duration before resolving. Prevents flapping (e.g. one passing health check resolving a persistent alert). Independent of `for` — can be set without `for` and vice versa. `resolve_for = 0` (default) resolves immediately. Stale cleanup (disappeared containers) always resolves immediately regardless of `resolve_for`.
 - Inactive unseen instances are GC'd from the map to prevent unbounded growth with ephemeral containers.
 - When collection fails (nil snapshot field), existing instances are marked as `seen` to avoid false resolution.
 - `Alerter.mu` protects `instances` and `deferred` — held during `Evaluate()` and `EvaluateContainerEvent()`. Slow side effects (notify) are collected into `deferred` under the lock, then executed after release.

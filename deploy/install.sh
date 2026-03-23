@@ -333,6 +333,7 @@ actions = ["notify"]
 [alerts.unhealthy]
 condition = "container.health == 'unhealthy'"
 for = "30s"
+resolve_for = "30s"
 severity = "critical"
 actions = ["notify"]
 
