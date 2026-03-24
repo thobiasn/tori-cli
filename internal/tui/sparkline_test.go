@@ -125,9 +125,9 @@ func TestResample(t *testing.T) {
 		}
 	})
 
-	t.Run("upsample interpolates", func(t *testing.T) {
+	t.Run("upsample right-aligns with zero padding", func(t *testing.T) {
 		got := resample([]float64{0, 10}, 3)
-		want := []float64{0, 5, 10}
+		want := []float64{0, 0, 10}
 		for i, v := range got {
 			if math.Abs(v-want[i]) > 0.01 {
 				t.Errorf("got[%d] = %g, want %g", i, v, want[i])
@@ -135,11 +135,12 @@ func TestResample(t *testing.T) {
 		}
 	})
 
-	t.Run("single value fills output", func(t *testing.T) {
+	t.Run("single value right-aligns", func(t *testing.T) {
 		got := resample([]float64{42}, 3)
+		want := []float64{0, 0, 42}
 		for i, v := range got {
-			if v != 42 {
-				t.Errorf("got[%d] = %g, want 42", i, v)
+			if math.Abs(v-want[i]) > 0.01 {
+				t.Errorf("got[%d] = %g, want %g", i, v, want[i])
 			}
 		}
 	})
