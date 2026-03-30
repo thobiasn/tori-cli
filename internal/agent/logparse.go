@@ -63,12 +63,15 @@ func ParseLogFields(message string) (level, displayMsg string) {
 }
 
 // parsePlainLevel detects a log level from plain text lines where the level
-// appears as the first non-timestamp token. Handles formats like:
+// appears as the first non-timestamp token or as the very first token.
+// Handles formats like:
 //
 //	"2026/02/19 09:45:54 INFO message..."
-//	"2026-02-19T09:45:54Z [error] message..."
+//	"2026-02-19T09:45:54Z [error] something failed"
 //	"INFO message..."
 //	"[WARN] message..."
+//	"(ERROR) something failed"
+//	"Error: something failed"
 func parsePlainLevel(msg string) (string, string) {
 	i := 0
 	sawTimestamp := false
@@ -88,9 +91,9 @@ func parsePlainLevel(msg string) (string, string) {
 		}
 		token := msg[start:i]
 
-		// Bracketed token like [INFO] or [error].
-		if sawTimestamp && len(token) >= 3 && token[0] == '[' && token[len(token)-1] == ']' {
-			if lvl := normalizeLevel(token[1 : len(token)-1]); lvl != "" {
+		// Wrapped token like [INFO], [error], (WARN), (error).
+		if inner, ok := unwrapLevel(token); ok {
+			if lvl := normalizeLevel(inner); lvl != "" {
 				rest := strings.TrimSpace(msg[i:])
 				if rest == "" {
 					rest = msg
@@ -105,21 +108,61 @@ func parsePlainLevel(msg string) (string, string) {
 			continue
 		}
 
-		// First non-timestamp token after a timestamp: check for level keyword.
-		if sawTimestamp {
-			if lvl := normalizeLevel(token); lvl != "" {
-				rest := strings.TrimSpace(msg[i:])
-				if rest == "" {
-					rest = msg
-				}
-				return lvl, rest
+		// After a timestamp, any recognized level keyword matches.
+		// Without a timestamp, require ALL CAPS or trailing colon
+		// to avoid false positives like "information about...".
+		if lvl := matchLevel(token, sawTimestamp); lvl != "" {
+			rest := strings.TrimSpace(msg[i:])
+			if rest == "" {
+				rest = msg
 			}
+			return lvl, rest
 		}
 
-		// No timestamp seen, or unknown token — stop looking.
+		// Unknown token — stop looking.
 		break
 	}
 	return "", msg
+}
+
+// matchLevel checks if a token is a level keyword. In relaxed mode (after a
+// timestamp), any case matches. In strict mode (no preceding timestamp), the
+// token must be ALL CAPS or have a trailing colon — this avoids false positives
+// on prose like "information about..." or "Fatal attraction".
+func matchLevel(token string, relaxed bool) string {
+	if relaxed {
+		return normalizeLevel(token)
+	}
+	// Trailing colon: "Error:", "Warning:" — strip and normalize.
+	if len(token) > 1 && token[len(token)-1] == ':' {
+		return normalizeLevel(token[:len(token)-1])
+	}
+	// ALL CAPS: "ERROR", "INFO", "WARN".
+	if isAllUpper(token) {
+		return normalizeLevel(token)
+	}
+	return ""
+}
+
+func isAllUpper(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 'a' && s[i] <= 'z' {
+			return false
+		}
+	}
+	return true
+}
+
+// unwrapLevel checks if a token is wrapped in brackets or parentheses
+// and returns the inner string. e.g. "[INFO]" → "INFO", "(error)" → "error".
+func unwrapLevel(token string) (string, bool) {
+	if len(token) >= 3 {
+		if (token[0] == '[' && token[len(token)-1] == ']') ||
+			(token[0] == '(' && token[len(token)-1] == ')') {
+			return token[1 : len(token)-1], true
+		}
+	}
+	return "", false
 }
 
 func containsDigit(s string) bool {
