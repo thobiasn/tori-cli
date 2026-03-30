@@ -263,12 +263,14 @@ func renderHostGraphs(a *App, s *Session, w int, theme *Theme) string {
 			muted.Render("mem ") + memBot + memPct
 	}
 
-	cpuTop, cpuBot := Sparkline(s.HostCPUHist.Data(), graphW, theme.GraphCPU, 100)
+	cpuData := tailSlice(s.HostCPUHist.Data(), graphW*2, a.windowSeconds() == 0)
+	cpuTop, cpuBot := Sparkline(cpuData, graphW, theme.GraphCPU, 100)
 	cpuPct := rightAlign(fmt.Sprintf(" %.1f%%", s.Host.CPUPercent), pctW)
 	cpuColor := hostUsageColor(s.Host.CPUPercent, theme)
 	cpuPctStyled := lipgloss.NewStyle().Foreground(cpuColor).Render(cpuPct)
 
-	memTop, memBot := Sparkline(s.HostMemHist.Data(), graphW, theme.GraphMem, 100)
+	memData := tailSlice(s.HostMemHist.Data(), graphW*2, a.windowSeconds() == 0)
+	memTop, memBot := Sparkline(memData, graphW, theme.GraphMem, 100)
 	memPct := rightAlign(fmt.Sprintf(" %.1f%%", s.Host.MemPercent), pctW)
 	memColor := hostUsageColor(s.Host.MemPercent, theme)
 	memPctStyled := lipgloss.NewStyle().Foreground(memColor).Render(memPct)

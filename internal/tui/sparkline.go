@@ -166,19 +166,6 @@ func Sparkline(data []float64, width int, color lipgloss.Color, knownMax float64
 		topChars[i] = rune(0x2800 | leftColBits(max(lh-4, 0)) | rightColBits(max(rh-4, 0)))
 	}
 
-	// Left-pad with empty braille when data doesn't fill the width.
-	dataChars := (len(samples) + 1) / 2
-	if pad := width - dataChars; pad > 0 {
-		for _, chars := range []*[]rune{&topChars, &botChars} {
-			padded := make([]rune, width)
-			for p := 0; p < pad; p++ {
-				padded[p] = 0x2800
-			}
-			copy(padded[pad:], (*chars)[width-dataChars:])
-			*chars = padded
-		}
-	}
-
 	style := lipgloss.NewStyle().Foreground(color)
 	return style.Render(string(topChars)), style.Render(string(botChars))
 }
@@ -235,8 +222,17 @@ func rightColBits(h int) int {
 	}
 }
 
+// tailSlice returns the last n elements of data when live is true.
+// In historical mode (live=false), all data is returned for resampling.
+func tailSlice(data []float64, n int, live bool) []float64 {
+	if live && len(data) > n {
+		return data[len(data)-n:]
+	}
+	return data
+}
+
 // resample produces exactly n samples from data.
-// Downsamples by averaging buckets, upsamples by linear interpolation.
+// Downsamples by averaging buckets, upsamples by right-aligned zero-padding.
 func resample(data []float64, n int) []float64 {
 	if len(data) == 0 || n <= 0 {
 		return make([]float64, n)
@@ -265,17 +261,8 @@ func resample(data []float64, n int) []float64 {
 			out[i] = sum / float64(hi-lo)
 		}
 	} else {
-		// Upsample: linear interpolation.
-		for i := range out {
-			t := float64(i) * float64(len(data)-1) / float64(n-1)
-			lo := int(t)
-			if lo >= len(data)-1 {
-				out[i] = data[len(data)-1]
-				continue
-			}
-			frac := t - float64(lo)
-			out[i] = data[lo]*(1-frac) + data[lo+1]*frac
-		}
+		// Right-align data, zero-pad left.
+		copy(out[n-len(data):], data)
 	}
 	return out
 }

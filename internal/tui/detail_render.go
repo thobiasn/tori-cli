@@ -346,8 +346,11 @@ func renderDetailGraphs(a *App, det *DetailState, s *Session, w int, theme *Them
 	}
 	memStr := rightAlign(fmt.Sprintf(" %s", formatBytes(memVal)), pctW)
 
-	cpuTop, cpuBot := Sparkline(det.cpuHist.Data(), graphW, theme.GraphCPU, cpuLimit*100)
-	memTop, memBot := Sparkline(det.memHist.Data(), graphW, theme.GraphMem, float64(memLimit))
+	live := a.windowSeconds() == 0
+	cpuData := tailSlice(det.cpuHist.Data(), graphW*2, live)
+	cpuTop, cpuBot := Sparkline(cpuData, graphW, theme.GraphCPU, cpuLimit*100)
+	memData := tailSlice(det.memHist.Data(), graphW*2, live)
+	memTop, memBot := Sparkline(memData, graphW, theme.GraphMem, float64(memLimit))
 
 	// Severity-colored values with FgBright as calm baseline.
 	var memPct float64
