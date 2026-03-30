@@ -20,6 +20,7 @@ actions = ["notify"]
 [alerts.unhealthy]
 condition = "container.health == 'unhealthy'"
 for = "20s"
+resolve_for = "20s"
 severity = "critical"
 actions = ["notify"]
 

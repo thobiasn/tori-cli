@@ -1074,6 +1074,246 @@ func TestContainerHealthAlert(t *testing.T) {
 	}
 }
 
+func TestResolveForPreventsFlapResolve(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"unhealthy": {
+			Condition:  "container.health == 'unhealthy'",
+			For:        Duration{20 * time.Second},
+			ResolveFor: Duration{20 * time.Second},
+			Severity:   "critical",
+			Actions:    []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Fire: pending for 20s, then fires.
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", Health: "unhealthy"}},
+	})
+	now = now.Add(20 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", Health: "unhealthy"}},
+	})
+	if a.instances["unhealthy:aaa"].state != stateFiring {
+		t.Fatal("expected firing")
+	}
+
+	// Brief healthy blip — should NOT resolve (resolve_for grace period).
+	now = now.Add(10 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", Health: "healthy"}},
+	})
+	if a.instances["unhealthy:aaa"].state != stateFiring {
+		t.Fatal("expected still firing during resolve_for grace period")
+	}
+
+	// Back to unhealthy — grace period resets.
+	now = now.Add(5 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", Health: "unhealthy"}},
+	})
+	if a.instances["unhealthy:aaa"].state != stateFiring {
+		t.Fatal("expected still firing after condition came back true")
+	}
+
+	// Only 1 alert row — no resolve/re-fire churn.
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM alerts").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("alert rows = %d, want 1 (no flap churn)", count)
+	}
+
+	// Verify resolved_at is still NULL (not resolved).
+	var resolvedAt *int64
+	if err := s.db.QueryRow("SELECT resolved_at FROM alerts WHERE rule_name = 'unhealthy'").Scan(&resolvedAt); err != nil {
+		t.Fatal(err)
+	}
+	if resolvedAt != nil {
+		t.Error("resolved_at should be NULL — alert should not have resolved")
+	}
+}
+
+func TestResolveForCompletesAfterDuration(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"unhealthy": {
+			Condition:  "container.health == 'unhealthy'",
+			ResolveFor: Duration{20 * time.Second},
+			Severity:   "critical",
+			Actions:    []string{"notify"},
+		},
+	}
+	a, s := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Fire (for=0, immediate).
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", Health: "unhealthy"}},
+	})
+	if a.instances["unhealthy:aaa"].state != stateFiring {
+		t.Fatal("expected firing")
+	}
+
+	// Condition goes false — starts resolve grace.
+	now = now.Add(10 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", Health: "healthy"}},
+	})
+	if a.instances["unhealthy:aaa"].state != stateFiring {
+		t.Fatal("expected still firing during resolve_for grace")
+	}
+
+	// 10s later — still within grace period (20s required).
+	now = now.Add(10 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", Health: "healthy"}},
+	})
+	if a.instances["unhealthy:aaa"].state != stateFiring {
+		t.Fatal("expected still firing at 10s into 20s grace")
+	}
+
+	// 20s total since false — should resolve.
+	now = now.Add(10 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", Health: "healthy"}},
+	})
+	inst := a.instances["unhealthy:aaa"]
+	if inst != nil && inst.state != stateInactive {
+		t.Fatalf("expected resolved after resolve_for period, got state %d", inst.state)
+	}
+
+	var resolvedAt *int64
+	if err := s.db.QueryRow("SELECT resolved_at FROM alerts WHERE rule_name = 'unhealthy'").Scan(&resolvedAt); err != nil {
+		t.Fatal(err)
+	}
+	if resolvedAt == nil {
+		t.Error("resolved_at should be set after resolve_for period elapsed")
+	}
+	_ = s
+}
+
+func TestResolveForViaContainerEvent(t *testing.T) {
+	alerts := map[string]AlertConfig{
+		"unhealthy": {
+			Condition:  "container.health == 'unhealthy'",
+			ResolveFor: Duration{20 * time.Second},
+			Severity:   "critical",
+			Actions:    []string{"notify"},
+		},
+	}
+	a, _ := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Fire via event (for=0, immediate).
+	a.EvaluateContainerEvent(ctx, ContainerMetrics{ID: "aaa", Name: "web", Health: "unhealthy"})
+	a.mu.Lock()
+	if a.instances["unhealthy:aaa"].state != stateFiring {
+		t.Fatal("expected firing")
+	}
+	a.mu.Unlock()
+
+	// Brief healthy event — should NOT resolve (resolve_for grace period).
+	now = now.Add(5 * time.Second)
+	a.EvaluateContainerEvent(ctx, ContainerMetrics{ID: "aaa", Name: "web", Health: "healthy"})
+	a.mu.Lock()
+	if a.instances["unhealthy:aaa"].state != stateFiring {
+		t.Fatal("expected still firing during resolve_for grace via event")
+	}
+	a.mu.Unlock()
+
+	// Unhealthy again — grace resets.
+	now = now.Add(5 * time.Second)
+	a.EvaluateContainerEvent(ctx, ContainerMetrics{ID: "aaa", Name: "web", Health: "unhealthy"})
+	a.mu.Lock()
+	if a.instances["unhealthy:aaa"].state != stateFiring {
+		t.Fatal("expected still firing after flap back to unhealthy")
+	}
+	a.mu.Unlock()
+}
+
+func TestResolveForZeroResolvesImmediately(t *testing.T) {
+	// Rules with resolve_for=0 should resolve immediately.
+	alerts := map[string]AlertConfig{
+		"unhealthy": {
+			Condition: "container.health == 'unhealthy'",
+			Severity:  "critical",
+			Actions:   []string{"notify"},
+		},
+	}
+	a, _ := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Fire.
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", Health: "unhealthy"}},
+	})
+	if a.instances["unhealthy:aaa"].state != stateFiring {
+		t.Fatal("expected firing")
+	}
+
+	// Condition false — should resolve immediately (resolve_for=0).
+	now = now.Add(10 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{
+		Containers: []ContainerMetrics{{ID: "aaa", Name: "web", Health: "healthy"}},
+	})
+	inst := a.instances["unhealthy:aaa"]
+	if inst != nil && inst.state != stateInactive {
+		t.Fatalf("expected immediate resolve with resolve_for=0, got state %d", inst.state)
+	}
+}
+
+func TestResolveForIndependentOfFor(t *testing.T) {
+	// resolve_for works independently of for — can have resolve_for without for.
+	alerts := map[string]AlertConfig{
+		"high_cpu": {
+			Condition:  "host.cpu_percent > 90",
+			ResolveFor: Duration{30 * time.Second},
+			Severity:   "warning",
+			Actions:    []string{"notify"},
+		},
+	}
+	a, _ := testAlerter(t, alerts)
+	ctx := context.Background()
+
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+
+	// Fire immediately (for=0).
+	a.Evaluate(ctx, &MetricSnapshot{Host: &HostMetrics{CPUPercent: 95}})
+	if a.instances["high_cpu"].state != stateFiring {
+		t.Fatal("expected immediate fire (for=0)")
+	}
+
+	// CPU drops — starts resolve grace.
+	now = now.Add(10 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{Host: &HostMetrics{CPUPercent: 50}})
+	if a.instances["high_cpu"].state != stateFiring {
+		t.Fatal("expected still firing during resolve_for grace")
+	}
+
+	// 30s after condition went false — should resolve.
+	now = now.Add(30 * time.Second)
+	a.Evaluate(ctx, &MetricSnapshot{Host: &HostMetrics{CPUPercent: 50}})
+	inst := a.instances["high_cpu"]
+	if inst != nil && inst.state != stateInactive {
+		t.Fatalf("expected resolved after resolve_for, got state %d", inst.state)
+	}
+}
+
 func TestContainerRestartCountAlert(t *testing.T) {
 	alerts := map[string]AlertConfig{
 		"restarts": {

@@ -126,6 +126,7 @@ Each alert rule supports these optional timing fields:
 | Field | Default | Description |
 |---|---|---|
 | `for` | `0s` | Condition must stay true for this duration before firing |
+| `resolve_for` | `0s` | Condition must stay false for this duration before resolving. Useful for flapping health checks — a single passing check won't resolve a persistent alert |
 | `cooldown` | `5m` | After resolution, wait this long before the same instance can re-fire (prevents flapping) |
 | `notify_cooldown` | `5m` | After notifying for a rule, suppress duplicate notifications for this duration (per-rule, not per-instance) |
 

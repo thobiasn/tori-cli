@@ -30,6 +30,7 @@ type alertInstance struct {
 	pendingSince time.Time
 	firedAt      time.Time
 	resolvedAt   time.Time // zero = never resolved; used for cooldown
+	falseAt      time.Time // when condition first went false while firing (resolve grace)
 	dbID         int64
 }
 
@@ -37,6 +38,7 @@ type alertRule struct {
 	name           string
 	condition      Condition
 	forDur         time.Duration
+	resolveForDur  time.Duration
 	cooldown       time.Duration
 	notifyCooldown time.Duration
 	severity       string
@@ -60,8 +62,8 @@ type Alerter struct {
 	mu           sync.Mutex // protects instances, deferred, lastNotified; held during Evaluate and EvaluateContainerEvent
 	rules        []alertRule
 	instances    map[string]*alertInstance
-	deferred     []func()              // slow side effects collected under mu, executed after release
-	lastNotified map[string]time.Time  // rule name -> last notification time (for notify_cooldown)
+	deferred     []func()             // slow side effects collected under mu, executed after release
+	lastNotified map[string]time.Time // rule name -> last notification time (for notify_cooldown)
 	store        *Store
 	notifier     *Notifier
 	now          func() time.Time
@@ -101,6 +103,7 @@ func NewAlerter(alerts map[string]AlertConfig, store *Store, notifier *Notifier)
 			name:           name,
 			condition:      cond,
 			forDur:         ac.For.Duration,
+			resolveForDur:  ac.ResolveFor.Duration,
 			cooldown:       ac.Cooldown.Duration,
 			notifyCooldown: ac.NotifyCooldown.Duration,
 			severity:       ac.Severity,
@@ -321,7 +324,21 @@ func (a *Alerter) transition(ctx context.Context, ec *evalContext, matched bool,
 		}
 	case stateFiring:
 		if !matched {
-			a.resolve(ctx, ec.rule, ec.key, inst, now)
+			if ec.rule.resolveForDur > 0 {
+				// Resolve grace: require condition to stay false for
+				// resolve_for duration before resolving. Prevents flapping
+				// (e.g. one passing health check resolving a persistent alert).
+				if inst.falseAt.IsZero() {
+					inst.falseAt = now
+				} else if now.Sub(inst.falseAt) >= ec.rule.resolveForDur {
+					inst.falseAt = time.Time{}
+					a.resolve(ctx, ec.rule, ec.key, inst, now)
+				}
+			} else {
+				a.resolve(ctx, ec.rule, ec.key, inst, now)
+			}
+		} else {
+			inst.falseAt = time.Time{} // condition true again, reset resolve grace
 		}
 	}
 }
@@ -492,6 +509,7 @@ type RuleStatus struct {
 	Condition      string
 	Severity       string
 	For            time.Duration
+	ResolveFor     time.Duration
 	Cooldown       time.Duration
 	NotifyCooldown time.Duration
 	Actions        []string
@@ -537,6 +555,7 @@ func (a *Alerter) QueryRules() []RuleStatus {
 			Condition:      condStr,
 			Severity:       r.severity,
 			For:            r.forDur,
+			ResolveFor:     r.resolveForDur,
 			Cooldown:       r.cooldown,
 			NotifyCooldown: r.notifyCooldown,
 			Actions:        r.actions,
