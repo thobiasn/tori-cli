@@ -57,6 +57,9 @@ tori is now collecting host metrics. Containers matching the `include` patterns 
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/thobiasn/tori-cli/main/deploy/install.sh | sh -s -- --client
+```
+
+```bash
 tori user@your-server.com
 ```
 

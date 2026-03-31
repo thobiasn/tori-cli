@@ -108,5 +108,33 @@ services:
         # severity = "critical"
         # actions = ["notify"]
 
+        # Notification examples
+
+        # [notify.email]
+        # enabled = true
+        # smtp_host = "smtp.example.com"
+        # smtp_port = 587
+        # tls = "starttls"
+        # username = "alerts@example.com"
+        # password = "app-password"
+        # from = "alerts@example.com"
+        # to = ["you@example.com"]
+
+        # Webhooks (Discord, Slack, etc.)
+        # [[notify.webhooks]]
+        # enabled = true
+        # url = "https://discord.com/api/webhooks/YOUR/WEBHOOK"
+        # template = '{"content":"**{{.Subject}}**\n{{.Body}}"}'
+
+        # [[notify.webhooks]]
+        # enabled = true
+        # url = "https://hooks.slack.com/services/YOUR/WEBHOOK"
+
+        # [[notify.webhooks]]
+        # enabled = true
+        # url = "https://your-service.example.com/alerts"
+        # [notify.webhooks.headers]
+        # Authorization = "Bearer YOUR_TOKEN"
+
 volumes:
   tori-data:
