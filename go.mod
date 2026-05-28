@@ -9,7 +9,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	modernc.org/sqlite v1.49.1
+	modernc.org/sqlite v1.50.0
 )
 
 require (
