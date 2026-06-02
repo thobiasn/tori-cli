@@ -152,7 +152,7 @@ func (s *Store) ResolveOrphanedAlerts(ctx context.Context, resolvedAt time.Time)
 
 // QueryFiringAlerts returns all currently firing (unresolved) alerts.
 func (s *Store) QueryFiringAlerts(ctx context.Context) ([]Alert, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.readDB.QueryContext(ctx,
 		`SELECT id, rule_name, severity, condition, instance_key, fired_at, resolved_at, message, acknowledged
 		 FROM alerts WHERE resolved_at IS NULL ORDER BY fired_at DESC LIMIT 1000`)
 	if err != nil {
@@ -190,7 +190,7 @@ func (s *Store) QueryHostMetricsGrouped(ctx context.Context, start, end, bucketD
 	if bucketDur <= 0 {
 		bucketDur = 1
 	}
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.readDB.QueryContext(ctx,
 		`SELECT ? + ((timestamp - ?) / ?) * ? AS bucket_ts,
 		 MAX(cpu_percent), MAX(mem_total), MAX(mem_used), MAX(mem_percent),
 		 MAX(mem_cached), MAX(mem_free), MAX(swap_total), MAX(swap_used),
@@ -252,7 +252,7 @@ func (s *Store) QueryContainerMetricsGrouped(ctx context.Context, start, end, bu
 	query += ` GROUP BY (timestamp - ?) / ?, project, service ORDER BY project, service, bucket_ts`
 	args = append(args, start, bucketDur)
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +274,7 @@ func (s *Store) QueryContainerMetricsGrouped(ctx context.Context, start, end, bu
 }
 
 func (s *Store) QueryHostMetrics(ctx context.Context, start, end int64) ([]TimedHostMetrics, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.readDB.QueryContext(ctx,
 		`SELECT timestamp, cpu_percent, mem_total, mem_used, mem_percent, mem_cached, mem_free, swap_total, swap_used, load1, load5, load15, uptime
 		 FROM host_metrics WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp`, start, end)
 	if err != nil {
@@ -298,7 +298,7 @@ func (s *Store) QueryHostMetrics(ctx context.Context, start, end int64) ([]Timed
 }
 
 func (s *Store) QueryDiskMetrics(ctx context.Context, start, end int64) ([]TimedDiskMetrics, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.readDB.QueryContext(ctx,
 		`SELECT timestamp, mountpoint, device, total, used, free, percent
 		 FROM disk_metrics WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp`, start, end)
 	if err != nil {
@@ -320,7 +320,7 @@ func (s *Store) QueryDiskMetrics(ctx context.Context, start, end int64) ([]Timed
 }
 
 func (s *Store) QueryNetMetrics(ctx context.Context, start, end int64) ([]TimedNetMetrics, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.readDB.QueryContext(ctx,
 		`SELECT timestamp, iface, rx_bytes, tx_bytes, rx_packets, tx_packets, rx_errors, tx_errors
 		 FROM net_metrics WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp`, start, end)
 	if err != nil {
@@ -370,7 +370,7 @@ func (s *Store) QueryContainerMetrics(ctx context.Context, start, end int64, fil
 	}
 	query += ` ORDER BY timestamp`
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -434,7 +434,7 @@ func (s *Store) CountLogMatches(ctx context.Context, pattern string, isRegex boo
 		args = []any{start, end, "%" + escaped + "%"}
 	}
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +461,7 @@ func (s *Store) CountLogs(ctx context.Context, f LogFilter) (int, error) {
 	query, args = logScopeFilter(query, args, f)
 
 	var count int
-	err := s.db.QueryRowContext(ctx, query, args...).Scan(&count)
+	err := s.readDB.QueryRowContext(ctx, query, args...).Scan(&count)
 	return count, err
 }
 
@@ -492,7 +492,7 @@ func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) 
 	query += ` ORDER BY timestamp DESC LIMIT ?`
 	args = append(args, limit)
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -514,7 +514,7 @@ func (s *Store) QueryLogs(ctx context.Context, f LogFilter) ([]LogEntry, error) 
 const maxAlertResults = 10000
 
 func (s *Store) QueryAlerts(ctx context.Context, start, end int64) ([]Alert, error) {
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := s.readDB.QueryContext(ctx,
 		`SELECT id, rule_name, severity, condition, instance_key, fired_at, resolved_at, message, acknowledged
 		 FROM alerts WHERE fired_at >= ? AND fired_at <= ? ORDER BY fired_at DESC LIMIT ?`, start, end, maxAlertResults)
 	if err != nil {
@@ -593,7 +593,7 @@ func (s *Store) SaveTracking(ctx context.Context, state map[string]bool) error {
 // LoadTracking loads the persisted tracking state.
 // Returns a map of container name → tracked (true/false).
 func (s *Store) LoadTracking(ctx context.Context) (map[string]bool, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT name, tracked FROM tracking_state WHERE kind = 'container'")
+	rows, err := s.readDB.QueryContext(ctx, "SELECT name, tracked FROM tracking_state WHERE kind = 'container'")
 	if err != nil {
 		return nil, err
 	}
@@ -629,10 +629,8 @@ func (s *Store) Prune(ctx context.Context, retentionDays int) error {
 		return fmt.Errorf("prune alerts: %w", err)
 	}
 
-	// Checkpoint WAL, reclaim freed pages, refresh query planner stats,
-	// then ask Go to release memory.
+	// Checkpoint WAL, refresh query planner stats, then ask Go to release memory.
 	s.db.ExecContext(ctx, "PRAGMA wal_checkpoint(PASSIVE)")
-	s.db.ExecContext(ctx, "PRAGMA incremental_vacuum(500)")
 	s.db.ExecContext(ctx, "ANALYZE")
 	debug.FreeOSMemory()
 
