@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	logBatchSize    = 100
+	logBatchSize    = 500
 	logFlushTimeout = 1 * time.Second
 )
 

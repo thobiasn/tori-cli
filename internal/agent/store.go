@@ -10,17 +10,18 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
+	"sync"
 	"time"
 
 	"modernc.org/sqlite"
 )
 
 func init() {
-	// Cache the last compiled regex — SetMaxOpenConns(1) guarantees
-	// single-threaded access so no mutex is needed.
-	var lastPattern string
-	var lastRe *regexp.Regexp
+	var (
+		mu          sync.Mutex
+		lastPattern string
+		lastRe      *regexp.Regexp
+	)
 
 	sqlite.MustRegisterDeterministicScalarFunction("regexp", 2, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 		pattern, ok1 := args[0].(string)
@@ -28,15 +29,21 @@ func init() {
 		if !ok1 || !ok2 {
 			return int64(0), nil
 		}
+
+		mu.Lock()
 		if pattern != lastPattern {
 			var err error
 			lastRe, err = regexp.Compile(pattern)
 			if err != nil {
+				mu.Unlock()
 				return int64(0), nil
 			}
 			lastPattern = pattern
 		}
-		if lastRe.MatchString(value) {
+		re := lastRe
+		mu.Unlock()
+
+		if re.MatchString(value) {
 			return int64(1), nil
 		}
 		return int64(0), nil
@@ -140,8 +147,9 @@ CREATE TABLE IF NOT EXISTS tracking_state (
 
 // Store manages SQLite persistence for metrics and logs.
 type Store struct {
-	db   *sql.DB
-	path string
+	db     *sql.DB // write connection (MaxOpenConns=1)
+	readDB *sql.DB // read connection pool (concurrent readers via WAL)
+	path   string
 }
 
 // OpenStore opens or creates a SQLite database at the given path with WAL mode.
@@ -157,32 +165,52 @@ func OpenStore(path string) (*Store, error) {
 
 	db.SetMaxOpenConns(1)
 
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("set WAL mode: %w", err)
+	writePragmas := []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA cache_size=-8000",
+		"PRAGMA auto_vacuum=0",
+		"PRAGMA busy_timeout=5000",
+		"PRAGMA wal_autocheckpoint=10000",
+		"PRAGMA cache_spill=0",
+	}
+	for _, p := range writePragmas {
+		if _, err := db.Exec(p); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("%s: %w", p, err)
+		}
 	}
 
-	// Limit SQLite page cache to ~2MB (negative = KB).
-	if _, err := db.Exec("PRAGMA cache_size = -2000"); err != nil {
+	readDB, err := sql.Open("sqlite", path)
+	if err != nil {
 		db.Close()
-		return nil, fmt.Errorf("set cache_size: %w", err)
+		return nil, fmt.Errorf("open read database: %w", err)
+	}
+	readDB.SetMaxOpenConns(4)
+
+	readPragmas := []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA cache_size=-8000",
+		"PRAGMA mmap_size=268435456",
+		"PRAGMA busy_timeout=5000",
+	}
+	for _, p := range readPragmas {
+		if _, err := readDB.Exec(p); err != nil {
+			readDB.Close()
+			db.Close()
+			return nil, fmt.Errorf("read %s: %w", p, err)
+		}
 	}
 
-	// Enable incremental auto-vacuum for new databases. On existing databases
-	// this PRAGMA has no effect without a VACUUM (handled by migration).
-	if _, err := db.Exec("PRAGMA auto_vacuum = 2"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("set auto_vacuum: %w", err)
-	}
-
-	s := &Store{db: db, path: path}
+	s := &Store{db: db, readDB: readDB, path: path}
 
 	if err := s.migrate(); err != nil {
+		readDB.Close()
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
 	if _, err := db.ExecContext(context.Background(), schema); err != nil {
+		readDB.Close()
 		db.Close()
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
@@ -196,8 +224,9 @@ func OpenStore(path string) (*Store, error) {
 	return s, nil
 }
 
-// Close closes the database connection.
+// Close closes both database connections.
 func (s *Store) Close() error {
+	s.readDB.Close()
 	return s.db.Close()
 }
 
@@ -227,12 +256,8 @@ func (s *Store) migrate() error {
 		}
 	}
 
-	// Version 2 → 3: Enable incremental auto-vacuum.
-	if version < 3 {
-		if err := s.enableAutoVacuum(); err != nil {
-			slog.Warn("auto_vacuum migration skipped", "error", err)
-		}
-	}
+	// Version 2 → 3: Previously enabled incremental auto-vacuum. Now a no-op
+	// because auto_vacuum=0 (set in OpenStore) is better for write-heavy workloads.
 
 	if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", currentSchemaVersion)); err != nil {
 		return fmt.Errorf("set user_version: %w", err)
@@ -403,47 +428,6 @@ func (s *Store) backfillLogFields() error {
 	return nil
 }
 
-// enableAutoVacuum switches an existing database to incremental auto-vacuum mode.
-// This requires a one-time VACUUM which rewrites the entire file. Skipped if
-// there isn't enough free disk space (2× the DB file size).
-func (s *Store) enableAutoVacuum() error {
-	var mode int
-	if err := s.db.QueryRow("PRAGMA auto_vacuum").Scan(&mode); err != nil {
-		return fmt.Errorf("read auto_vacuum: %w", err)
-	}
-	if mode == 2 {
-		return nil // already incremental
-	}
-
-	info, err := os.Stat(s.path)
-	if err != nil {
-		return fmt.Errorf("stat db: %w", err)
-	}
-	dbSize := info.Size()
-
-	var fs syscall.Statfs_t
-	if err := syscall.Statfs(filepath.Dir(s.path), &fs); err != nil {
-		return fmt.Errorf("statfs: %w", err)
-	}
-	freeBytes := int64(fs.Bavail) * int64(fs.Bsize)
-
-	if freeBytes < 2*dbSize {
-		slog.Warn("skipping auto_vacuum: insufficient free space",
-			"db_size", dbSize, "free", freeBytes)
-		return nil
-	}
-
-	slog.Info("enabling auto_vacuum, running one-time VACUUM (this may take a moment for large databases)")
-
-	if _, err := s.db.Exec("PRAGMA auto_vacuum = 2"); err != nil {
-		return fmt.Errorf("set auto_vacuum: %w", err)
-	}
-	if _, err := s.db.Exec("VACUUM"); err != nil {
-		return fmt.Errorf("vacuum: %w", err)
-	}
-
-	return nil
-}
 
 // ensureColumns adds columns that may be missing from older databases.
 // Silently ignores "duplicate column name" errors (column already exists).
@@ -459,8 +443,10 @@ func (s *Store) ensureColumns() {
 	}
 	indexes := []string{
 		"CREATE INDEX IF NOT EXISTS idx_logs_svc ON logs(project, service, timestamp)",
-		"CREATE INDEX IF NOT EXISTS idx_logs_container_level_ts ON logs(container_id, level, timestamp)",
-		"CREATE INDEX IF NOT EXISTS idx_logs_svc_level ON logs(project, service, level, timestamp)",
+	}
+	dropIndexes := []string{
+		"DROP INDEX IF EXISTS idx_logs_container_level_ts",
+		"DROP INDEX IF EXISTS idx_logs_svc_level",
 	}
 	for _, stmt := range migrations {
 		_, err := s.db.Exec(stmt)
@@ -471,6 +457,11 @@ func (s *Store) ensureColumns() {
 	for _, stmt := range indexes {
 		if _, err := s.db.Exec(stmt); err != nil {
 			slog.Warn("index creation failed", "error", err)
+		}
+	}
+	for _, stmt := range dropIndexes {
+		if _, err := s.db.Exec(stmt); err != nil {
+			slog.Warn("index drop failed", "error", err)
 		}
 	}
 }

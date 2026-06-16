@@ -1254,13 +1254,18 @@ func TestPruneReclaimsSpace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// With incremental auto_vacuum enabled, prune should reclaim disk space.
-	if postPrune.Size() >= prePrune.Size() {
-		t.Errorf("DB file did not shrink: %d bytes pre-prune, %d bytes post-prune", prePrune.Size(), postPrune.Size())
+	// With auto_vacuum=0, the file doesn't shrink — freed pages are reused by
+	// future inserts. Verify freelist pages exist (space is reclaimable).
+	var freePages int
+	if err := s.db.QueryRow("PRAGMA freelist_count").Scan(&freePages); err != nil {
+		t.Fatal(err)
+	}
+	if freePages == 0 {
+		t.Error("freelist_count = 0 after pruning 5000 rows, expected freed pages")
 	}
 
-	t.Logf("DB size: %d bytes pre-prune, %d bytes post-prune (%.1f%% reclaimed)",
-		prePrune.Size(), postPrune.Size(), (1-float64(postPrune.Size())/float64(prePrune.Size()))*100)
+	t.Logf("DB size: %d bytes pre-prune, %d bytes post-prune, %d pages on freelist",
+		prePrune.Size(), postPrune.Size(), freePages)
 }
 
 func TestResolveOrphanedAlerts(t *testing.T) {

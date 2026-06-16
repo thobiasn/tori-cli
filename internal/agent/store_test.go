@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"database/sql"
 	"path/filepath"
 	"testing"
@@ -417,23 +418,8 @@ PRAGMA user_version = 2;
 	}
 	db.Close()
 
-	// Verify auto_vacuum is 0 (none) before migration.
-	db2, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db2.SetMaxOpenConns(1)
-	var modeBefore int
-	if err := db2.QueryRow("PRAGMA auto_vacuum").Scan(&modeBefore); err != nil {
-		db2.Close()
-		t.Fatal(err)
-	}
-	db2.Close()
-	if modeBefore != 0 {
-		t.Fatalf("auto_vacuum before migration = %d, want 0", modeBefore)
-	}
-
-	// OpenStore triggers v2→v3 migration including enableAutoVacuum.
+	// OpenStore triggers v2→v3 migration (now a no-op for auto_vacuum).
+	// auto_vacuum stays 0 since the migration no longer enables it.
 	s, err := OpenStore(path)
 	if err != nil {
 		t.Fatal(err)
@@ -444,8 +430,8 @@ PRAGMA user_version = 2;
 	if err := s.db.QueryRow("PRAGMA auto_vacuum").Scan(&mode); err != nil {
 		t.Fatal(err)
 	}
-	if mode != 2 {
-		t.Errorf("auto_vacuum = %d, want 2 (incremental)", mode)
+	if mode != 0 {
+		t.Errorf("auto_vacuum = %d, want 0 (off)", mode)
 	}
 
 	var version int
@@ -458,14 +444,49 @@ PRAGMA user_version = 2;
 }
 
 func TestNewStoreAutoVacuum(t *testing.T) {
-	// A fresh database should have auto_vacuum = 2 (incremental).
 	s := testStore(t)
 
 	var mode int
 	if err := s.db.QueryRow("PRAGMA auto_vacuum").Scan(&mode); err != nil {
 		t.Fatal(err)
 	}
-	if mode != 2 {
-		t.Errorf("auto_vacuum = %d, want 2 (incremental)", mode)
+	if mode != 0 {
+		t.Errorf("auto_vacuum = %d, want 0 (off)", mode)
+	}
+}
+
+func TestReadWriteSplit(t *testing.T) {
+	s := testStore(t)
+
+	// Verify readDB has WAL mode.
+	var mode string
+	if err := s.readDB.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "wal" {
+		t.Errorf("readDB journal_mode = %q, want wal", mode)
+	}
+
+	// Verify readDB has mmap enabled.
+	var mmapSize int64
+	if err := s.readDB.QueryRow("PRAGMA mmap_size").Scan(&mmapSize); err != nil {
+		t.Fatal(err)
+	}
+	if mmapSize == 0 {
+		t.Error("readDB mmap_size = 0, want > 0")
+	}
+
+	// Verify writes through db are visible through readDB.
+	ts := time.Now()
+	if err := s.InsertHostMetrics(context.Background(), ts, &HostMetrics{CPUPercent: 42.5}); err != nil {
+		t.Fatal(err)
+	}
+
+	var cpu float64
+	if err := s.readDB.QueryRow("SELECT cpu_percent FROM host_metrics ORDER BY timestamp DESC LIMIT 1").Scan(&cpu); err != nil {
+		t.Fatal(err)
+	}
+	if cpu != 42.5 {
+		t.Errorf("cpu_percent = %v, want 42.5", cpu)
 	}
 }
